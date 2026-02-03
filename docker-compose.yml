@@ -1,0 +1,158 @@
+services:
+  db:
+    image: postgres:16-alpine
+    env_file: .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "auth"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  backend:
+    build:
+      context: ./pbn-generator
+    env_file:
+      - .env
+    environment:
+      PORT: "8080"
+      ALLOWED_ORIGIN: "${ALLOWED_ORIGIN:-*}"
+      DB_DRIVER: "${DB_DRIVER:-pgx}"
+      DB_DSN: "${DB_DSN:-postgres://auth:auth@db:5432/auth?sslmode=disable}"
+      SESSION_TTL: "${SESSION_TTL:-24h}"
+      SESSION_CLEAN_INTERVAL: "${SESSION_CLEAN_INTERVAL:-5m}"
+      DB_CONNECT_RETRIES: "${DB_CONNECT_RETRIES:-20}"
+      DB_CONNECT_INTERVAL: "${DB_CONNECT_INTERVAL:-1s}"
+      MIGRATE_ON_START: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  worker:
+    build:
+      context: ./pbn-generator
+    env_file:
+      - .env
+    environment:
+      PORT: "8080"
+      ALLOWED_ORIGIN: "${ALLOWED_ORIGIN:-*}"
+      DB_DRIVER: "${DB_DRIVER:-pgx}"
+      DB_DSN: "${DB_DSN:-postgres://auth:auth@db:5432/auth?sslmode=disable}"
+      SESSION_TTL: "${SESSION_TTL:-24h}"
+      SESSION_CLEAN_INTERVAL: "${SESSION_CLEAN_INTERVAL:-5m}"
+      DB_CONNECT_RETRIES: "${DB_CONNECT_RETRIES:-20}"
+      DB_CONNECT_INTERVAL: "${DB_CONNECT_INTERVAL:-1s}"
+      MIGRATE_ON_START: "false"
+      REDIS_ADDR: "${REDIS_ADDR:-redis:6379}"
+      REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
+      REDIS_DB: "${REDIS_DB:-0}"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    entrypoint: ["/bin/worker"]
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: ./pbn-generator
+    env_file:
+      - .env
+    environment:
+      DB_DRIVER: "${DB_DRIVER:-pgx}"
+      DB_DSN: "${DB_DSN:-postgres://auth:auth@db:5432/auth?sslmode=disable}"
+      DB_CONNECT_RETRIES: "${DB_CONNECT_RETRIES:-20}"
+      DB_CONNECT_INTERVAL: "${DB_CONNECT_INTERVAL:-1s}"
+      MIGRATE_ON_START: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint: ["/bin/migrate"]
+    restart: "no"
+
+  seed:
+    image: postgres:16-alpine
+    env_file:
+      - .env
+    environment:
+      PGPASSWORD: "${POSTGRES_PASSWORD}"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - .:/work
+    command: >
+      psql
+      -h db
+      -U ${POSTGRES_USER}
+      -d ${POSTGRES_DB}
+      -f /work/pbn-generator/init/seed.sql
+    restart: "no"
+
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      NEXT_PUBLIC_API_URL: "http://backend:8080"
+    depends_on:
+      backend:
+        condition: service_started
+    ports:
+      - "3000:3000"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+    ports:
+      - "9090:9090"
+    depends_on:
+      - backend
+
+  grafana:
+    image: grafana/grafana:10.4.6
+    env_file:
+      - .env
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: "${GF_SECURITY_ADMIN_USER}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GF_SECURITY_ADMIN_PASSWORD}"
+    depends_on:
+      - prometheus
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+
+volumes:
+  pgdata: {}
+  redisdata: {}

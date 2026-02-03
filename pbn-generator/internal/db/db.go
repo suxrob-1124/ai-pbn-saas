@@ -1,0 +1,229 @@
+package db
+
+import (
+	"database/sql"
+	"fmt"
+	"time"
+
+	"go.uber.org/zap"
+
+	"obzornik-pbn-generator/internal/config"
+
+	_ "github.com/jackc/pgx/v5/stdlib"
+)
+
+func Open(cfg config.Config, logger *zap.SugaredLogger) *sql.DB {
+	if cfg.DBDriver == "" {
+		logger.Fatalf("DB_DRIVER is required (pgx for Postgres)")
+	}
+	db, err := sql.Open(cfg.DBDriver, cfg.DSN)
+	if err != nil {
+		logger.Fatalf("failed to open database: %v", err)
+	}
+
+	if err := pingWithRetry(db, cfg.DBConnectRetries, cfg.DBConnectInterval); err != nil {
+		logger.Fatalf("failed to ping database: %v", err)
+	}
+
+	if cfg.MigrateOnStart {
+		if err := Migrate(db); err != nil {
+			logger.Fatalf("failed to run migrations: %v", err)
+		}
+	}
+	return db
+}
+
+func Migrate(db *sql.DB) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS users (
+			email TEXT PRIMARY KEY,
+			password_hash BYTEA NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL,
+			verified BOOLEAN NOT NULL DEFAULT FALSE,
+			name TEXT,
+			avatar_url TEXT,
+			role TEXT NOT NULL DEFAULT 'manager',
+			is_approved BOOLEAN NOT NULL DEFAULT FALSE,
+			api_key_enc BYTEA,
+			api_key_updated_at TIMESTAMPTZ
+		);`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS verified BOOLEAN NOT NULL DEFAULT FALSE;`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS name TEXT;`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT;`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'manager';`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_approved BOOLEAN NOT NULL DEFAULT FALSE;`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS api_key_enc BYTEA;`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS api_key_updated_at TIMESTAMPTZ;`,
+		`CREATE TABLE IF NOT EXISTS sessions (
+			token TEXT PRIMARY KEY,
+			email TEXT NOT NULL,
+			expires_at TIMESTAMPTZ NOT NULL,
+			CONSTRAINT fk_sessions_user FOREIGN KEY (email) REFERENCES users(email) ON DELETE CASCADE
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);`,
+		`CREATE INDEX IF NOT EXISTS idx_sessions_email ON sessions(email);`,
+		`CREATE TABLE IF NOT EXISTS email_verifications (
+			token_hash TEXT PRIMARY KEY,
+			email TEXT NOT NULL REFERENCES users(email) ON DELETE CASCADE,
+			expires_at TIMESTAMPTZ NOT NULL,
+			used_at TIMESTAMPTZ
+		);`,
+		`ALTER TABLE email_verifications ADD COLUMN IF NOT EXISTS used_at TIMESTAMPTZ;`,
+		`CREATE INDEX IF NOT EXISTS idx_email_verifications_email ON email_verifications(email);`,
+		`CREATE TABLE IF NOT EXISTS password_resets (
+			token_hash TEXT PRIMARY KEY,
+			email TEXT NOT NULL REFERENCES users(email) ON DELETE CASCADE,
+			expires_at TIMESTAMPTZ NOT NULL
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_password_resets_email ON password_resets(email);`,
+		`CREATE TABLE IF NOT EXISTS email_changes (
+			token_hash TEXT PRIMARY KEY,
+			email TEXT NOT NULL REFERENCES users(email) ON DELETE CASCADE,
+			new_email TEXT NOT NULL,
+			expires_at TIMESTAMPTZ NOT NULL,
+			used_at TIMESTAMPTZ
+		);`,
+		`ALTER TABLE email_changes ADD COLUMN IF NOT EXISTS used_at TIMESTAMPTZ;`,
+		`CREATE INDEX IF NOT EXISTS idx_email_changes_email ON email_changes(email);`,
+		`CREATE TABLE IF NOT EXISTS captchas (
+			id TEXT PRIMARY KEY,
+			answer_hash TEXT NOT NULL,
+			expires_at TIMESTAMPTZ NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL,
+			ip TEXT
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_captchas_expires ON captchas(expires_at);`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("migration failed: %w", err)
+		}
+	}
+	// Projects/domains/generations
+	projectStmts := []string{
+		`CREATE TABLE IF NOT EXISTS servers (
+			id TEXT PRIMARY KEY,
+			user_email TEXT NOT NULL REFERENCES users(email) ON DELETE CASCADE,
+			name TEXT NOT NULL,
+			ip TEXT,
+			ssh_user TEXT,
+			ssh_key TEXT,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);`,
+		`CREATE TABLE IF NOT EXISTS projects (
+			id TEXT PRIMARY KEY,
+			user_email TEXT NOT NULL REFERENCES users(email) ON DELETE CASCADE,
+			name TEXT NOT NULL,
+			target_country TEXT,
+			target_language TEXT,
+			global_blacklist JSONB,
+			default_server_id TEXT REFERENCES servers(id),
+			status TEXT NOT NULL DEFAULT 'draft',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_email);`,
+		`CREATE TABLE IF NOT EXISTS domains (
+			id TEXT PRIMARY KEY,
+			project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+			server_id TEXT REFERENCES servers(id),
+			url TEXT NOT NULL,
+			main_keyword TEXT,
+			target_country TEXT,
+			target_language TEXT,
+			exclude_domains TEXT,
+			specific_blacklist JSONB,
+			status TEXT NOT NULL DEFAULT 'waiting',
+			last_generation_id TEXT,
+			published_at TIMESTAMPTZ,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);`,
+		`ALTER TABLE domains ADD COLUMN IF NOT EXISTS target_country TEXT;`,
+		`ALTER TABLE domains ADD COLUMN IF NOT EXISTS target_language TEXT;`,
+		`ALTER TABLE domains ADD COLUMN IF NOT EXISTS exclude_domains TEXT;`,
+		`CREATE INDEX IF NOT EXISTS idx_domains_project ON domains(project_id);`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_domains_url ON domains(url);`,
+		`CREATE TABLE IF NOT EXISTS system_prompts (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			description TEXT,
+			body TEXT NOT NULL,
+			stage TEXT, -- Этап генерации: competitor_analysis, technical_spec, content_generation, image_generation, css_generation, js_generation, html_generation, svg_generation, 404_page
+			is_active BOOLEAN NOT NULL DEFAULT TRUE,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);`,
+		`ALTER TABLE system_prompts ADD COLUMN IF NOT EXISTS stage TEXT;`,
+		`ALTER TABLE system_prompts ADD COLUMN IF NOT EXISTS model TEXT;`, // Модель LLM: gemini-2.5-pro, gemini-2.5-flash, etc.
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_system_prompts_stage_active 
+			ON system_prompts(stage) 
+			WHERE is_active = TRUE AND stage IS NOT NULL`,
+		`CREATE TABLE IF NOT EXISTS project_members (
+			project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+			user_email TEXT NOT NULL REFERENCES users(email) ON DELETE CASCADE,
+			role TEXT NOT NULL DEFAULT 'editor',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			PRIMARY KEY (project_id, user_email)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_project_members_user ON project_members(user_email);`,
+		`CREATE TABLE IF NOT EXISTS generations (
+			id TEXT PRIMARY KEY,
+			domain_id TEXT NOT NULL REFERENCES domains(id) ON DELETE CASCADE,
+			status TEXT NOT NULL,
+			progress INT NOT NULL DEFAULT 0,
+			error TEXT,
+			logs JSONB,
+			artifacts JSONB,
+			checkpoint_data JSONB,
+			started_at TIMESTAMPTZ,
+			finished_at TIMESTAMPTZ,
+			prompt_id TEXT REFERENCES system_prompts(id),
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);`,
+		`ALTER TABLE generations ADD COLUMN IF NOT EXISTS checkpoint_data JSONB;`,
+		`CREATE INDEX IF NOT EXISTS idx_generations_domain ON generations(domain_id);`,
+		`CREATE TABLE IF NOT EXISTS api_usage (
+			id TEXT PRIMARY KEY,
+			user_email TEXT NOT NULL REFERENCES users(email) ON DELETE CASCADE,
+			generation_id TEXT NOT NULL REFERENCES generations(id) ON DELETE CASCADE,
+			tokens_used BIGINT,
+			cost NUMERIC(12,6),
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);`,
+		`CREATE TABLE IF NOT EXISTS api_key_usage_log (
+			id TEXT PRIMARY KEY,
+			user_email TEXT NOT NULL REFERENCES users(email) ON DELETE CASCADE,
+			generation_id TEXT NOT NULL REFERENCES generations(id) ON DELETE CASCADE,
+			key_type TEXT NOT NULL, -- 'user' или 'global'
+			requests_count INT NOT NULL DEFAULT 0,
+			total_tokens BIGINT NOT NULL DEFAULT 0,
+			first_used_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			last_used_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_api_key_usage_user ON api_key_usage_log(user_email);`,
+		`CREATE INDEX IF NOT EXISTS idx_api_key_usage_generation ON api_key_usage_log(generation_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_api_key_usage_date ON api_key_usage_log(first_used_at);`,
+	}
+	for _, stmt := range projectStmts {
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("migration failed: %w", err)
+		}
+	}
+	return nil
+}
+
+func pingWithRetry(db *sql.DB, retries int, interval time.Duration) error {
+	var lastErr error
+	for i := 0; i < retries; i++ {
+		if err := db.Ping(); err != nil {
+			lastErr = err
+			time.Sleep(interval)
+			continue
+		}
+		return nil
+	}
+	return fmt.Errorf("ping failed after %d retries: %w", retries, lastErr)
+}

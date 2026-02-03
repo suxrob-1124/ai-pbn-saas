@@ -1,0 +1,294 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"sync"
+	"time"
+
+	"go.uber.org/zap"
+
+	"obzornik-pbn-generator/internal/config"
+	"obzornik-pbn-generator/internal/crypto/secretbox"
+	"obzornik-pbn-generator/internal/llm"
+	"obzornik-pbn-generator/internal/store/sqlstore"
+	"obzornik-pbn-generator/internal/tasks"
+	"obzornik-pbn-generator/internal/worker/pipeline"
+)
+
+// processGeneration обрабатывает задачу генерации используя pipeline
+func processGeneration(
+	ctx context.Context,
+	payload tasks.GeneratePayload,
+	cfg config.Config,
+	sugar *zap.SugaredLogger,
+	domainStore *sqlstore.DomainStore,
+	genStore *sqlstore.GenerationStore,
+	promptStore *sqlstore.PromptStore,
+	projectStore *sqlstore.ProjectStore,
+	userStore *sqlstore.UserStore,
+	apiKeyUsageStore *sqlstore.APIKeyUsageStore,
+) error {
+	// Проверяем статус задачи в начале
+	gen, err := genStore.Get(ctx, payload.GenerationID)
+	if err != nil {
+		return fmt.Errorf("failed to get generation: %w", err)
+	}
+
+	// Если задача уже не в состоянии processing, не обрабатываем
+	if gen.Status != "processing" && gen.Status != "pending" {
+		sugar.Warnf("generation %s is in status %s, skipping", payload.GenerationID, gen.Status)
+		return nil
+	}
+
+	now := time.Now()
+	if gen.Status == "pending" {
+		_ = genStore.UpdateFull(ctx, payload.GenerationID, "processing", 10, nil, nil, nil, &now, nil, nil)
+	}
+
+	// Debug: сырой artifacts из БД
+	if len(gen.Artifacts) > 0 {
+		sugar.Infow("loaded generation artifacts (raw)", "generation", payload.GenerationID, "raw", string(gen.Artifacts))
+	}
+
+	// Инициализация логирования с мгновенным сохранением
+	logs := []string{}
+	var (
+		logMu         sync.Mutex
+		lastFlush     time.Time
+		flushInterval = 2 * time.Second
+	)
+	flushLogs := func(force bool) {
+		logMu.Lock()
+		defer logMu.Unlock()
+		if !force && time.Since(lastFlush) < flushInterval {
+			return
+		}
+		if len(logs) == 0 {
+			return
+		}
+		b, err := json.Marshal(logs)
+		if err != nil {
+			return
+		}
+		if err := genStore.UpdateLogs(ctx, payload.GenerationID, b); err != nil {
+			sugar.Warnf("failed to persist logs: %v", err)
+			return
+		}
+		lastFlush = time.Now()
+	}
+	appendLog := func(msg string) {
+		logMu.Lock()
+		line := time.Now().Format(time.RFC3339) + " " + msg
+		logs = append(logs, line)
+		needFlush := time.Since(lastFlush) >= flushInterval
+		logMu.Unlock()
+		if needFlush {
+			go flushLogs(false)
+		}
+	}
+	defer flushLogs(true)
+
+	// Загружаем domain и project
+	domain, err := domainStore.Get(ctx, payload.DomainID)
+	if err != nil {
+		errMsg := "domain not found"
+		_ = genStore.UpdateStatus(ctx, payload.GenerationID, "error", 0, &errMsg)
+		_ = domainStore.UpdateStatus(ctx, payload.DomainID, "waiting")
+		return fmt.Errorf("domain not found: %w", err)
+	}
+	appendLog("start for domain " + domain.URL)
+
+	project, err := projectStore.GetByID(ctx, domain.ProjectID)
+	if err != nil {
+		errMsg := "project not found"
+		_ = genStore.UpdateStatus(ctx, payload.GenerationID, "error", 0, &errMsg)
+		_ = domainStore.UpdateStatus(ctx, payload.DomainID, "waiting")
+		return fmt.Errorf("project not found: %w", err)
+	}
+
+	// Определяем API ключ
+	apiKey := cfg.GeminiAPIKey
+	keyType := "global"
+	projectUserEmail := project.UserEmail
+
+	userAPIKeyEnc, _, err := userStore.GetAPIKey(ctx, project.UserEmail)
+	if err == nil && len(userAPIKeyEnc) > 0 {
+		keySecret := secretbox.DeriveKey(cfg.APIKeySecret)
+		decrypted, err := secretbox.Decrypt(keySecret, userAPIKeyEnc)
+		if err == nil {
+			apiKey = string(decrypted)
+			keyType = "user"
+			appendLog("используется API ключ пользователя")
+		} else {
+			appendLog("предупреждение: не удалось расшифровать API ключ пользователя, используется глобальный")
+		}
+	} else {
+		appendLog("используется глобальный API ключ")
+	}
+
+	if apiKey == "" {
+		errMsg := "Gemini API key не настроен (ни глобальный, ни пользовательский)"
+		appendLog(errMsg)
+		logBytes, _ := json.Marshal(logs)
+		_ = genStore.UpdateFull(ctx, payload.GenerationID, "error", 0, &errMsg, logBytes, nil, &now, pipeline.PtrTime(time.Now()), nil)
+		_ = domainStore.UpdateStatus(ctx, payload.DomainID, "waiting")
+		return fmt.Errorf("API key not configured")
+	}
+
+	// Инициализация сервисов
+	llmCfg := llm.Config{
+		APIKey:          apiKey,
+		DefaultModel:    cfg.GeminiDefaultModel,
+		MaxRetries:      cfg.GeminiMaxRetries,
+		RetryDelay:      cfg.GeminiRetryDelay,
+		RequestTimeout:  cfg.GeminiRequestTimeout,
+		RateLimitPerMin: cfg.GeminiRateLimitPerMin,
+	}
+	llmClient := llm.NewClient(llmCfg)
+
+	// Defer для сохранения LLM запросов
+	defer func() {
+		llmRequests := llmClient.GetRequests()
+		if len(llmRequests) > 0 {
+			gen, err := genStore.Get(ctx, payload.GenerationID)
+			if err == nil {
+				var currentArtifacts map[string]any
+				if len(gen.Artifacts) > 0 {
+					json.Unmarshal(gen.Artifacts, &currentArtifacts)
+				}
+				if currentArtifacts == nil {
+					currentArtifacts = make(map[string]any)
+				}
+				currentArtifacts["llm_requests"] = llmRequests
+				artBytes, _ := json.Marshal(currentArtifacts)
+				logBytes, _ := json.Marshal(logs)
+				genStore.UpdateFull(ctx, payload.GenerationID, gen.Status, gen.Progress, nil, logBytes, artBytes, nil, nil, nil)
+
+				// Логируем использование API ключа
+				var totalTokens int64
+				for _, req := range llmRequests {
+					totalTokens += req.TokensUsed
+				}
+				if err := apiKeyUsageStore.LogUsage(ctx, projectUserEmail, payload.GenerationID, keyType, len(llmRequests), totalTokens); err != nil {
+					sugar.Warnf("failed to log API key usage: %v", err)
+				}
+			}
+		}
+		llmClient.Reset()
+	}()
+
+	promptAdapter := llm.NewPromptAdapter(promptStore)
+	promptManager := llm.NewPromptManager(promptAdapter)
+
+	// Создаем pipeline state
+	// Подготовим артефакты, загруженные из БД (для skip/restore)
+	existingArtifacts := make(map[string]any)
+	if len(gen.Artifacts) > 0 {
+		_ = json.Unmarshal(gen.Artifacts, &existingArtifacts)
+	}
+	if len(existingArtifacts) > 0 {
+		keys := make([]string, 0, len(existingArtifacts))
+		for k := range existingArtifacts {
+			keys = append(keys, k)
+		}
+		sugar.Infow("artifacts keys before pipeline", "generation", payload.GenerationID, "keys", keys)
+	}
+
+	state := &pipeline.PipelineState{
+		GenerationID:    payload.GenerationID,
+		DomainID:        payload.DomainID,
+		ForceStep:       payload.ForceStep,
+		DomainStore:     domainStore,
+		GenerationStore: genStore,
+		PromptStore:     promptStore,
+		ProjectStore:    projectStore,
+		LLMClient:       pipeline.NewLLMClient(llmClient),
+		PromptManager:   pipeline.NewPromptManager(promptManager),
+		Analyzer:        pipeline.NewAnalyzer(),
+		DefaultModel:    cfg.GeminiDefaultModel,
+		Domain:          &domain,
+		Project:         &project,
+		Artifacts:       existingArtifacts,
+		AppendLog:       appendLog,
+		Logs:            &logs,
+		Context:         make(map[string]any),
+	}
+
+	// Создаем шаги pipeline
+	steps := []pipeline.Step{
+		&pipeline.SERPAnalysisStep{},
+		&pipeline.CompetitorAnalysisStep{},
+		&pipeline.TechnicalSpecStep{},
+		&pipeline.ContentGenerationStep{},
+		&pipeline.DesignArchitectureStep{},
+		&pipeline.LogoGenerationStep{},
+		&pipeline.HTMLGenerationStep{},
+		&pipeline.CSSGenerationStep{},
+		&pipeline.JSGenerationStep{},
+		&pipeline.ImageGenerationStep{},
+		&pipeline.Page404GenerationStep{},
+		&pipeline.AssemblyStep{},
+	}
+
+	// Создаем и запускаем pipeline
+	generationPipeline := pipeline.NewPipeline(steps, state)
+	generationPipeline.CheckStatus = func() (string, error) {
+		g, err := genStore.Get(ctx, payload.GenerationID)
+		if err != nil {
+			return "", err
+		}
+		return g.Status, nil
+	}
+	if err := generationPipeline.Run(ctx); err != nil {
+		if err == pipeline.ErrPipelinePaused {
+			appendLog("Pipeline paused by request")
+			logBytes, _ := json.Marshal(logs)
+			gen, _ := genStore.Get(ctx, payload.GenerationID)
+			_ = genStore.UpdateFull(ctx, payload.GenerationID, "paused", gen.Progress, nil, logBytes, gen.Artifacts, &now, nil, nil)
+			_ = domainStore.UpdateStatus(ctx, payload.DomainID, "waiting")
+			return nil
+		}
+		if err == pipeline.ErrPipelineCancelled {
+			appendLog("Pipeline cancelled by request")
+			logBytes, _ := json.Marshal(logs)
+			gen, _ := genStore.Get(ctx, payload.GenerationID)
+			_ = genStore.UpdateFull(ctx, payload.GenerationID, "cancelled", gen.Progress, nil, logBytes, gen.Artifacts, &now, pipeline.PtrTime(time.Now()), nil)
+			_ = domainStore.UpdateStatus(ctx, payload.DomainID, "waiting")
+			return nil
+		}
+		// Обрабатываем ошибки паузы/отмены отдельно
+		if err.Error() == "generation paused" || err.Error() == "generation cancelled" {
+			return nil // Это не ошибка, а нормальное завершение
+		}
+
+		errMsg := err.Error()
+		appendLog(fmt.Sprintf("Pipeline failed: %s", errMsg))
+		logBytes, _ := json.Marshal(logs)
+		_ = genStore.UpdateFull(ctx, payload.GenerationID, "error", 0, &errMsg, logBytes, nil, &now, pipeline.PtrTime(time.Now()), nil)
+		_ = domainStore.UpdateStatus(ctx, payload.DomainID, "waiting")
+		return err
+	}
+
+	// Финальное сохранение
+	fin := time.Now()
+	appendLog("Генерация завершена успешно")
+	logBytes, _ := json.Marshal(logs)
+
+	// Получаем финальные artifacts
+	gen, _ = genStore.Get(ctx, payload.GenerationID)
+	var finalArtifacts []byte
+	if len(gen.Artifacts) > 0 {
+		finalArtifacts = gen.Artifacts
+	} else {
+		artBytes, _ := json.Marshal(state.Artifacts)
+		finalArtifacts = artBytes
+	}
+
+	// Финальное обновление статуса
+	_ = genStore.UpdateFull(ctx, payload.GenerationID, "success", 100, nil, logBytes, finalArtifacts, &now, &fin, nil)
+	_ = domainStore.UpdateStatus(ctx, payload.DomainID, "waiting")
+
+	return nil
+}

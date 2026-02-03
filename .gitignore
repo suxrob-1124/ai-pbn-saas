@@ -1,0 +1,44 @@
+# Server directory - published sites (MVP имитация)
+server/*/
+!server/.gitignore
+!server/README.md
+
+.cache
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.prod
+
+# Build
+dist/
+build/
+
+# Frontend
+node_modules
+.next
+
+
+8n8-projects-example

@@ -1,0 +1,6 @@
+# Игнорируем все опубликованные сайты
+# Оставляем только README.md и .gitignore
+*
+!.gitignore
+!README.md
+

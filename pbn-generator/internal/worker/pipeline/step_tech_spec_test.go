@@ -1,0 +1,131 @@
+package pipeline
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"testing"
+
+	"obzornik-pbn-generator/internal/store/sqlstore"
+)
+
+type fakeLLMForTechSpec struct {
+	genCalled bool
+}
+
+func (f *fakeLLMForTechSpec) Generate(ctx context.Context, stage, prompt, model string) (string, error) {
+	f.genCalled = true
+	return `# Technical Specification
+
+## Requirements
+- Generate high-quality content
+- Use SEO best practices
+`, nil
+}
+
+func (f *fakeLLMForTechSpec) GenerateImage(ctx context.Context, prompt, model string) ([]byte, error) {
+	return nil, nil
+}
+
+type fakePromptManagerForTechSpec struct{}
+
+func (f *fakePromptManagerForTechSpec) GetPromptByStage(ctx context.Context, stage string) (string, string, string, error) {
+	return "prompt-tech-spec-v2", "Generate technical spec based on {{llm_analysis}} for keyword {{keyword}}", "gemini-2.5-pro", nil
+}
+
+func TestTechnicalSpecStep(t *testing.T) {
+	llm := &fakeLLMForTechSpec{}
+	step := &TechnicalSpecStep{}
+	logs := make([]string, 0)
+
+	state := &PipelineState{
+		Context: map[string]any{
+			"llm_analysis": "Competitor analysis shows that top sites use structured content.",
+		},
+		Domain: &sqlstore.Domain{
+			MainKeyword:    "test keyword",
+			TargetCountry:  "US",
+			TargetLanguage: "en",
+		},
+		LLMClient:     llm,
+		PromptManager: &fakePromptManagerForTechSpec{},
+		DefaultModel:  "gemini-2.5-pro",
+		AppendLog: func(s string) {
+			logs = append(logs, s)
+		},
+	}
+
+	artifacts, err := step.Execute(context.Background(), state)
+	if err != nil {
+		t.Fatalf("execute returned error: %v", err)
+	}
+
+	// Проверяем, что LLM был вызван
+	if !llm.genCalled {
+		t.Fatalf("expected LLM Generate to be called")
+	}
+
+	// Проверяем наличие technical_spec
+	technicalSpec, ok := artifacts["technical_spec"].(string)
+	if !ok || technicalSpec == "" {
+		t.Fatalf("expected technical_spec, got %#v", artifacts["technical_spec"])
+	}
+
+	// Проверяем, что technical_spec сохранен в контекст
+	if state.Context["technical_spec"] != technicalSpec {
+		t.Errorf("expected technical_spec to be saved in context")
+	}
+}
+
+func TestTechnicalSpecStep_MissingLLMAnalysis(t *testing.T) {
+	step := &TechnicalSpecStep{}
+	state := &PipelineState{
+		Context:       map[string]any{},
+		Domain:        &sqlstore.Domain{MainKeyword: "test"},
+		LLMClient:     &fakeLLMForTechSpec{},
+		PromptManager: &fakePromptManagerForTechSpec{},
+		AppendLog:     func(s string) {},
+	}
+
+	_, err := step.Execute(context.Background(), state)
+	if err == nil {
+		t.Fatalf("expected error for missing llm_analysis, got nil")
+	}
+	if !strings.Contains(err.Error(), "llm_analysis not found") {
+		t.Errorf("expected error about llm_analysis, got: %v", err)
+	}
+}
+
+func TestTechnicalSpecStep_FallbackPrompt(t *testing.T) {
+	llm := &fakeLLMForTechSpec{}
+	step := &TechnicalSpecStep{}
+	state := &PipelineState{
+		Context: map[string]any{
+			"llm_analysis": "Analysis data",
+		},
+		Domain: &sqlstore.Domain{
+			MainKeyword:   "test",
+			TargetCountry: "US",
+		},
+		LLMClient:     llm,
+		PromptManager: &fakePromptManagerForTechSpecError{},
+		AppendLog:     func(s string) {},
+	}
+
+	artifacts, err := step.Execute(context.Background(), state)
+	if err != nil {
+		t.Fatalf("execute returned error: %v", err)
+	}
+
+	// Проверяем, что шаг работает даже при ошибке загрузки промпта (использует дефолтный)
+	technicalSpec, ok := artifacts["technical_spec"].(string)
+	if !ok || technicalSpec == "" {
+		t.Fatalf("expected technical_spec even with fallback prompt, got %#v", artifacts["technical_spec"])
+	}
+}
+
+type fakePromptManagerForTechSpecError struct{}
+
+func (f *fakePromptManagerForTechSpecError) GetPromptByStage(ctx context.Context, stage string) (string, string, string, error) {
+	return "", "", "", fmt.Errorf("prompt not found")
+}

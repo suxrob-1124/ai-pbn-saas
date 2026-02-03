@@ -1,0 +1,79 @@
+replicaCount: 1
+
+image:
+  repository: your-registry/pbn-generator
+  tag: latest
+  pullPolicy: IfNotPresent
+
+migrateImage:
+  repository: your-registry/pbn-generator-migrate
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8080
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: pbn-generator.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources: {}
+
+env:
+  # Non-secret env
+  - name: PORT
+    value: "8080"
+  - name: DB_DRIVER
+    value: pgx
+  - name: DB_DSN
+    value: postgres://pbn:pbn@pbn-postgres:5432/pbn?sslmode=disable
+  - name: ALLOWED_ORIGINS
+    value: https://app.example.com
+  - name: PUBLIC_APP_URL
+    value: https://app.example.com
+  - name: COOKIE_DOMAIN
+    value: app.example.com
+  - name: COOKIE_SECURE
+    value: "true"
+  - name: CAPTCHA_PROVIDER
+    value: internal
+  - name: CAPTCHA_ATTEMPTS
+    value: "5"
+  - name: CAPTCHA_WINDOW
+    value: 1m
+
+secretEnv:
+  - name: JWT_SECRET
+    value: change-me
+  - name: CAPTCHA_SECRET
+    value: change-me-too
+  - name: SMTP_HOST
+    value: ""
+  - name: SMTP_USER
+    value: ""
+  - name: SMTP_PASSWORD
+    value: ""
+  - name: SMTP_SENDER
+    value: ""
+
+postgres:
+  enabled: false
+  host: ""
+  port: 5432
+  user: pbn
+  password: pbn
+  database: pbn
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 80
