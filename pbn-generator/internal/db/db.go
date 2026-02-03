@@ -34,6 +34,15 @@ func Open(cfg config.Config, logger *zap.SugaredLogger) *sql.DB {
 }
 
 func Migrate(db *sql.DB) error {
+	for _, stmt := range migrationStatements() {
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("migration failed: %w", err)
+		}
+	}
+	return nil
+}
+
+func migrationStatements() []string {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS users (
 			email TEXT PRIMARY KEY,
@@ -94,11 +103,6 @@ func Migrate(db *sql.DB) error {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_captchas_expires ON captchas(expires_at);`,
 	}
-	for _, stmt := range stmts {
-		if _, err := db.Exec(stmt); err != nil {
-			return fmt.Errorf("migration failed: %w", err)
-		}
-	}
 	// Projects/domains/generations
 	projectStmts := []string{
 		`CREATE TABLE IF NOT EXISTS servers (
@@ -143,6 +147,33 @@ func Migrate(db *sql.DB) error {
 		`ALTER TABLE domains ADD COLUMN IF NOT EXISTS target_country TEXT;`,
 		`ALTER TABLE domains ADD COLUMN IF NOT EXISTS target_language TEXT;`,
 		`ALTER TABLE domains ADD COLUMN IF NOT EXISTS exclude_domains TEXT;`,
+		`ALTER TABLE domains ADD COLUMN IF NOT EXISTS published_path TEXT;`,
+		`ALTER TABLE domains ADD COLUMN IF NOT EXISTS file_count INT DEFAULT 0;`,
+		`ALTER TABLE domains ADD COLUMN IF NOT EXISTS total_size_bytes BIGINT DEFAULT 0;`,
+		`CREATE TABLE IF NOT EXISTS site_files (
+			id TEXT PRIMARY KEY,
+			domain_id TEXT NOT NULL REFERENCES domains(id) ON DELETE CASCADE,
+			path TEXT NOT NULL,
+			content_hash TEXT,
+			size_bytes BIGINT NOT NULL,
+			mime_type TEXT NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE(domain_id, path)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_site_files_domain ON site_files(domain_id);`,
+		`CREATE TABLE IF NOT EXISTS file_edits (
+			id TEXT PRIMARY KEY,
+			file_id TEXT NOT NULL REFERENCES site_files(id) ON DELETE CASCADE,
+			edited_by TEXT NOT NULL REFERENCES users(email),
+			content_before_hash TEXT,
+			content_after_hash TEXT,
+			edit_type TEXT NOT NULL DEFAULT 'manual',
+			edit_description TEXT,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_file_edits_file ON file_edits(file_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_file_edits_user ON file_edits(edited_by);`,
 		`CREATE INDEX IF NOT EXISTS idx_domains_project ON domains(project_id);`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_domains_url ON domains(url);`,
 		`CREATE TABLE IF NOT EXISTS system_prompts (
@@ -207,12 +238,7 @@ func Migrate(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_api_key_usage_generation ON api_key_usage_log(generation_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_api_key_usage_date ON api_key_usage_log(first_used_at);`,
 	}
-	for _, stmt := range projectStmts {
-		if _, err := db.Exec(stmt); err != nil {
-			return fmt.Errorf("migration failed: %w", err)
-		}
-	}
-	return nil
+	return append(stmts, projectStmts...)
 }
 
 func pingWithRetry(db *sql.DB, retries int, interval time.Duration) error {

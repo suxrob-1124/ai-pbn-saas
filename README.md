@@ -36,6 +36,8 @@ pbn-generator/  # Backend сервер (было authserver, см. [RENAME_PLAN.
 │   └── crypto/        # Шифрование (Secretbox для API ключей)
 └── init/
     └── seed.sql       # Начальные данные
+scripts/
+└── seed_backend.sh    # Сидинг через backend API
 
 frontend/
 ├── app/               # Next.js App Router страницы
@@ -655,6 +657,9 @@ curl http://localhost:8080/metrics
 - `PORT` — порт HTTP сервера (по умолчанию `8080`)
 - `ALLOWED_ORIGIN` или `ALLOWED_ORIGINS` — CORS origins (по умолчанию `*`)
 - `LOG_LEVEL` — уровень логирования (по умолчанию `info`)
+#### Bootstrap (dev)
+- `BOOTSTRAP_ADMIN_EMAIL` — email пользователя, который при регистрации станет админом (dev)
+- `AUTO_APPROVE_USERS` — автоматически одобрять пользователей при регистрации (dev)
 
 #### База данных
 - `DB_DRIVER` — драйвер БД (только `pgx`)
@@ -718,10 +723,27 @@ docker compose up --build
 - `worker` — воркер для задач
 - `migrate` — миграции БД (запускается один раз)
 - `seed` — начальные данные (запускается один раз)
+- `seed_backend` — сидинг через backend API (после запуска backend)
 - `frontend` — Next.js приложение
 - `redis` — Redis для очереди
 - `prometheus` — метрики
 - `grafana` — дашборды
+
+### Сидинг через backend API (dev)
+
+Скрипт создаёт пользователей, проекты и домены через API и идемпотентен:
+
+```bash
+./scripts/seed_backend.sh
+```
+
+По умолчанию используются пароли:
+- `admin@example.com` / `Admin123!!`
+- `manager@example.com` / `Manager123!!`
+- `manager2@example.com` / `Manager123!!`
+- `user@example.com` / `User123!!!`
+
+Подробнее: `docs/SEEDING.md`
 
 ### Production
 

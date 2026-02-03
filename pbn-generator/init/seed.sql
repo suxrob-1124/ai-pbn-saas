@@ -1,7 +1,44 @@
 -- Seed data for local/testing environments.
 -- Default credentials:
---   Admin:    admin@example.com / Admin123!
---   Manager:  manager@example.com / Manager123!
+--   Admin:    admin@example.com / Admin123!!
+--   Manager:  manager@example.com / Manager123!!
+
+
+-- Seed users, projects, domains for local/testing
+-- CREATE EXTENSION IF NOT EXISTS pgcrypto;
+-- INSERT INTO users (email, password_hash, created_at, verified, name, avatar_url, role, is_approved)
+-- VALUES
+--   ('admin@example.com', crypt('Admin123!!', gen_salt('bf'))::bytea, NOW(), TRUE, 'Admin', NULL, 'admin', TRUE),
+--   ('manager@example.com', crypt('Manager123!!', gen_salt('bf'))::bytea, NOW(), TRUE, 'Manager', NULL, 'manager', TRUE),
+--   ('manager2@example.com', crypt('Manager123!!', gen_salt('bf'))::bytea, NOW(), TRUE, 'Manager Two', NULL, 'manager', TRUE),
+--   ('user@example.com', crypt('User123!!', gen_salt('bf'))::bytea, NOW(), TRUE, 'User', NULL, 'manager', TRUE)
+-- ON CONFLICT (email) DO UPDATE SET
+--   password_hash = EXCLUDED.password_hash,
+--   verified = EXCLUDED.verified,
+--   name = EXCLUDED.name,
+--   avatar_url = EXCLUDED.avatar_url,
+--   role = EXCLUDED.role,
+--   is_approved = EXCLUDED.is_approved;
+
+-- INSERT INTO projects (id, user_email, name, target_country, target_language, status, created_at, updated_at)
+-- VALUES
+--   ('proj-admin-001', 'admin@example.com', 'Admin Project', 'se', 'sv', 'draft', NOW(), NOW()),
+--   ('proj-surstrem-001', 'manager@example.com', 'surstrem', 'se', 'sv', 'draft', NOW(), NOW()),
+--   ('proj-1xbet-ru-001', 'manager2@example.com', '1xbet-ru', 'ru', 'ru', 'draft', NOW(), NOW())
+-- ON CONFLICT (id) DO NOTHING;
+
+-- INSERT INTO domains (id, project_id, url, main_keyword, target_country, target_language, status, created_at, updated_at)
+-- VALUES
+--   ('dom-admin-001', 'proj-admin-001', 'admin-example.com', 'admin keyword', 'se', 'sv', 'waiting', NOW(), NOW()),
+--   ('dom-admin-002', 'proj-admin-001', 'admin-blog.com', 'admin blog', 'se', 'sv', 'waiting', NOW(), NOW()),
+--   ('dom-surstrem-001', 'proj-surstrem-001', 'profitnesscamps.se', 'surstrem keyword', 'se', 'sv', 'waiting', NOW(), NOW()),
+--   ('dom-surstrem-002', 'proj-surstrem-001', 'elinloe.se', 'surstrem keyword', 'se', 'sv', 'waiting', NOW(), NOW()),
+--   ('dom-surstrem-003', 'proj-surstrem-001', 'kundservice.net', 'surstrem keyword', 'se', 'sv', 'waiting', NOW(), NOW()),
+--   ('dom-1xbet-ru-001', 'proj-1xbet-ru-001', 'скважина61.рф', '1xbet keyword', 'ru', 'ru', 'waiting', NOW(), NOW()),
+--   ('dom-1xbet-ru-002', 'proj-1xbet-ru-001', 'dialog-c.ru', '1xbet keyword', 'ru', 'ru', 'waiting', NOW(), NOW()),
+--   ('dom-1xbet-ru-003', 'proj-1xbet-ru-001', 'autogornostay.ru', '1xbet keyword', 'ru', 'ru', 'waiting', NOW(), NOW())
+-- ON CONFLICT (id) DO NOTHING;
+
 
 INSERT INTO system_prompts (id, name, description, body, stage, model, is_active, created_at, updated_at)
 VALUES (

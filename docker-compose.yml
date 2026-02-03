@@ -105,6 +105,23 @@ services:
       -f /work/pbn-generator/init/seed.sql
     restart: "no"
 
+  seed_backend:
+    image: python:3.12-alpine
+    env_file:
+      - .env
+    environment:
+      API_URL: "http://backend:8080"
+    depends_on:
+      backend:
+        condition: service_started
+    volumes:
+      - .:/work
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      apk add --no-cache bash curl &&
+      /work/scripts/seed_backend.sh
+    restart: "no"
+
   frontend:
     build:
       context: ./frontend

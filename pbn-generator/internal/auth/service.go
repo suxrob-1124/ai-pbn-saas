@@ -43,6 +43,8 @@ type Service struct {
 	appURL              string
 	captchaLimiter      *SlidingLimiter
 	apiKeySecret        []byte
+	bootstrapAdminEmail string
+	autoApproveUsers    bool
 }
 
 type ServiceDeps struct {
@@ -94,6 +96,8 @@ func NewService(deps ServiceDeps) *Service {
 		requireVerification: deps.Config.RequireEmailVerification,
 		captchaLimiter:      NewSlidingLimiter(deps.Config.CaptchaAttempts, deps.Config.CaptchaWindow),
 		apiKeySecret:        secretbox.DeriveKey(deps.Config.APIKeySecret),
+		bootstrapAdminEmail: NormalizeEmail(deps.Config.BootstrapAdminEmail),
+		autoApproveUsers:    deps.Config.AutoApproveUsers,
 	}
 }
 
@@ -118,6 +122,18 @@ func (s *Service) Register(ctx context.Context, ip string, creds Credentials, ca
 	u, err := s.users.Create(ctx, email, creds.Password)
 	if err != nil {
 		return User{}, err
+	}
+	if s.bootstrapAdminEmail != "" && strings.EqualFold(email, s.bootstrapAdminEmail) {
+		if err := s.users.UpdateRole(ctx, email, "admin"); err == nil {
+			u.Role = "admin"
+		}
+		if err := s.users.SetApproved(ctx, email, true); err == nil {
+			u.IsApproved = true
+		}
+	} else if s.autoApproveUsers {
+		if err := s.users.SetApproved(ctx, email, true); err == nil {
+			u.IsApproved = true
+		}
 	}
 	if !s.requireVerification {
 		_ = s.users.SetVerified(ctx, email)
@@ -196,6 +212,21 @@ func (s *Service) ChangePassword(ctx context.Context, email, currentPassword, ne
 
 	if _, err := s.users.Authenticate(ctx, email, currentPassword); err != nil {
 		return ErrInvalidCredentials
+	}
+	if err := s.users.UpdatePassword(ctx, email, newPassword); err != nil {
+		return fmt.Errorf("could not update password")
+	}
+	if err := s.sessions.RevokeByEmail(ctx, email); err != nil {
+		s.logger.Warnf("failed to revoke sessions: %v", err)
+	}
+	return nil
+}
+
+// SetPasswordAdmin устанавливает пароль пользователя без знания текущего пароля.
+// Доступ к этому методу должен быть ограничен админскими эндпоинтами.
+func (s *Service) SetPasswordAdmin(ctx context.Context, email, newPassword string) error {
+	if err := validatePassword(newPassword, s.passwordPolicy); err != nil {
+		return err
 	}
 	if err := s.users.UpdatePassword(ctx, email, newPassword); err != nil {
 		return fmt.Errorf("could not update password")

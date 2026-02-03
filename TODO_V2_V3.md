@@ -10,7 +10,7 @@
 
 ### Sprint 1: File Storage
 
-- [ ] **Миграция 001: Create site_files table**
+- [x] **Миграция 001: Create site_files table**
   ```sql
   CREATE TABLE IF NOT EXISTS site_files (
     id TEXT PRIMARY KEY,
@@ -26,7 +26,7 @@
   CREATE INDEX idx_site_files_domain ON site_files(domain_id);
   ```
 
-- [ ] **Миграция 002: Create file_edits table**
+- [x] **Миграция 002: Create file_edits table**
   ```sql
   CREATE TABLE IF NOT EXISTS file_edits (
     id TEXT PRIMARY KEY,
@@ -42,7 +42,7 @@
   CREATE INDEX idx_file_edits_user ON file_edits(edited_by);
   ```
 
-- [ ] **Миграция 003: Alter domains table**
+- [x] **Миграция 003: Alter domains table**
   ```sql
   ALTER TABLE domains ADD COLUMN IF NOT EXISTS published_path TEXT;  -- '/server/example.com/'
   ALTER TABLE domains ADD COLUMN IF NOT EXISTS file_count INT DEFAULT 0;

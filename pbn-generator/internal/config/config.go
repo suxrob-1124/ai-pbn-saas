@@ -70,6 +70,8 @@ type Config struct {
 	GeminiRequestTimeout     time.Duration
 	GeminiRateLimitPerMin    int
 	ArtifactRetentionDays    int // Количество дней хранения артефактов (по умолчанию 30)
+	BootstrapAdminEmail      string
+	AutoApproveUsers         bool
 }
 
 func Load() Config {
@@ -135,6 +137,8 @@ func Load() Config {
 		GeminiRequestTimeout:     envDuration("GEMINI_REQUEST_TIMEOUT", 5*time.Minute),
 		GeminiRateLimitPerMin:    envInt("GEMINI_RATE_LIMIT_PER_MIN", 60),
 		ArtifactRetentionDays:    envInt("ARTIFACT_RETENTION_DAYS", 30),
+		BootstrapAdminEmail:      env("BOOTSTRAP_ADMIN_EMAIL", ""),
+		AutoApproveUsers:         envBool("AUTO_APPROVE_USERS", false),
 	}
 }
 

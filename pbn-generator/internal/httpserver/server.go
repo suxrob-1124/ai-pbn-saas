@@ -1530,6 +1530,10 @@ func (s *Server) handleAdminUserRoute(w http.ResponseWriter, r *http.Request) {
 		s.handleAdminUserProjects(w, r, targetEmail)
 		return
 	}
+	if len(parts) > 1 && parts[1] == "password" {
+		s.handleAdminUserPassword(w, r, targetEmail)
+		return
+	}
 
 	switch r.Method {
 	case http.MethodGet:
@@ -1600,6 +1604,29 @@ func (s *Server) handleAdminUserRoute(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+func (s *Server) handleAdminUserPassword(w http.ResponseWriter, r *http.Request, email string) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !ensureJSON(w, r) {
+		return
+	}
+	defer r.Body.Close()
+	var body struct {
+		NewPassword string `json:"newPassword"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.NewPassword) == "" {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if err := s.svc.SetPasswordAdmin(r.Context(), email, body.NewPassword); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "password updated"})
 }
 
 func (s *Server) handleAdminUserProjects(w http.ResponseWriter, r *http.Request, email string) {
