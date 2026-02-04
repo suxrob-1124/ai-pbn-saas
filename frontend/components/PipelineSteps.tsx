@@ -1,6 +1,7 @@
 "use client";
 
 import { FiCheck, FiClock, FiLoader, FiRefreshCw } from "react-icons/fi";
+import { PIPELINE_STEPS, computeDisplayProgress, isStepComplete } from "../lib/pipelineProgress";
 
 type PipelineGeneration = {
   artifacts?: Record<string, any>;
@@ -16,27 +17,6 @@ type PipelineStepsProps = {
   onForceStep?: (stepId: string) => Promise<void>;
 };
 
-type StepDefinition = {
-  id: string;
-  label: string;
-  artifactKey?: string;
-  forceable?: boolean;
-};
-
-const STEP_DEFINITIONS: StepDefinition[] = [
-  { id: "serp_analysis", label: "SERP Analysis", artifactKey: "analysis_csv", forceable: true },
-  { id: "competitor_analysis", label: "Competitor Analysis", artifactKey: "llm_analysis", forceable: true },
-  { id: "technical_spec", label: "Technical Spec", artifactKey: "technical_spec", forceable: true },
-  { id: "content_generation", label: "Content Generation", artifactKey: "content_markdown", forceable: true },
-  { id: "design_architecture", label: "Design Architecture", artifactKey: "design_system", forceable: true },
-  { id: "logo_generation", label: "Logo Generation", artifactKey: "logo_svg", forceable: true },
-  { id: "html_generation", label: "HTML Generation", artifactKey: "html_raw", forceable: true },
-  { id: "css_generation", label: "CSS Generation", artifactKey: "css_content", forceable: true },
-  { id: "js_generation", label: "JS Generation", artifactKey: "js_content", forceable: true },
-  { id: "image_generation", label: "Image Generation", artifactKey: "image_prompts", forceable: true },
-  { id: "assembly", label: "Final Assembly & Zip", artifactKey: "zip_archive", forceable: true },
-];
-
 const ACTIVE_STATUSES = new Set(["pending", "processing", "pause_requested", "paused", "cancelling"]);
 
 const STATUS_TEXT: Record<string, string> = {
@@ -47,15 +27,10 @@ const STATUS_TEXT: Record<string, string> = {
 
 export default function PipelineSteps({ domainId, generation, disabled, activeStep, onForceStep }: PipelineStepsProps) {
   const generationStatus = generation?.status || "";
-  const firstIncompleteIndex = STEP_DEFINITIONS.findIndex((step) => {
-    if (!step.artifactKey) {
-      return true;
-    }
-    const value = generation?.artifacts?.[step.artifactKey];
-    return value === undefined || value === null || value === "";
-  });
+  const firstIncompleteIndex = PIPELINE_STEPS.findIndex((step) => !isStepComplete(generation?.artifacts, step.artifactKeys));
   const isActiveRun = ACTIVE_STATUSES.has(generationStatus);
   const runningIndex = isActiveRun && firstIncompleteIndex >= 0 ? firstIncompleteIndex : -1;
+  const displayProgress = computeDisplayProgress(generation?.artifacts, generation?.progress, generationStatus);
 
   const handleForceClick = async (stepId: string) => {
     if (!onForceStep) {
@@ -67,11 +42,10 @@ export default function PipelineSteps({ domainId, generation, disabled, activeSt
   return (
     <div className="space-y-3" data-domain-id={domainId}>
       <div className="grid gap-3 md:grid-cols-2">
-        {STEP_DEFINITIONS.map((step, index) => {
-          const hasArtifact = step.artifactKey ? Boolean(generation?.artifacts?.[step.artifactKey]) : false;
-          const isDone = hasArtifact;
+        {PIPELINE_STEPS.map((step, index) => {
+          const isDone = isStepComplete(generation?.artifacts, step.artifactKeys);
           const statusKey = isDone ? "done" : runningIndex === index ? "running" : "pending";
-          const statusLabel = statusKey === "running" && generation?.progress != null ? `${STATUS_TEXT[statusKey]} · ${generation.progress}%` : STATUS_TEXT[statusKey];
+          const statusLabel = statusKey === "running" ? `${STATUS_TEXT[statusKey]} · ${displayProgress}%` : STATUS_TEXT[statusKey];
           const Icon = statusKey === "done" ? FiCheck : statusKey === "running" ? FiLoader : FiClock;
           const showForce = step.forceable && (statusKey === "done" || statusKey === "pending" || statusKey === "running");
           const buttonDisabled = disabled || Boolean(activeStep);

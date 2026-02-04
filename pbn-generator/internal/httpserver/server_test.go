@@ -57,7 +57,9 @@ func setupServer(t *testing.T) *Server {
 	dom := newStubDomainStore()
 	gen := newStubGenerationStore()
 	prompts := newStubPromptStore()
-	return New(cfg, svc, logger, proj, dom, gen, prompts, newStubEnqueuer())
+	siteFiles := newStubSiteFileStore()
+	fileEdits := newStubFileEditStore()
+	return New(cfg, svc, logger, proj, nil, dom, gen, prompts, siteFiles, fileEdits, newStubEnqueuer())
 }
 
 func TestRegisterAndLogin(t *testing.T) {
@@ -223,25 +225,33 @@ func TestLogoutAll(t *testing.T) {
 
 func TestAdminRoleSecurity(t *testing.T) {
 	s := setupServer(t)
+	users := newStubUserStore()
+	s.svc = auth.NewService(auth.ServiceDeps{
+		Config:             s.cfg,
+		Users:              users,
+		Sessions:           newStubSessionStore(),
+		VerificationTokens: newStubVerificationStore(),
+		ResetTokens:        newStubResetStore(),
+		Captchas:           newStubCaptchaStore(),
+		Mailer:             stubMailer{},
+		Logger:             zap.NewNop().Sugar(),
+	})
 
 	// Создаем двух админов
 	admin1Ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 		Email: "admin1@example.com",
 		Role:  "admin",
 	})
-	admin2Ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
-		Email: "admin2@example.com",
-		Role:  "admin",
-	})
 
 	// Создаем пользователей через stub
-	store := s.svc.(*auth.Service).Users.(*stubUserStore)
-	store.users["admin1@example.com"] = "pass"
-	store.roles["admin1@example.com"] = "admin"
-	store.users["admin2@example.com"] = "pass"
-	store.roles["admin2@example.com"] = "admin"
-	store.users["manager@example.com"] = "pass"
-	store.roles["manager@example.com"] = "manager"
+	users.users["admin1@example.com"] = "pass"
+	users.roles["admin1@example.com"] = "admin"
+	users.users["admin2@example.com"] = "pass"
+	users.roles["admin2@example.com"] = "admin"
+	users.users["manager@example.com"] = "pass"
+	users.roles["manager@example.com"] = "manager"
+	users.users["manager2@example.com"] = "pass"
+	users.roles["manager2@example.com"] = "manager"
 
 	handler := http.HandlerFunc(s.handleAdminUserRoute)
 
@@ -282,7 +292,7 @@ func TestAdminRoleSecurity(t *testing.T) {
 	}
 
 	// Тест 4: Валидация недопустимых ролей
-	req4 := httptest.NewRequest(http.MethodPatch, "/api/admin/users/manager@example.com",
+	req4 := httptest.NewRequest(http.MethodPatch, "/api/admin/users/manager2@example.com",
 		strings.NewReader(`{"role":"superadmin"}`)).WithContext(admin1Ctx)
 	req4.Header.Set("Content-Type", "application/json")
 	rec4 := httptest.NewRecorder()
@@ -352,8 +362,296 @@ func TestAdminPromptCRUD(t *testing.T) {
 	delReq := httptest.NewRequest(http.MethodDelete, "/api/admin/prompts/"+created.ID, nil).WithContext(adminCtx)
 	delRec := httptest.NewRecorder()
 	detail.ServeHTTP(delRec, delReq)
-	if delRec.Code != http.StatusNoContent {
+	if delRec.Code != http.StatusOK {
 		t.Fatalf("delete failed: %d %s", delRec.Code, delRec.Body.String())
+	}
+}
+
+func TestAdminCanGenerateWithoutMembership(t *testing.T) {
+	s := setupServer(t)
+	cfg := s.cfg
+	cfg.APIKeySecret = "test-secret-key"
+	users := newStubUserStore()
+	s.svc = auth.NewService(auth.ServiceDeps{
+		Config:             cfg,
+		Users:              users,
+		Sessions:           newStubSessionStore(),
+		VerificationTokens: newStubVerificationStore(),
+		ResetTokens:        newStubResetStore(),
+		Captchas:           newStubCaptchaStore(),
+		Mailer:             stubMailer{},
+		Logger:             zap.NewNop().Sugar(),
+	})
+
+	const (
+		projectID = "project-1"
+		domainID  = "domain-1"
+		owner     = "owner@example.com"
+	)
+
+	users.users[owner] = "pass"
+	users.verified[owner] = true
+	users.roles[owner] = "manager"
+	users.approved[owner] = true
+	users.users["admin@example.com"] = "pass"
+	users.verified["admin@example.com"] = true
+	users.roles["admin@example.com"] = "admin"
+	users.approved["admin@example.com"] = true
+	if err := users.SetAPIKey(context.Background(), "admin@example.com", []byte("enc-key"), time.Now().UTC()); err != nil {
+		t.Fatalf("set admin api key: %v", err)
+	}
+	if err := users.SetAPIKey(context.Background(), owner, []byte("enc-key"), time.Now().UTC()); err != nil {
+		t.Fatalf("set api key: %v", err)
+	}
+
+	projStore, ok := s.projects.(*stubProjectStore)
+	if !ok {
+		t.Fatalf("unexpected project store type")
+	}
+	projStore.projects[projectID] = sqlstore.Project{
+		ID:        projectID,
+		UserEmail: owner,
+		Name:      "Project",
+		Status:    "active",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+
+	domainStore, ok := s.domains.(*stubDomainStore)
+	if !ok {
+		t.Fatalf("unexpected domain store type")
+	}
+	domainStore.domains[domainID] = sqlstore.Domain{
+		ID:        domainID,
+		ProjectID: projectID,
+		URL:       "kundservice.net",
+		MainKeyword: "keyword",
+		Status:    "waiting",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+
+	adminCtx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: "admin@example.com",
+		Role:  "admin",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/domains/"+domainID+"/generate", strings.NewReader(`{}`)).WithContext(adminCtx)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.handleDomainGenerate(rec, req, domainID)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202 for admin generate, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGetProjectMemberRole_AdminBypass(t *testing.T) {
+	s := setupServer(t)
+	projStore, ok := s.projects.(*stubProjectStore)
+	if !ok {
+		t.Fatalf("unexpected project store type")
+	}
+	projectID := "project-admin-1"
+	projStore.projects[projectID] = sqlstore.Project{
+		ID:        projectID,
+		UserEmail: "owner@example.com",
+		Name:      "Project",
+		Status:    "active",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+
+	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: "admin@example.com",
+		Role:  "admin",
+	})
+	role, err := s.getProjectMemberRole(ctx, projectID, "admin@example.com")
+	if err != nil {
+		t.Fatalf("expected no error for admin, got: %v", err)
+	}
+	if role != "admin" {
+		t.Fatalf("expected admin role, got %q", role)
+	}
+}
+
+func TestAdminGenerateUsesAdminAPIKey(t *testing.T) {
+	s := setupServer(t)
+	cfg := s.cfg
+	cfg.APIKeySecret = "test-secret-key"
+	users := newStubUserStore()
+	s.svc = auth.NewService(auth.ServiceDeps{
+		Config:             cfg,
+		Users:              users,
+		Sessions:           newStubSessionStore(),
+		VerificationTokens: newStubVerificationStore(),
+		ResetTokens:        newStubResetStore(),
+		Captchas:           newStubCaptchaStore(),
+		Mailer:             stubMailer{},
+		Logger:             zap.NewNop().Sugar(),
+	})
+
+	const (
+		projectID = "project-admin-key"
+		domainID  = "domain-admin-key"
+		owner     = "owner@example.com"
+		admin     = "admin@example.com"
+	)
+
+	users.users[owner] = "pass"
+	users.verified[owner] = true
+	users.roles[owner] = "manager"
+	users.approved[owner] = true
+
+	users.users[admin] = "pass"
+	users.verified[admin] = true
+	users.roles[admin] = "admin"
+	users.approved[admin] = true
+	if err := users.SetAPIKey(context.Background(), admin, []byte("enc-key"), time.Now().UTC()); err != nil {
+		t.Fatalf("set admin api key: %v", err)
+	}
+
+	projStore, ok := s.projects.(*stubProjectStore)
+	if !ok {
+		t.Fatalf("unexpected project store type")
+	}
+	projStore.projects[projectID] = sqlstore.Project{
+		ID:        projectID,
+		UserEmail: owner,
+		Name:      "Project",
+		Status:    "active",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+
+	domainStore, ok := s.domains.(*stubDomainStore)
+	if !ok {
+		t.Fatalf("unexpected domain store type")
+	}
+	domainStore.domains[domainID] = sqlstore.Domain{
+		ID:          domainID,
+		ProjectID:   projectID,
+		URL:         "kundservice.net",
+		MainKeyword: "keyword",
+		Status:      "waiting",
+		CreatedAt:   time.Now().UTC(),
+		UpdatedAt:   time.Now().UTC(),
+	}
+
+	adminCtx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: admin,
+		Role:  "admin",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/domains/"+domainID+"/generate", strings.NewReader(`{}`)).WithContext(adminCtx)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.handleDomainGenerate(rec, req, domainID)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202 for admin generate with admin api key, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGenerationAction_PausePending(t *testing.T) {
+	s := setupServer(t)
+
+	projectID := "project-pause"
+	domainID := "domain-pause"
+	genID := "gen-pause"
+	s.projects.(*stubProjectStore).projects[projectID] = sqlstore.Project{
+		ID:        projectID,
+		UserEmail: "owner@example.com",
+		Name:      "Project",
+		Status:    "active",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+	s.domains.(*stubDomainStore).domains[domainID] = sqlstore.Domain{
+		ID:          domainID,
+		ProjectID:   projectID,
+		URL:         "example.com",
+		MainKeyword: "keyword",
+		Status:      "processing",
+		CreatedAt:   time.Now().UTC(),
+		UpdatedAt:   time.Now().UTC(),
+	}
+	s.generations.(*stubGenerationStore).generations[genID] = sqlstore.Generation{
+		ID:        genID,
+		DomainID:  domainID,
+		Status:    "pending",
+		Progress:  0,
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+
+	adminCtx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: "admin@example.com",
+		Role:  "admin",
+	})
+	req := httptest.NewRequest(http.MethodPatch, "/api/generations/"+genID, strings.NewReader(`{"action":"pause"}`)).WithContext(adminCtx)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.handleGenerationAction(rec, req, genID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("pause pending status: %d %s", rec.Code, rec.Body.String())
+	}
+	gen := s.generations.(*stubGenerationStore).generations[genID]
+	if gen.Status != "paused" {
+		t.Fatalf("expected paused status, got %s", gen.Status)
+	}
+	domain := s.domains.(*stubDomainStore).domains[domainID]
+	if domain.Status != "waiting" {
+		t.Fatalf("expected domain waiting, got %s", domain.Status)
+	}
+}
+
+func TestGenerationAction_CancelPending(t *testing.T) {
+	s := setupServer(t)
+
+	projectID := "project-cancel"
+	domainID := "domain-cancel"
+	genID := "gen-cancel"
+	s.projects.(*stubProjectStore).projects[projectID] = sqlstore.Project{
+		ID:        projectID,
+		UserEmail: "owner@example.com",
+		Name:      "Project",
+		Status:    "active",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+	s.domains.(*stubDomainStore).domains[domainID] = sqlstore.Domain{
+		ID:          domainID,
+		ProjectID:   projectID,
+		URL:         "example.com",
+		MainKeyword: "keyword",
+		Status:      "processing",
+		CreatedAt:   time.Now().UTC(),
+		UpdatedAt:   time.Now().UTC(),
+	}
+	s.generations.(*stubGenerationStore).generations[genID] = sqlstore.Generation{
+		ID:        genID,
+		DomainID:  domainID,
+		Status:    "pending",
+		Progress:  0,
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+
+	adminCtx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: "admin@example.com",
+		Role:  "admin",
+	})
+	req := httptest.NewRequest(http.MethodPatch, "/api/generations/"+genID, strings.NewReader(`{"action":"cancel"}`)).WithContext(adminCtx)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.handleGenerationAction(rec, req, genID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("cancel pending status: %d %s", rec.Code, rec.Body.String())
+	}
+	gen := s.generations.(*stubGenerationStore).generations[genID]
+	if gen.Status != "cancelled" {
+		t.Fatalf("expected cancelled status, got %s", gen.Status)
+	}
+	domain := s.domains.(*stubDomainStore).domains[domainID]
+	if domain.Status != "waiting" {
+		t.Fatalf("expected domain waiting, got %s", domain.Status)
 	}
 }
 
@@ -471,6 +769,8 @@ type stubUserStore struct {
 	verified map[string]bool
 	roles    map[string]string
 	approved map[string]bool
+	apiKeys  map[string][]byte
+	apiKeyAt map[string]time.Time
 }
 
 func newStubUserStore() *stubUserStore {
@@ -479,6 +779,8 @@ func newStubUserStore() *stubUserStore {
 		verified: make(map[string]bool),
 		roles:    make(map[string]string),
 		approved: make(map[string]bool),
+		apiKeys:  make(map[string][]byte),
+		apiKeyAt: make(map[string]time.Time),
 	}
 }
 
@@ -597,6 +899,42 @@ func (s *stubUserStore) SetApproved(ctx context.Context, email string, approved 
 	}
 	s.approved[email] = approved
 	return nil
+}
+
+func (s *stubUserStore) SetAPIKey(ctx context.Context, email string, ciphertext []byte, updatedAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.users[email]; !ok {
+		return errors.New("not found")
+	}
+	s.apiKeys[email] = append([]byte(nil), ciphertext...)
+	s.apiKeyAt[email] = updatedAt
+	return nil
+}
+
+func (s *stubUserStore) ClearAPIKey(ctx context.Context, email string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.users[email]; !ok {
+		return errors.New("not found")
+	}
+	delete(s.apiKeys, email)
+	delete(s.apiKeyAt, email)
+	return nil
+}
+
+func (s *stubUserStore) GetAPIKey(ctx context.Context, email string) ([]byte, *time.Time, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.users[email]; !ok {
+		return nil, nil, errors.New("not found")
+	}
+	key, ok := s.apiKeys[email]
+	if !ok {
+		return nil, nil, errors.New("not found")
+	}
+	ts := s.apiKeyAt[email]
+	return append([]byte(nil), key...), &ts, nil
 }
 
 type stubSessionStore struct {
@@ -1003,6 +1341,12 @@ func (s *stubEnqueuer) Enqueue(ctx context.Context, task *asynq.Task, opts ...as
 func (s *stubGenerationStore) Create(ctx context.Context, g sqlstore.Generation) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if g.CreatedAt.IsZero() {
+		g.CreatedAt = time.Now().UTC()
+	}
+	if g.UpdatedAt.IsZero() {
+		g.UpdatedAt = g.CreatedAt
+	}
 	s.generations[g.ID] = g
 	return nil
 }
@@ -1101,10 +1445,117 @@ func (s *stubGenerationStore) UpdateFull(ctx context.Context, id, status string,
 		if promptID != nil {
 			g.PromptID = sqlstore.NullableString(*promptID)
 		}
+		g.UpdatedAt = time.Now().UTC()
 		s.generations[id] = g
 		return nil
 	}
 	return errors.New("not found")
+}
+
+func (s *stubGenerationStore) SaveCheckpoint(ctx context.Context, id string, checkpointData []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if g, ok := s.generations[id]; ok {
+		g.CheckpointData = append([]byte(nil), checkpointData...)
+		g.UpdatedAt = time.Now().UTC()
+		s.generations[id] = g
+		return nil
+	}
+	return errors.New("not found")
+}
+
+func (s *stubGenerationStore) ClearCheckpoint(ctx context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if g, ok := s.generations[id]; ok {
+		g.CheckpointData = nil
+		g.UpdatedAt = time.Now().UTC()
+		s.generations[id] = g
+		return nil
+	}
+	return errors.New("not found")
+}
+
+func (s *stubGenerationStore) UpdateStatusWithCheckpoint(ctx context.Context, id, status string, progress int, checkpointData []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if g, ok := s.generations[id]; ok {
+		g.Status = status
+		g.Progress = progress
+		g.CheckpointData = append([]byte(nil), checkpointData...)
+		g.UpdatedAt = time.Now().UTC()
+		s.generations[id] = g
+		return nil
+	}
+	return errors.New("not found")
+}
+
+func (s *stubGenerationStore) GetLastSuccessfulByDomain(ctx context.Context, domainID string) (sqlstore.Generation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var (
+		found bool
+		last  sqlstore.Generation
+	)
+	for _, g := range s.generations {
+		if g.DomainID != domainID || g.Status != "success" {
+			continue
+		}
+		if !found {
+			last = g
+			found = true
+			continue
+		}
+		lastTime := last.UpdatedAt
+		if lastTime.IsZero() {
+			lastTime = last.CreatedAt
+		}
+		curTime := g.UpdatedAt
+		if curTime.IsZero() {
+			curTime = g.CreatedAt
+		}
+		if curTime.After(lastTime) {
+			last = g
+		}
+	}
+	if !found {
+		return sqlstore.Generation{}, errors.New("not found")
+	}
+	return last, nil
+}
+
+func (s *stubGenerationStore) GetLastByDomain(ctx context.Context, domainID string) (sqlstore.Generation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var (
+		found bool
+		last  sqlstore.Generation
+	)
+	for _, g := range s.generations {
+		if g.DomainID != domainID {
+			continue
+		}
+		if !found {
+			last = g
+			found = true
+			continue
+		}
+		lastTime := last.UpdatedAt
+		if lastTime.IsZero() {
+			lastTime = last.CreatedAt
+		}
+		curTime := g.UpdatedAt
+		if curTime.IsZero() {
+			curTime = g.CreatedAt
+		}
+		if curTime.After(lastTime) {
+			last = g
+		}
+	}
+	if !found {
+		return sqlstore.Generation{}, errors.New("not found")
+	}
+	return last, nil
 }
 
 type stubPromptStore struct {
@@ -1171,4 +1622,44 @@ func (s *stubPromptStore) Get(ctx context.Context, id string) (sqlstore.SystemPr
 		return sqlstore.SystemPrompt{}, sql.ErrNoRows
 	}
 	return p, nil
+}
+
+type stubSiteFileStore struct{}
+
+func newStubSiteFileStore() *stubSiteFileStore {
+	return &stubSiteFileStore{}
+}
+
+func (s *stubSiteFileStore) Get(ctx context.Context, fileID string) (*sqlstore.SiteFile, error) {
+	return nil, sql.ErrNoRows
+}
+
+func (s *stubSiteFileStore) List(ctx context.Context, domainID string) ([]sqlstore.SiteFile, error) {
+	return []sqlstore.SiteFile{}, nil
+}
+
+func (s *stubSiteFileStore) GetByPath(ctx context.Context, domainID, path string) (*sqlstore.SiteFile, error) {
+	return nil, sql.ErrNoRows
+}
+
+func (s *stubSiteFileStore) Update(ctx context.Context, fileID string, content []byte) error {
+	return errors.New("not found")
+}
+
+func (s *stubSiteFileStore) Delete(ctx context.Context, fileID string) error {
+	return errors.New("not found")
+}
+
+type stubFileEditStore struct{}
+
+func newStubFileEditStore() *stubFileEditStore {
+	return &stubFileEditStore{}
+}
+
+func (s *stubFileEditStore) Create(ctx context.Context, edit sqlstore.FileEdit) error {
+	return nil
+}
+
+func (s *stubFileEditStore) ListByFile(ctx context.Context, fileID string, limit int) ([]sqlstore.FileEdit, error) {
+	return []sqlstore.FileEdit{}, nil
 }

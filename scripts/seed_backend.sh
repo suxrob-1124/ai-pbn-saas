@@ -15,18 +15,18 @@ SURSTREM_PROJECT_NAME="${SURSTREM_PROJECT_NAME:-surstrem}"
 SURSTREM_COUNTRY="${SURSTREM_COUNTRY:-se}"
 SURSTREM_LANG="${SURSTREM_LANG:-sv}"
 SURSTREM_DOMAINS=(
-  "profitnesscamps.se"
-  "elinloe.se"
-  "kundservice.net"
+  "profitnesscamps.se||Insättning och uttag på utländska casinon: kort, e-plånböcker, banköverföring och krypto"
+  "elinloe.se||Snabba uttag hos utländska casinon: vad påverkar utbetalningstiderna?"
+  "kundservice.net||Bonuserbjudanden på utländska casinon: hur du läser omsättningskrav och maxuttag"
 )
 
 XBET_PROJECT_NAME="${XBET_PROJECT_NAME:-1xbet-ru}"
 XBET_COUNTRY="${XBET_COUNTRY:-ru}"
 XBET_LANG="${XBET_LANG:-ru}"
 XBET_DOMAINS=(
-  "скважина61.рф"
-  "dialog-c.ru"
-  "autogornostay.ru"
+  "скважина61.рф||бонус за регистрацию 1xBet"
+  "dialog-c.ru||1хБет вывод средств"
+  "autogornostay.ru||регистрация в 1хБет"
 )
 
 WORK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -200,8 +200,18 @@ import_domains() {
   local project_id="$2"
   shift 2
   local items=()
-  for url in "$@"; do
-    items+=("{\"url\":\"${url}\"}")
+  for entry in "$@"; do
+    local url="$entry"
+    local keyword=""
+    if [[ "$entry" == *"||"* ]]; then
+      url="${entry%%||*}"
+      keyword="${entry#*||}"
+    fi
+    if [[ -n "$keyword" ]]; then
+      items+=("{\"url\":\"${url}\",\"keyword\":\"${keyword}\"}")
+    else
+      items+=("{\"url\":\"${url}\"}")
+    fi
   done
   local payload
   payload=$(printf '{"items":[%s]}' "$(IFS=,; echo "${items[*]}")")

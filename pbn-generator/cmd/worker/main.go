@@ -34,6 +34,8 @@ func main() {
 	projectStore := sqlstore.NewProjectStore(dbConn)
 	userStore := sqlstore.NewUserStore(dbConn)
 	apiKeyUsageStore := sqlstore.NewAPIKeyUsageStore(dbConn)
+	siteFileStore := sqlstore.NewSiteFileStore(dbConn)
+	auditStore := sqlstore.NewAuditStore(dbConn)
 
 	server := tasks.NewServer(cfg, 4)
 	mux := asynq.NewServeMux()
@@ -55,6 +57,8 @@ func main() {
 			projectStore,
 			userStore,
 			apiKeyUsageStore,
+			siteFileStore,
+			auditStore,
 		)
 	})
 

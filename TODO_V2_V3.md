@@ -169,14 +169,14 @@
 
 #### Publisher Module
 
-- [ ] **Создать интерфейс Publisher**
+- [x] **Создать интерфейс Publisher**
   - Файл: `internal/publisher/publisher.go`
   - Методы:
     - `Publish(ctx, domainID, files map[string][]byte) error`
     - `Unpublish(ctx, domainID) error`
     - `GetPublishedPath(domainID) string`
 
-- [ ] **Реализовать LocalPublisher**
+- [x] **Реализовать LocalPublisher**
   - Файл: `internal/publisher/local.go`
   - Логика:
     - Создать папку `server/{domain_name}/`
@@ -187,7 +187,7 @@
     - Проверка существования папки server/
     - Sanitize domain name (защита от Path Traversal)
 
-- [ ] **Обновить Worker Pipeline**
+- [x] **Обновить Worker Pipeline**
   - Файл: `internal/worker/step_publish.go`
   - После step_assembly вызвать `Publisher.Publish()`
   - Сохранить published_path в domains
@@ -195,7 +195,7 @@
 
 #### File Storage Module
 
-- [ ] **Создать Store для site_files**
+- [x] **Создать Store для site_files**
   - Файл: `internal/store/sqlstore/site_files.go`
   - Интерфейс `SiteFileStore`:
     - `Create(ctx, file) error`
@@ -206,14 +206,14 @@
     - `Delete(ctx, fileID) error`
     - `UpdateHash(ctx, fileID, hash) error`
 
-- [ ] **Создать Store для file_edits**
+- [x] **Создать Store для file_edits**
   - Файл: `internal/store/sqlstore/file_edits.go`
   - Интерфейс `FileEditStore`:
     - `Create(ctx, edit) error`
     - `ListByFile(ctx, fileID, limit) ([]FileEdit, error)`
     - `ListByUser(ctx, userEmail, limit) ([]FileEdit, error)`
 
-- [ ] **Синхронизация файлов с БД**
+- [x] **Синхронизация файлов с БД**
   - Файл: `internal/publisher/sync.go`
   - После публикации:
     - Scan папки `server/{domain}/`
@@ -223,18 +223,18 @@
 
 #### File API
 
-- [ ] **Эндпоинт: GET /api/domains/:id/files**
+- [x] **Эндпоинт: GET /api/domains/:id/files**
   - Получить список всех файлов домена
   - Авторизация: viewer и выше
   - Ответ: `[{id, path, size, mimeType, updatedAt}]`
 
-- [ ] **Эндпоинт: GET /api/domains/:id/files/*path**
+- [x] **Эндпоинт: GET /api/domains/:id/files/*path**
   - Получить содержимое конкретного файла
   - Авторизация: viewer и выше
   - Читать из `server/{domain}/{path}`
   - Ответ: `{content: string, mimeType: string}`
 
-- [ ] **Эндпоинт: PUT /api/domains/:id/files/*path**
+- [x] **Эндпоинт: PUT /api/domains/:id/files/*path**
   - Сохранить изменения файла
   - Авторизация: editor и выше
   - Валидация:
@@ -245,12 +245,12 @@
     - Записать новый контент на диск
     - Обновить `site_files.updated_at` и `content_hash`
 
-- [ ] **Эндпоинт: GET /api/domains/:id/files/:fileId/history**
+- [x] **Эндпоинт: GET /api/domains/:id/files/:fileId/history**
   - История изменений конкретного файла
   - Авторизация: viewer и выше
   - Ответ: `[{id, editedBy, editType, description, createdAt}]`
 
-- [ ] **Эндпоинт: DELETE /api/domains/:id/files/*path**
+- [x] **Эндпоинт: DELETE /api/domains/:id/files/*path**
   - Удалить файл (только для admin)
   - Удалить с диска и из `site_files`
 
@@ -426,11 +426,11 @@
 
 ### Sprint 1: File Editor Foundation
 
-- [ ] **Установить Monaco Editor**
+- [x] **Установить Monaco Editor**
   - Package: `@monaco-editor/react`
   - Настроить TypeScript types
 
-- [ ] **Создать API клиент для файлов**
+- [x] **Создать API клиент для файлов**
   - Файл: `lib/fileApi.ts`
   - Методы:
     - `listFiles(domainId)`
@@ -621,12 +621,12 @@
 
 ### Sprint 1: Local Storage Tests
 
-- [ ] **Unit тесты для LocalPublisher**
+- [x] **Unit тесты для LocalPublisher**
   - Создание папки
   - Распаковка ZIP
   - Path Traversal защита
 
-- [ ] **Integration тесты для File API**
+- [x] **Integration тесты для File API**
   - Получение списка файлов
   - Чтение файла
   - Сохранение изменений

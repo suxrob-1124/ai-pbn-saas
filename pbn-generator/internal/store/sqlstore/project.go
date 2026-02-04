@@ -41,6 +41,7 @@ type Domain struct {
 type Generation struct {
 	ID             string
 	DomainID       string
+	RequestedBy    sql.NullString
 	Status         string
 	Progress       int
 	Error          sql.NullString
@@ -227,6 +228,23 @@ func (s *DomainStore) UpdateStatus(ctx context.Context, id, status string) error
 	return err
 }
 
+// UpdatePublishState обновляет путь публикации и статистику файлов домена.
+func (s *DomainStore) UpdatePublishState(ctx context.Context, id, publishedPath string, fileCount int, totalSizeBytes int64) error {
+	var pathVal *string
+	if strings.TrimSpace(publishedPath) != "" {
+		pathVal = &publishedPath
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE domains
+		SET published_path=$1::text,
+		    file_count=$2,
+		    total_size_bytes=$3,
+		    published_at=CASE WHEN $1::text IS NULL THEN NULL ELSE NOW() END,
+		    updated_at=NOW()
+		WHERE id=$4`,
+		nullableString(nullString(pathVal)), fileCount, totalSizeBytes, id)
+	return err
+}
+
 func (s *DomainStore) UpdateKeyword(ctx context.Context, id, keyword string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE domains SET main_keyword=$1, updated_at=NOW() WHERE id=$2`, keyword, id)
 	return err
@@ -272,8 +290,8 @@ func NewGenerationStore(db *sql.DB) *GenerationStore {
 func (s *GenerationStore) Get(ctx context.Context, id string) (Generation, error) {
 	var g Generation
 	var logs, artifacts, checkpoint sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT id, domain_id, status, progress, error, logs, artifacts, checkpoint_data, started_at, finished_at, prompt_id, created_at, updated_at FROM generations WHERE id=$1`, id).
-		Scan(&g.ID, &g.DomainID, &g.Status, &g.Progress, &g.Error, &logs, &artifacts, &checkpoint, &g.StartedAt, &g.FinishedAt, &g.PromptID, &g.CreatedAt, &g.UpdatedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT id, domain_id, requested_by, status, progress, error, logs, artifacts, checkpoint_data, started_at, finished_at, prompt_id, created_at, updated_at FROM generations WHERE id=$1`, id).
+		Scan(&g.ID, &g.DomainID, &g.RequestedBy, &g.Status, &g.Progress, &g.Error, &logs, &artifacts, &checkpoint, &g.StartedAt, &g.FinishedAt, &g.PromptID, &g.CreatedAt, &g.UpdatedAt)
 	if err != nil {
 		return Generation{}, err
 	}
@@ -290,9 +308,9 @@ func (s *GenerationStore) Get(ctx context.Context, id string) (Generation, error
 }
 
 func (s *GenerationStore) Create(ctx context.Context, g Generation) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO generations(id, domain_id, status, progress, error, logs, artifacts, checkpoint_data, started_at, finished_at, created_at)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())`,
-		g.ID, g.DomainID, g.Status, g.Progress, nullableString(g.Error), nullableBytes(g.Logs), nullableBytes(g.Artifacts), nullableBytes(g.CheckpointData), nullableTime(g.StartedAt), nullableTime(g.FinishedAt))
+	_, err := s.db.ExecContext(ctx, `INSERT INTO generations(id, domain_id, requested_by, status, progress, error, logs, artifacts, checkpoint_data, started_at, finished_at, created_at)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())`,
+		g.ID, g.DomainID, nullableString(g.RequestedBy), g.Status, g.Progress, nullableString(g.Error), nullableBytes(g.Logs), nullableBytes(g.Artifacts), nullableBytes(g.CheckpointData), nullableTime(g.StartedAt), nullableTime(g.FinishedAt))
 	if err != nil {
 		return fmt.Errorf("failed to create generation: %w", err)
 	}
@@ -300,7 +318,7 @@ func (s *GenerationStore) Create(ctx context.Context, g Generation) error {
 }
 
 func (s *GenerationStore) ListByDomain(ctx context.Context, domainID string) ([]Generation, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, domain_id, status, progress, error, logs, artifacts, checkpoint_data, started_at, finished_at, prompt_id, created_at, updated_at FROM generations WHERE domain_id=$1 ORDER BY created_at DESC`, domainID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, domain_id, requested_by, status, progress, error, logs, artifacts, checkpoint_data, started_at, finished_at, prompt_id, created_at, updated_at FROM generations WHERE domain_id=$1 ORDER BY created_at DESC`, domainID)
 	if err != nil {
 		return nil, err
 	}
@@ -309,7 +327,7 @@ func (s *GenerationStore) ListByDomain(ctx context.Context, domainID string) ([]
 	for rows.Next() {
 		var g Generation
 		var logs, artifacts, checkpoint sql.NullString
-		if err := rows.Scan(&g.ID, &g.DomainID, &g.Status, &g.Progress, &g.Error, &logs, &artifacts, &checkpoint, &g.StartedAt, &g.FinishedAt, &g.PromptID, &g.CreatedAt, &g.UpdatedAt); err != nil {
+		if err := rows.Scan(&g.ID, &g.DomainID, &g.RequestedBy, &g.Status, &g.Progress, &g.Error, &logs, &artifacts, &checkpoint, &g.StartedAt, &g.FinishedAt, &g.PromptID, &g.CreatedAt, &g.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if logs.Valid {
@@ -355,9 +373,9 @@ func (s *GenerationStore) UpdateLogs(ctx context.Context, id string, logs []byte
 func (s *GenerationStore) GetLastSuccessfulByDomain(ctx context.Context, domainID string) (Generation, error) {
 	var g Generation
 	var logs, artifacts, checkpoint sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT id, domain_id, status, progress, error, logs, artifacts, checkpoint_data, started_at, finished_at, prompt_id, created_at, updated_at
+	err := s.db.QueryRowContext(ctx, `SELECT id, domain_id, requested_by, status, progress, error, logs, artifacts, checkpoint_data, started_at, finished_at, prompt_id, created_at, updated_at
 		FROM generations WHERE domain_id=$1 AND status='success' ORDER BY created_at DESC LIMIT 1`, domainID).
-		Scan(&g.ID, &g.DomainID, &g.Status, &g.Progress, &g.Error, &logs, &artifacts, &checkpoint, &g.StartedAt, &g.FinishedAt, &g.PromptID, &g.CreatedAt, &g.UpdatedAt)
+		Scan(&g.ID, &g.DomainID, &g.RequestedBy, &g.Status, &g.Progress, &g.Error, &logs, &artifacts, &checkpoint, &g.StartedAt, &g.FinishedAt, &g.PromptID, &g.CreatedAt, &g.UpdatedAt)
 	if err != nil {
 		return Generation{}, err
 	}
@@ -377,9 +395,9 @@ func (s *GenerationStore) GetLastSuccessfulByDomain(ctx context.Context, domainI
 func (s *GenerationStore) GetLastByDomain(ctx context.Context, domainID string) (Generation, error) {
 	var g Generation
 	var logs, artifacts, checkpoint sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT id, domain_id, status, progress, error, logs, artifacts, checkpoint_data, started_at, finished_at, prompt_id, created_at, updated_at
+	err := s.db.QueryRowContext(ctx, `SELECT id, domain_id, requested_by, status, progress, error, logs, artifacts, checkpoint_data, started_at, finished_at, prompt_id, created_at, updated_at
 		FROM generations WHERE domain_id=$1 ORDER BY created_at DESC LIMIT 1`, domainID).
-		Scan(&g.ID, &g.DomainID, &g.Status, &g.Progress, &g.Error, &logs, &artifacts, &checkpoint, &g.StartedAt, &g.FinishedAt, &g.PromptID, &g.CreatedAt, &g.UpdatedAt)
+		Scan(&g.ID, &g.DomainID, &g.RequestedBy, &g.Status, &g.Progress, &g.Error, &logs, &artifacts, &checkpoint, &g.StartedAt, &g.FinishedAt, &g.PromptID, &g.CreatedAt, &g.UpdatedAt)
 	if err != nil {
 		return Generation{}, err
 	}
@@ -421,7 +439,7 @@ func (s *GenerationStore) Delete(ctx context.Context, id string) error {
 }
 
 func (s *GenerationStore) ListRecentByUser(ctx context.Context, email string, limit int) ([]Generation, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT g.id, g.domain_id, g.status, g.progress, g.error, g.logs, g.artifacts, g.checkpoint_data, g.started_at, g.finished_at, g.prompt_id, g.created_at, g.updated_at
+	rows, err := s.db.QueryContext(ctx, `SELECT g.id, g.domain_id, g.requested_by, g.status, g.progress, g.error, g.logs, g.artifacts, g.checkpoint_data, g.started_at, g.finished_at, g.prompt_id, g.created_at, g.updated_at
 FROM generations g
 JOIN domains d ON g.domain_id = d.id
 JOIN projects p ON d.project_id = p.id
@@ -437,7 +455,7 @@ LIMIT $2`, email, limit)
 	for rows.Next() {
 		var g Generation
 		var logs, artifacts, checkpoint sql.NullString
-		if err := rows.Scan(&g.ID, &g.DomainID, &g.Status, &g.Progress, &g.Error, &logs, &artifacts, &checkpoint, &g.StartedAt, &g.FinishedAt, &g.PromptID, &g.CreatedAt, &g.UpdatedAt); err != nil {
+		if err := rows.Scan(&g.ID, &g.DomainID, &g.RequestedBy, &g.Status, &g.Progress, &g.Error, &logs, &artifacts, &checkpoint, &g.StartedAt, &g.FinishedAt, &g.PromptID, &g.CreatedAt, &g.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if logs.Valid {
@@ -455,7 +473,7 @@ LIMIT $2`, email, limit)
 }
 
 func (s *GenerationStore) ListRecentAll(ctx context.Context, limit int) ([]Generation, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT g.id, g.domain_id, g.status, g.progress, g.error, g.logs, g.artifacts, g.checkpoint_data, g.started_at, g.finished_at, g.prompt_id, g.created_at, g.updated_at
+	rows, err := s.db.QueryContext(ctx, `SELECT g.id, g.domain_id, g.requested_by, g.status, g.progress, g.error, g.logs, g.artifacts, g.checkpoint_data, g.started_at, g.finished_at, g.prompt_id, g.created_at, g.updated_at
 FROM generations g
 ORDER BY g.created_at DESC
 LIMIT $1`, limit)
@@ -467,7 +485,7 @@ LIMIT $1`, limit)
 	for rows.Next() {
 		var g Generation
 		var logs, artifacts, checkpoint sql.NullString
-		if err := rows.Scan(&g.ID, &g.DomainID, &g.Status, &g.Progress, &g.Error, &logs, &artifacts, &checkpoint, &g.StartedAt, &g.FinishedAt, &g.PromptID, &g.CreatedAt, &g.UpdatedAt); err != nil {
+		if err := rows.Scan(&g.ID, &g.DomainID, &g.RequestedBy, &g.Status, &g.Progress, &g.Error, &logs, &artifacts, &checkpoint, &g.StartedAt, &g.FinishedAt, &g.PromptID, &g.CreatedAt, &g.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if logs.Valid {

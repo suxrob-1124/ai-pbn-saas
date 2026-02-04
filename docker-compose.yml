@@ -35,6 +35,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    volumes:
+      - ./server:/app/server
     ports:
       - "8080:8080"
     logging:
@@ -66,6 +68,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+    volumes:
+      - ./server:/app/server
     entrypoint: ["/bin/worker"]
     restart: unless-stopped
 

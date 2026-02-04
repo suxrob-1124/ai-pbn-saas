@@ -9,6 +9,8 @@ import { FiClock, FiPlay, FiCheck, FiAlertTriangle, FiRefreshCw, FiTrash2, FiPau
 import { useRouter } from "next/navigation";
 import { ArtifactsViewer, LogsViewer } from "../../../components/ArtifactsViewer";
 import { GenerationResultActions } from "../../../components/GenerationResultActions";
+import { computeDisplayProgress } from "../../../lib/pipelineProgress";
+import { AuditReport } from "../../../components/AuditReport";
 
 type Generation = {
   id: string;
@@ -125,6 +127,7 @@ export default function QueueItemPage() {
 
   const canPauseOrCancel = item && (item.status === "pending" || item.status === "processing" || item.status === "pause_requested" || item.status === "cancelling");
   const canResume = item && item.status === "paused";
+  const displayProgress = item ? computeDisplayProgress(item.artifacts, item.progress, item.status) : 0;
 
   return (
     <div className="space-y-4">
@@ -208,7 +211,7 @@ export default function QueueItemPage() {
         <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3">
           <div className="flex items-center gap-2">
             <StatusBadge status={item.status} />
-            <span className="text-sm text-slate-600 dark:text-slate-300">{item.progress}%</span>
+            <span className="text-sm text-slate-600 dark:text-slate-300">{displayProgress}%</span>
           </div>
           <div className="text-sm text-slate-600 dark:text-slate-300 space-y-1">
             <div>Создано: {item.created_at ? new Date(item.created_at).toLocaleString() : "—"}</div>
@@ -218,6 +221,7 @@ export default function QueueItemPage() {
           </div>
           {item.error && <div className="text-red-500 text-sm">Ошибка: {item.error}</div>}
           {item.status === "success" && <GenerationResultActions artifacts={item.artifacts} />}
+          <AuditReport report={item.artifacts?.audit_report} />
           <LogsViewer logs={item.logs} />
           <ArtifactsViewer artifacts={item.artifacts} />
         </div>

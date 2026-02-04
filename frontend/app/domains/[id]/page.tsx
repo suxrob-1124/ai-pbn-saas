@@ -8,6 +8,8 @@ import { useAuthGuard } from "../../../lib/useAuth";
 import { FiClock, FiPlay, FiCheck, FiAlertTriangle, FiRefreshCw, FiTrash2, FiPause, FiX } from "react-icons/fi";
 import { ArtifactsViewer, LogsViewer } from "../../../components/ArtifactsViewer";
 import PipelineSteps from "../../../components/PipelineSteps";
+import { computeDisplayProgress } from "../../../lib/pipelineProgress";
+import { AuditReport } from "../../../components/AuditReport";
 
 type Domain = {
   id: string;
@@ -218,6 +220,7 @@ export default function DomainPage() {
 
   const activeStatusesList = ["pending", "processing", "pause_requested", "cancelling"];
   const latestGen = gens[0];
+  const latestDisplayProgress = latestGen ? computeDisplayProgress(latestGen.artifacts, latestGen.progress, latestGen.status) : 0;
   const mainButtonText = !latestGen ? "Start Generation" : latestGen.status === "success" ? "Regenerate All" : "Resume Generation";
   const mainButtonIcon = mainButtonText === "Regenerate All" ? <FiRefreshCw /> : <FiPlay />;
   const mainButtonDisabled = loading || Boolean(latestGen && activeStatusesList.includes(latestGen.status));
@@ -418,17 +421,19 @@ export default function DomainPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-              {gens.slice(0, visibleGens).map((g) => (
+              {gens.slice(0, visibleGens).map((g) => {
+                const rowProgress = computeDisplayProgress(g.artifacts, g.progress, g.status);
+                return (
                 <tr key={g.id}>
                   <td className="py-3 pr-4 font-mono text-xs">{g.id.slice(0, 8)}</td>
                   <td className="py-3 pr-4">
                     <StatusBadge status={g.status} />
                   </td>
-                  <td className="py-3 pr-4">{g.progress}%</td>
+                  <td className="py-3 pr-4">{rowProgress}%</td>
                   <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">{g.updated_at ? new Date(g.updated_at).toLocaleString() : "—"}</td>
                   <td className="py-3 pr-4">
                     <div className="flex items-center gap-3">
-                    <Link href={`/queue/${g.id}`} className="text-indigo-600 hover:underline">
+                    <Link href={`/queue/${g.id}`} target="_blank" className="text-indigo-600 hover:underline">
                       Открыть
                     </Link>
                       {g.status === "paused" && (
@@ -484,7 +489,7 @@ export default function DomainPage() {
                     </div>
                   </td>
                 </tr>
-              ))}
+              )})}
               {gens.length === 0 && (
                 <tr>
                   <td colSpan={5} className="py-4 text-center text-slate-500 dark:text-slate-400">
@@ -513,13 +518,14 @@ export default function DomainPage() {
             <div>
               <h3 className="font-semibold">Последний запуск</h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                ID: {gens[0].id} · Статус: <StatusBadge status={gens[0].status} /> · Прогресс: {gens[0].progress}%
+                ID: {gens[0].id} · Статус: <StatusBadge status={gens[0].status} /> · Прогресс: {latestDisplayProgress}%
               </p>
             </div>
             <Link href={`/queue/${gens[0].id}`} className="text-sm text-indigo-600 hover:underline">
               Открыть карточку запуска
             </Link>
           </div>
+          <AuditReport report={gens[0].artifacts?.audit_report} />
           <LogsViewer logs={gens[0].logs} />
           <ArtifactsViewer artifacts={gens[0].artifacts} />
         </div>

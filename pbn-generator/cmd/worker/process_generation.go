@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"obzornik-pbn-generator/internal/config"
 	"obzornik-pbn-generator/internal/crypto/secretbox"
 	"obzornik-pbn-generator/internal/llm"
+	"obzornik-pbn-generator/internal/publisher"
 	"obzornik-pbn-generator/internal/store/sqlstore"
 	"obzornik-pbn-generator/internal/tasks"
 	"obzornik-pbn-generator/internal/worker/pipeline"
@@ -29,6 +31,8 @@ func processGeneration(
 	projectStore *sqlstore.ProjectStore,
 	userStore *sqlstore.UserStore,
 	apiKeyUsageStore *sqlstore.APIKeyUsageStore,
+	siteFileStore *sqlstore.SiteFileSQLStore,
+	auditStore *sqlstore.AuditStore,
 ) error {
 	// Проверяем статус задачи в начале
 	gen, err := genStore.Get(ctx, payload.GenerationID)
@@ -111,18 +115,44 @@ func processGeneration(
 	// Определяем API ключ
 	apiKey := cfg.GeminiAPIKey
 	keyType := "global"
-	projectUserEmail := project.UserEmail
+	keyOwnerEmail := project.UserEmail
 
-	userAPIKeyEnc, _, err := userStore.GetAPIKey(ctx, project.UserEmail)
+	if gen.RequestedBy.Valid {
+		requested := strings.ToLower(strings.TrimSpace(gen.RequestedBy.String))
+		if requested != "" {
+			if u, err := userStore.Get(ctx, requested); err == nil && strings.EqualFold(u.Role, "admin") {
+				keyOwnerEmail = requested
+			}
+		}
+	}
+
+	userAPIKeyEnc, _, err := userStore.GetAPIKey(ctx, keyOwnerEmail)
 	if err == nil && len(userAPIKeyEnc) > 0 {
 		keySecret := secretbox.DeriveKey(cfg.APIKeySecret)
 		decrypted, err := secretbox.Decrypt(keySecret, userAPIKeyEnc)
 		if err == nil {
 			apiKey = string(decrypted)
 			keyType = "user"
-			appendLog("используется API ключ пользователя")
+			appendLog(fmt.Sprintf("используется API ключ пользователя %s", keyOwnerEmail))
 		} else {
 			appendLog("предупреждение: не удалось расшифровать API ключ пользователя, используется глобальный")
+		}
+	} else if keyOwnerEmail != project.UserEmail {
+		// fallback на владельца проекта, если админский ключ отсутствует
+		userAPIKeyEnc, _, err := userStore.GetAPIKey(ctx, project.UserEmail)
+		if err == nil && len(userAPIKeyEnc) > 0 {
+			keySecret := secretbox.DeriveKey(cfg.APIKeySecret)
+			decrypted, err := secretbox.Decrypt(keySecret, userAPIKeyEnc)
+			if err == nil {
+				apiKey = string(decrypted)
+				keyType = "user"
+				keyOwnerEmail = project.UserEmail
+				appendLog(fmt.Sprintf("используется API ключ пользователя %s", keyOwnerEmail))
+			} else {
+				appendLog("предупреждение: не удалось расшифровать API ключ пользователя, используется глобальный")
+			}
+		} else {
+			appendLog("используется глобальный API ключ")
 		}
 	} else {
 		appendLog("используется глобальный API ключ")
@@ -171,7 +201,7 @@ func processGeneration(
 				for _, req := range llmRequests {
 					totalTokens += req.TokensUsed
 				}
-				if err := apiKeyUsageStore.LogUsage(ctx, projectUserEmail, payload.GenerationID, keyType, len(llmRequests), totalTokens); err != nil {
+				if err := apiKeyUsageStore.LogUsage(ctx, keyOwnerEmail, payload.GenerationID, keyType, len(llmRequests), totalTokens); err != nil {
 					sugar.Warnf("failed to log API key usage: %v", err)
 				}
 			}
@@ -204,9 +234,11 @@ func processGeneration(
 		GenerationStore: genStore,
 		PromptStore:     promptStore,
 		ProjectStore:    projectStore,
+		AuditStore:      auditStore,
 		LLMClient:       pipeline.NewLLMClient(llmClient),
 		PromptManager:   pipeline.NewPromptManager(promptManager),
 		Analyzer:        pipeline.NewAnalyzer(),
+		Publisher:       publisher.NewLocalPublisher("server", domainStore, siteFileStore),
 		DefaultModel:    cfg.GeminiDefaultModel,
 		Domain:          &domain,
 		Project:         &project,
@@ -230,6 +262,8 @@ func processGeneration(
 		&pipeline.ImageGenerationStep{},
 		&pipeline.Page404GenerationStep{},
 		&pipeline.AssemblyStep{},
+		&pipeline.AuditStep{},
+		&pipeline.PublishStep{},
 	}
 
 	// Создаем и запускаем pipeline
@@ -266,7 +300,18 @@ func processGeneration(
 		errMsg := err.Error()
 		appendLog(fmt.Sprintf("Pipeline failed: %s", errMsg))
 		logBytes, _ := json.Marshal(logs)
-		_ = genStore.UpdateFull(ctx, payload.GenerationID, "error", 0, &errMsg, logBytes, nil, &now, pipeline.PtrTime(time.Now()), nil)
+		gen, _ := genStore.Get(ctx, payload.GenerationID)
+		progress := gen.Progress
+		if progress <= 0 {
+			progress = 1
+		}
+		artifacts := gen.Artifacts
+		if len(artifacts) == 0 && len(state.Artifacts) > 0 {
+			if artBytes, _ := json.Marshal(state.Artifacts); len(artBytes) > 0 {
+				artifacts = artBytes
+			}
+		}
+		_ = genStore.UpdateFull(ctx, payload.GenerationID, "error", progress, &errMsg, logBytes, artifacts, &now, pipeline.PtrTime(time.Now()), nil)
 		_ = domainStore.UpdateStatus(ctx, payload.DomainID, "waiting")
 		return err
 	}
@@ -288,7 +333,7 @@ func processGeneration(
 
 	// Финальное обновление статуса
 	_ = genStore.UpdateFull(ctx, payload.GenerationID, "success", 100, nil, logBytes, finalArtifacts, &now, &fin, nil)
-	_ = domainStore.UpdateStatus(ctx, payload.DomainID, "waiting")
+	_ = domainStore.UpdateStatus(ctx, payload.DomainID, "published")
 
 	return nil
 }

@@ -75,6 +75,9 @@ func TestPage404GenerationStep(t *testing.T) {
 	if !ok || html404 == "" {
 		t.Fatalf("expected 404_html, got %#v", artifacts["404_html"])
 	}
+	if _, ok := artifacts["404_page_prompt"].(string); !ok {
+		t.Fatalf("expected 404_page_prompt, got %#v", artifacts["404_page_prompt"])
+	}
 
 	// Проверяем, что это валидный HTML
 	if !strings.Contains(html404, "<html") {
@@ -170,5 +173,34 @@ func TestPage404GenerationStep_HTMLWithCodeBlocks(t *testing.T) {
 	// Проверяем, что код-блоки удалены
 	if strings.Contains(html404, "```") {
 		t.Errorf("expected code blocks to be removed from 404_html, got: %s", html404)
+	}
+}
+
+func TestPage404GenerationStep_MarkdownFallback(t *testing.T) {
+	llm := &fakeLLMFor404WithResponse{response: "# Хм, такой страницы здесь нет...\n\nПохоже, вы свернули не туда.\n\n* Вернуться на главную\n* Поиск\n"}
+	step := &Page404GenerationStep{}
+	state := &PipelineState{
+		Artifacts: map[string]any{
+			"design_system": `{"colors": {"primary": "#000"}}`,
+			"html_raw":      "<html><body>Main</body></html>",
+			"css_content":   "body{}",
+			"js_content":    "console.log();",
+		},
+		LLMClient:     llm,
+		PromptManager: &fakePromptManagerFor404{},
+		AppendLog:     func(s string) {},
+	}
+
+	artifacts, err := step.Execute(context.Background(), state)
+	if err != nil {
+		t.Fatalf("execute returned error: %v", err)
+	}
+
+	html404 := artifacts["404_html"].(string)
+	if !strings.Contains(html404, "<html") {
+		t.Fatalf("expected markdown fallback to wrap into HTML, got: %s", html404)
+	}
+	if !strings.Contains(html404, "<h1>") {
+		t.Fatalf("expected markdown fallback to include <h1>, got: %s", html404)
 	}
 }

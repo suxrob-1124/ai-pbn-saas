@@ -64,7 +64,7 @@ export const GENERATION_STAGES = [
     value: "404_page",
     label: "Генерация 404 страницы",
     description: "Промпт для генерации контента страницы 404 (страница не найдена)",
-    variables: ["keyword", "technical_spec"],
+    variables: ["design_system", "html_raw", "css_content", "js_content", "language"],
   },
 ] as const;
 

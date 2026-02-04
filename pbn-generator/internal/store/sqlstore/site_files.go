@@ -1,0 +1,150 @@
+package sqlstore
+
+import (
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"fmt"
+	"mime"
+	"net/http"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+// SiteFile описывает файл, опубликованный для домена.
+type SiteFile struct {
+	ID          string
+	DomainID    string
+	Path        string
+	ContentHash sql.NullString
+	SizeBytes   int64
+	MimeType    string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+// SiteFileStore определяет операции над файлами домена.
+type SiteFileStore interface {
+	Create(ctx context.Context, file SiteFile) error
+	Get(ctx context.Context, fileID string) (*SiteFile, error)
+	GetByPath(ctx context.Context, domainID, path string) (*SiteFile, error)
+	List(ctx context.Context, domainID string) ([]SiteFile, error)
+	Update(ctx context.Context, fileID string, content []byte) error
+	Delete(ctx context.Context, fileID string) error
+	UpdateHash(ctx context.Context, fileID, hash string) error
+}
+
+// SiteFileSQLStore реализует SiteFileStore поверх SQL БД.
+type SiteFileSQLStore struct {
+	db *sql.DB
+}
+
+// NewSiteFileStore создает новый SiteFileSQLStore.
+func NewSiteFileStore(db *sql.DB) *SiteFileSQLStore {
+	return &SiteFileSQLStore{db: db}
+}
+
+// Create создает запись о файле домена.
+func (s *SiteFileSQLStore) Create(ctx context.Context, file SiteFile) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO site_files(id, domain_id, path, content_hash, size_bytes, mime_type, created_at, updated_at)
+		VALUES($1,$2,$3,$4,$5,$6,NOW(),NOW())`,
+		file.ID,
+		file.DomainID,
+		file.Path,
+		nullableString(file.ContentHash),
+		file.SizeBytes,
+		file.MimeType,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create site file: %w", err)
+	}
+	return nil
+}
+
+// Get возвращает файл по ID.
+func (s *SiteFileSQLStore) Get(ctx context.Context, fileID string) (*SiteFile, error) {
+	var f SiteFile
+	err := s.db.QueryRowContext(ctx, `SELECT id, domain_id, path, content_hash, size_bytes, mime_type, created_at, updated_at
+		FROM site_files WHERE id=$1`, fileID).
+		Scan(&f.ID, &f.DomainID, &f.Path, &f.ContentHash, &f.SizeBytes, &f.MimeType, &f.CreatedAt, &f.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &f, nil
+}
+
+// GetByPath возвращает файл по домену и пути.
+func (s *SiteFileSQLStore) GetByPath(ctx context.Context, domainID, path string) (*SiteFile, error) {
+	var f SiteFile
+	err := s.db.QueryRowContext(ctx, `SELECT id, domain_id, path, content_hash, size_bytes, mime_type, created_at, updated_at
+		FROM site_files WHERE domain_id=$1 AND path=$2`, domainID, path).
+		Scan(&f.ID, &f.DomainID, &f.Path, &f.ContentHash, &f.SizeBytes, &f.MimeType, &f.CreatedAt, &f.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &f, nil
+}
+
+// List возвращает список файлов домена.
+func (s *SiteFileSQLStore) List(ctx context.Context, domainID string) ([]SiteFile, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, domain_id, path, content_hash, size_bytes, mime_type, created_at, updated_at
+		FROM site_files WHERE domain_id=$1 ORDER BY path`, domainID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var res []SiteFile
+	for rows.Next() {
+		var f SiteFile
+		if err := rows.Scan(&f.ID, &f.DomainID, &f.Path, &f.ContentHash, &f.SizeBytes, &f.MimeType, &f.CreatedAt, &f.UpdatedAt); err != nil {
+			return nil, err
+		}
+		res = append(res, f)
+	}
+	return res, rows.Err()
+}
+
+// Update обновляет хэш, размер и mime типа файла.
+func (s *SiteFileSQLStore) Update(ctx context.Context, fileID string, content []byte) error {
+	file, err := s.Get(ctx, fileID)
+	if err != nil {
+		return err
+	}
+	hash := sha256.Sum256(content)
+	hashStr := hex.EncodeToString(hash[:])
+	mimeType := detectMimeType(file.Path, content)
+	_, err = s.db.ExecContext(ctx, `UPDATE site_files
+		SET content_hash=$1, size_bytes=$2, mime_type=$3, updated_at=NOW()
+		WHERE id=$4`, hashStr, int64(len(content)), mimeType, fileID)
+	if err != nil {
+		return fmt.Errorf("failed to update site file: %w", err)
+	}
+	return nil
+}
+
+// Delete удаляет запись о файле.
+func (s *SiteFileSQLStore) Delete(ctx context.Context, fileID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM site_files WHERE id=$1`, fileID)
+	return err
+}
+
+// UpdateHash обновляет только хэш файла.
+func (s *SiteFileSQLStore) UpdateHash(ctx context.Context, fileID, hash string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE site_files SET content_hash=$1, updated_at=NOW() WHERE id=$2`, hash, fileID)
+	return err
+}
+
+func detectMimeType(path string, content []byte) string {
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext != "" {
+		if t := mime.TypeByExtension(ext); t != "" {
+			return t
+		}
+	}
+	if len(content) > 0 {
+		return http.DetectContentType(content)
+	}
+	return "application/octet-stream"
+}

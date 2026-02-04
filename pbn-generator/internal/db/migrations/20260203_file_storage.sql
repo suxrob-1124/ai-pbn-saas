@@ -31,3 +31,27 @@ CREATE INDEX IF NOT EXISTS idx_file_edits_user ON file_edits(edited_by);
 ALTER TABLE domains ADD COLUMN IF NOT EXISTS published_path TEXT;
 ALTER TABLE domains ADD COLUMN IF NOT EXISTS file_count INT DEFAULT 0;
 ALTER TABLE domains ADD COLUMN IF NOT EXISTS total_size_bytes BIGINT DEFAULT 0;
+
+CREATE TABLE IF NOT EXISTS audit_rules (
+	code TEXT PRIMARY KEY,
+	title TEXT NOT NULL,
+	description TEXT,
+	severity TEXT NOT NULL DEFAULT 'warn',
+	is_active BOOLEAN NOT NULL DEFAULT TRUE,
+	created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+	updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS audit_findings (
+	id TEXT PRIMARY KEY,
+	generation_id TEXT NOT NULL REFERENCES generations(id) ON DELETE CASCADE,
+	domain_id TEXT NOT NULL REFERENCES domains(id) ON DELETE CASCADE,
+	rule_code TEXT NOT NULL REFERENCES audit_rules(code),
+	severity TEXT NOT NULL DEFAULT 'warn',
+	file_path TEXT,
+	message TEXT NOT NULL,
+	details JSONB,
+	created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_audit_findings_generation ON audit_findings(generation_id);
+CREATE INDEX IF NOT EXISTS idx_audit_findings_domain ON audit_findings(domain_id);

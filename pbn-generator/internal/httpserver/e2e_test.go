@@ -56,7 +56,7 @@ func TestE2E_RegisterVerifyReset(t *testing.T) {
 		Logger:             nil,
 	})
 	logger := zap.NewNop().Sugar()
-	server := New(cfg, svc, logger, newStubProjectStore(), newStubDomainStore(), newStubGenerationStore(), newStubPromptStore(), newStubEnqueuer())
+	server := New(cfg, svc, logger, newStubProjectStore(), nil, newStubDomainStore(), newStubGenerationStore(), newStubPromptStore(), nil, nil, newStubEnqueuer())
 	handler := server.Handler()
 
 	client := &http.Client{}
@@ -162,7 +162,7 @@ func TestE2E_RefreshLogoutChangeEmail(t *testing.T) {
 		Logger:             nil,
 	})
 	logger := zap.NewNop().Sugar()
-	server := New(cfg, svc, logger, newStubProjectStore(), newStubDomainStore(), newStubGenerationStore(), newStubPromptStore(), newStubEnqueuer())
+	server := New(cfg, svc, logger, newStubProjectStore(), nil, newStubDomainStore(), newStubGenerationStore(), newStubPromptStore(), nil, nil, newStubEnqueuer())
 	handler := server.Handler()
 	client := &http.Client{}
 	jar, _ := cookiejar.New(nil)
@@ -308,6 +308,8 @@ type e2eUserStore struct {
 	verified map[string]bool
 	roles    map[string]string
 	approved map[string]bool
+	apiKeys  map[string][]byte
+	apiKeyAt map[string]time.Time
 }
 
 func newE2EUserStore() *e2eUserStore {
@@ -316,6 +318,8 @@ func newE2EUserStore() *e2eUserStore {
 		verified: make(map[string]bool),
 		roles:    make(map[string]string),
 		approved: make(map[string]bool),
+		apiKeys:  make(map[string][]byte),
+		apiKeyAt: make(map[string]time.Time),
 	}
 }
 
@@ -424,6 +428,42 @@ func (s *e2eUserStore) SetApproved(ctx context.Context, email string, approved b
 	}
 	s.approved[email] = approved
 	return nil
+}
+
+func (s *e2eUserStore) SetAPIKey(ctx context.Context, email string, ciphertext []byte, updatedAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.users[email]; !ok {
+		return errors.New("not found")
+	}
+	s.apiKeys[email] = append([]byte(nil), ciphertext...)
+	s.apiKeyAt[email] = updatedAt
+	return nil
+}
+
+func (s *e2eUserStore) ClearAPIKey(ctx context.Context, email string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.users[email]; !ok {
+		return errors.New("not found")
+	}
+	delete(s.apiKeys, email)
+	delete(s.apiKeyAt, email)
+	return nil
+}
+
+func (s *e2eUserStore) GetAPIKey(ctx context.Context, email string) ([]byte, *time.Time, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.users[email]; !ok {
+		return nil, nil, errors.New("not found")
+	}
+	key, ok := s.apiKeys[email]
+	if !ok {
+		return nil, nil, errors.New("not found")
+	}
+	ts := s.apiKeyAt[email]
+	return append([]byte(nil), key...), &ts, nil
 }
 
 // Используем http.Client с кастомным Transport, чтобы обходиться без реального порта.

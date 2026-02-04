@@ -2,14 +2,20 @@ package httpserver
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -74,6 +80,19 @@ type PromptStore interface {
 	Get(ctx context.Context, id string) (sqlstore.SystemPrompt, error)
 }
 
+type SiteFileStore interface {
+	Get(ctx context.Context, fileID string) (*sqlstore.SiteFile, error)
+	List(ctx context.Context, domainID string) ([]sqlstore.SiteFile, error)
+	GetByPath(ctx context.Context, domainID, path string) (*sqlstore.SiteFile, error)
+	Update(ctx context.Context, fileID string, content []byte) error
+	Delete(ctx context.Context, fileID string) error
+}
+
+type FileEditStore interface {
+	Create(ctx context.Context, edit sqlstore.FileEdit) error
+	ListByFile(ctx context.Context, fileID string, limit int) ([]sqlstore.FileEdit, error)
+}
+
 type Server struct {
 	cfg            config.Config
 	svc            *auth.Service
@@ -82,6 +101,9 @@ type Server struct {
 	domains        DomainStore
 	generations    GenerationStore
 	prompts        PromptStore
+	auditRules     *sqlstore.AuditStore
+	siteFiles      SiteFileStore
+	fileEdits      FileEditStore
 	tasks          tasks.Enqueuer
 	reqDuration    *prometheus.HistogramVec
 	reqCounter     *prometheus.CounterVec
@@ -90,7 +112,7 @@ type Server struct {
 	logger         *zap.SugaredLogger
 }
 
-func New(cfg config.Config, svc *auth.Service, logger *zap.SugaredLogger, projects ProjectStore, projectMembers *sqlstore.ProjectMemberStore, domains DomainStore, generations GenerationStore, prompts PromptStore, tq tasks.Enqueuer) *Server {
+func New(cfg config.Config, svc *auth.Service, logger *zap.SugaredLogger, projects ProjectStore, projectMembers *sqlstore.ProjectMemberStore, domains DomainStore, generations GenerationStore, prompts PromptStore, auditRules *sqlstore.AuditStore, siteFiles SiteFileStore, fileEdits FileEditStore, tq tasks.Enqueuer) *Server {
 	if logger == nil {
 		logger = zap.NewNop().Sugar()
 	}
@@ -121,6 +143,9 @@ func New(cfg config.Config, svc *auth.Service, logger *zap.SugaredLogger, projec
 		domains:        domains,
 		generations:    generations,
 		prompts:        prompts,
+		auditRules:     auditRules,
+		siteFiles:      siteFiles,
+		fileEdits:      fileEdits,
 		tasks:          tq,
 		reqDuration:    reqDuration,
 		reqCounter:     reqCounter,
@@ -159,6 +184,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("/api/admin/users/", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminUserRoute))))
 	mux.Handle("/api/admin/prompts", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminPrompts))))
 	mux.Handle("/api/admin/prompts/", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminPromptByID))))
+	mux.Handle("/api/admin/audit-rules", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminAuditRules))))
+	mux.Handle("/api/admin/audit-rules/", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminAuditRuleByCode))))
 	mux.Handle("/healthz", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	}))
@@ -1055,6 +1082,8 @@ func (s *Server) handleDomainActions(w http.ResponseWriter, r *http.Request) {
 		s.handleDomainGenerate(w, r, domainID)
 	case "generations":
 		s.handleDomainGenerations(w, r, domainID)
+	case "files":
+		s.handleDomainFiles(w, r, domainID, parts[2:])
 	case "":
 		s.handleDomainBase(w, r, domainID)
 	default:
@@ -1157,10 +1186,14 @@ func (s *Server) handleDomainGenerate(w http.ResponseWriter, r *http.Request, do
 		return
 	}
 	// Проверяем права на запуск генерации (нужны права editor или owner)
-	memberRole, err := s.getProjectMemberRole(r.Context(), p.ID, user.Email)
-	if err != nil {
-		writeError(w, http.StatusForbidden, "access denied")
-		return
+	memberRole := ""
+	if !strings.EqualFold(user.Role, "admin") {
+		role, err := s.getProjectMemberRole(r.Context(), p.ID, user.Email)
+		if err != nil {
+			writeError(w, http.StatusForbidden, "access denied")
+			return
+		}
+		memberRole = role
 	}
 	if !hasProjectPermission(user.Role, memberRole, "editor") {
 		writeError(w, http.StatusForbidden, "insufficient permissions: editor role required to run generation")
@@ -1179,10 +1212,18 @@ func (s *Server) handleDomainGenerate(w http.ResponseWriter, r *http.Request, do
 	}
 	forceStep := strings.TrimSpace(req.ForceStep)
 
-	// Проверяем наличие API ключа у владельца проекта
-	encKey, err := s.svc.GetUserAPIKeyEncrypted(r.Context(), p.UserEmail)
+	// Проверяем наличие API ключа у владельца проекта (или у админа, если он запускает)
+	keyOwnerEmail := p.UserEmail
+	if strings.EqualFold(user.Role, "admin") {
+		keyOwnerEmail = user.Email
+	}
+	encKey, err := s.svc.GetUserAPIKeyEncrypted(r.Context(), keyOwnerEmail)
 	if err != nil || len(encKey) == 0 {
-		writeError(w, http.StatusBadRequest, "API key not configured for project owner. Please configure API key in profile settings.")
+		if strings.EqualFold(user.Role, "admin") {
+			writeError(w, http.StatusBadRequest, "API key not configured for admin user. Please configure API key in profile settings.")
+		} else {
+			writeError(w, http.StatusBadRequest, "API key not configured for project owner. Please configure API key in profile settings.")
+		}
 		return
 	}
 
@@ -1229,12 +1270,13 @@ func (s *Server) handleDomainGenerate(w http.ResponseWriter, r *http.Request, do
 	}
 
 	gen := sqlstore.Generation{
-		ID:        genID,
-		DomainID:  domainID,
-		Status:    "pending",
-		Progress:  0,
-		Logs:      json.RawMessage(`[]`),
-		Artifacts: baseArtifacts,
+		ID:          genID,
+		DomainID:    domainID,
+		RequestedBy: sqlstore.NullableString(user.Email),
+		Status:      "pending",
+		Progress:    0,
+		Logs:        json.RawMessage(`[]`),
+		Artifacts:   baseArtifacts,
 	}
 	if err := s.generations.Create(r.Context(), gen); err != nil {
 		writeError(w, http.StatusInternalServerError, "could not create generation")
@@ -1274,6 +1316,313 @@ func (s *Server) handleDomainGenerations(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	writeJSON(w, http.StatusOK, toGenerationDTOs(list))
+}
+
+func (s *Server) handleDomainFiles(w http.ResponseWriter, r *http.Request, domainID string, parts []string) {
+	user, ok := currentUserFromContext(r.Context())
+	if !ok || user.Email == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if s.siteFiles == nil || s.fileEdits == nil {
+		writeError(w, http.StatusInternalServerError, "file storage not configured")
+		return
+	}
+	domain, project, err := s.authorizeDomain(r.Context(), domainID)
+	if err != nil {
+		respondAuthzError(w, err, "domain not found")
+		return
+	}
+
+	memberRole := ""
+	if !strings.EqualFold(user.Role, "admin") {
+		role, err := s.getProjectMemberRole(r.Context(), project.ID, user.Email)
+		if err != nil {
+			writeError(w, http.StatusForbidden, "access denied")
+			return
+		}
+		memberRole = role
+	}
+
+	// История файла: /api/domains/:id/files/:fileId/history
+	if len(parts) == 2 && parts[1] == "history" {
+		if !hasProjectPermission(user.Role, memberRole, "viewer") {
+			writeError(w, http.StatusForbidden, "insufficient permissions: viewer role required")
+			return
+		}
+		fileID, err := url.PathUnescape(parts[0])
+		if err != nil || strings.TrimSpace(fileID) == "" {
+			writeError(w, http.StatusBadRequest, "invalid file id")
+			return
+		}
+		s.handleFileHistory(w, r, domain.ID, fileID)
+		return
+	}
+
+	// Список файлов
+	if len(parts) == 0 || parts[0] == "" {
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		if !hasProjectPermission(user.Role, memberRole, "viewer") {
+			writeError(w, http.StatusForbidden, "insufficient permissions: viewer role required")
+			return
+		}
+		files, err := s.siteFiles.List(r.Context(), domainID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not list files")
+			return
+		}
+		resp := make([]fileDTO, 0, len(files))
+		for _, f := range files {
+			resp = append(resp, fileDTO{
+				ID:        f.ID,
+				Path:      f.Path,
+				Size:      f.SizeBytes,
+				MimeType:  f.MimeType,
+				UpdatedAt: f.UpdatedAt,
+			})
+		}
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+
+	rawPath, err := joinURLPath(parts)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid path")
+		return
+	}
+	cleanPath, err := sanitizeFilePath(rawPath)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid path")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		if !hasProjectPermission(user.Role, memberRole, "viewer") {
+			writeError(w, http.StatusForbidden, "insufficient permissions: viewer role required")
+			return
+		}
+		s.handleGetFile(w, r, domain, cleanPath)
+	case http.MethodPut:
+		if !hasProjectPermission(user.Role, memberRole, "editor") {
+			writeError(w, http.StatusForbidden, "insufficient permissions: editor role required")
+			return
+		}
+		s.handleUpdateFile(w, r, domain, cleanPath, user.Email)
+	case http.MethodDelete:
+		if !strings.EqualFold(user.Role, "admin") {
+			writeError(w, http.StatusForbidden, "admin only")
+			return
+		}
+		s.handleDeleteFile(w, r, domain, cleanPath)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request, domain sqlstore.Domain, relPath string) {
+	file, err := s.siteFiles.GetByPath(r.Context(), domain.ID, relPath)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "file not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not load file")
+		return
+	}
+	domainDir, err := domainFilesDir(domain.URL)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid domain")
+		return
+	}
+	fullPath := filepath.Join(domainDir, filepath.FromSlash(relPath))
+	if err := ensurePathWithin(domainDir, fullPath); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid path")
+		return
+	}
+	content, err := os.ReadFile(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			writeError(w, http.StatusNotFound, "file not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not read file")
+		return
+	}
+	mimeType := file.MimeType
+	if mimeType == "" {
+		mimeType = detectMimeType(relPath, content)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"content":  string(content),
+		"mimeType": mimeType,
+	})
+}
+
+func (s *Server) handleUpdateFile(w http.ResponseWriter, r *http.Request, domain sqlstore.Domain, relPath, editedBy string) {
+	if !ensureJSON(w, r) {
+		return
+	}
+	defer r.Body.Close()
+	var body struct {
+		Content     string `json:"content"`
+		Description string `json:"description"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+
+	file, err := s.siteFiles.GetByPath(r.Context(), domain.ID, relPath)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "file not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not load file")
+		return
+	}
+
+	domainDir, err := domainFilesDir(domain.URL)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid domain")
+		return
+	}
+	fullPath := filepath.Join(domainDir, filepath.FromSlash(relPath))
+	if err := ensurePathWithin(domainDir, fullPath); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid path")
+		return
+	}
+
+	oldContent, err := os.ReadFile(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			writeError(w, http.StatusNotFound, "file not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not read file")
+		return
+	}
+
+	newBytes := []byte(body.Content)
+	detected := detectMimeType(relPath, newBytes)
+	if err := validateMimeType(relPath, detected, file.MimeType); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not write file")
+		return
+	}
+	if err := os.WriteFile(fullPath, newBytes, 0o644); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not write file")
+		return
+	}
+
+	if err := s.siteFiles.Update(r.Context(), file.ID, newBytes); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not update file metadata")
+		return
+	}
+
+	beforeHash := sha256.Sum256(oldContent)
+	afterHash := sha256.Sum256(newBytes)
+	edit := sqlstore.FileEdit{
+		ID:                uuid.NewString(),
+		FileID:            file.ID,
+		EditedBy:          editedBy,
+		ContentBeforeHash: sql.NullString{String: hex.EncodeToString(beforeHash[:]), Valid: true},
+		ContentAfterHash:  sql.NullString{String: hex.EncodeToString(afterHash[:]), Valid: true},
+		EditType:          "manual",
+	}
+	if strings.TrimSpace(body.Description) != "" {
+		edit.EditDescription = sql.NullString{String: strings.TrimSpace(body.Description), Valid: true}
+	}
+	if err := s.fileEdits.Create(r.Context(), edit); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not log file edit")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
+func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request, domain sqlstore.Domain, relPath string) {
+	file, err := s.siteFiles.GetByPath(r.Context(), domain.ID, relPath)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "file not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not load file")
+		return
+	}
+	domainDir, err := domainFilesDir(domain.URL)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid domain")
+		return
+	}
+	fullPath := filepath.Join(domainDir, filepath.FromSlash(relPath))
+	if err := ensurePathWithin(domainDir, fullPath); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid path")
+		return
+	}
+	if err := os.Remove(fullPath); err != nil && !os.IsNotExist(err) {
+		writeError(w, http.StatusInternalServerError, "could not delete file")
+		return
+	}
+	if err := s.siteFiles.Delete(r.Context(), file.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not delete file metadata")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+func (s *Server) handleFileHistory(w http.ResponseWriter, r *http.Request, domainID, fileID string) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	file, err := s.siteFiles.Get(r.Context(), fileID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "file not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not load file")
+		return
+	}
+	if file.DomainID != domainID {
+		writeError(w, http.StatusNotFound, "file not found")
+		return
+	}
+	limit := 50
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 200 {
+			limit = n
+		}
+	}
+	list, err := s.fileEdits.ListByFile(r.Context(), fileID, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not list file history")
+		return
+	}
+	resp := make([]fileEditDTO, 0, len(list))
+	for _, e := range list {
+		item := fileEditDTO{
+			ID:        e.ID,
+			EditedBy:  e.EditedBy,
+			EditType:  e.EditType,
+			CreatedAt: e.CreatedAt,
+		}
+		if e.EditDescription.Valid {
+			item.Description = e.EditDescription.String
+		}
+		resp = append(resp, item)
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleGenerations(w http.ResponseWriter, r *http.Request) {
@@ -1421,6 +1770,16 @@ func (s *Server) handleGenerationAction(w http.ResponseWriter, r *http.Request, 
 
 	switch body.Action {
 	case "pause":
+		// Если задача еще не стартовала, можно сразу поставить на паузу
+		if gen.Status == "pending" {
+			if err := s.generations.UpdateStatus(r.Context(), id, "paused", gen.Progress, nil); err != nil {
+				writeError(w, http.StatusInternalServerError, "could not pause generation")
+				return
+			}
+			_ = s.domains.UpdateStatus(r.Context(), gen.DomainID, "waiting")
+			writeJSON(w, http.StatusOK, map[string]string{"status": "paused", "message": "generation paused"})
+			return
+		}
 		// Пауза возможна только из состояния PROCESSING
 		if gen.Status != "processing" {
 			writeError(w, http.StatusBadRequest, "can only pause processing generation")
@@ -1461,6 +1820,15 @@ func (s *Server) handleGenerationAction(w http.ResponseWriter, r *http.Request, 
 
 	case "cancel":
 		// Отмена возможна из PROCESSING, PAUSE_REQUESTED или PAUSED
+		if gen.Status == "pending" {
+			if err := s.generations.UpdateStatus(r.Context(), id, "cancelled", 0, nil); err != nil {
+				writeError(w, http.StatusInternalServerError, "could not cancel generation")
+				return
+			}
+			_ = s.domains.UpdateStatus(r.Context(), gen.DomainID, "waiting")
+			writeJSON(w, http.StatusOK, map[string]string{"status": "cancelled", "message": "generation cancelled"})
+			return
+		}
 		if gen.Status != "processing" && gen.Status != "pause_requested" && gen.Status != "paused" {
 			writeError(w, http.StatusBadRequest, "can only cancel processing, pause_requested or paused generation")
 			return
@@ -1990,6 +2358,170 @@ func (s *Server) handleAdminPromptByID(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) handleAdminAuditRules(w http.ResponseWriter, r *http.Request) {
+	if s.auditRules == nil {
+		writeError(w, http.StatusInternalServerError, "audit store not configured")
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		list, err := s.auditRules.ListRules(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not list audit rules")
+			return
+		}
+		resp := make([]adminAuditRuleDTO, 0, len(list))
+		for _, rule := range list {
+			resp = append(resp, toAdminAuditRuleDTO(rule))
+		}
+		writeJSON(w, http.StatusOK, resp)
+	case http.MethodPost:
+		if !ensureJSON(w, r) {
+			return
+		}
+		defer r.Body.Close()
+		var body struct {
+			Code        string  `json:"code"`
+			Title       string  `json:"title"`
+			Description *string `json:"description"`
+			Severity    string  `json:"severity"`
+			IsActive    bool    `json:"isActive"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid body")
+			return
+		}
+		code := strings.TrimSpace(body.Code)
+		title := strings.TrimSpace(body.Title)
+		if code == "" || title == "" {
+			writeError(w, http.StatusBadRequest, "code and title are required")
+			return
+		}
+		severity := strings.ToLower(strings.TrimSpace(body.Severity))
+		if severity == "" {
+			severity = "warn"
+		}
+		rule := sqlstore.AuditRule{
+			Code:        code,
+			Title:       title,
+			Description: strings.TrimSpace(optionalString(body.Description)),
+			Severity:    severity,
+			IsActive:    body.IsActive,
+		}
+		if err := s.auditRules.CreateRule(r.Context(), rule); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to create audit rule")
+			return
+		}
+		writeJSON(w, http.StatusCreated, toAdminAuditRuleDTO(rule))
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) handleAdminAuditRuleByCode(w http.ResponseWriter, r *http.Request) {
+	if s.auditRules == nil {
+		writeError(w, http.StatusInternalServerError, "audit store not configured")
+		return
+	}
+	code := strings.TrimPrefix(r.URL.Path, "/api/admin/audit-rules/")
+	code = strings.TrimSpace(code)
+	if code == "" {
+		writeError(w, http.StatusBadRequest, "missing rule code")
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		rule, err := s.auditRules.GetRule(r.Context(), code)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeError(w, http.StatusNotFound, "rule not found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "failed to load rule")
+			return
+		}
+		writeJSON(w, http.StatusOK, toAdminAuditRuleDTO(rule))
+	case http.MethodPatch:
+		if !ensureJSON(w, r) {
+			return
+		}
+		defer r.Body.Close()
+		var body struct {
+			Title       *string `json:"title"`
+			Description *string `json:"description"`
+			Severity    *string `json:"severity"`
+			IsActive    *bool   `json:"isActive"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid body")
+			return
+		}
+		rule, err := s.auditRules.GetRule(r.Context(), code)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeError(w, http.StatusNotFound, "rule not found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "failed to load rule")
+			return
+		}
+		updated := false
+		if body.Title != nil {
+			title := strings.TrimSpace(*body.Title)
+			if title == "" {
+				writeError(w, http.StatusBadRequest, "title cannot be empty")
+				return
+			}
+			rule.Title = title
+			updated = true
+		}
+		if body.Description != nil {
+			rule.Description = strings.TrimSpace(*body.Description)
+			updated = true
+		}
+		if body.Severity != nil {
+			sev := strings.ToLower(strings.TrimSpace(*body.Severity))
+			if sev == "" {
+				sev = "warn"
+			}
+			rule.Severity = sev
+			updated = true
+		}
+		if body.IsActive != nil {
+			rule.IsActive = *body.IsActive
+			updated = true
+		}
+		if !updated {
+			writeError(w, http.StatusBadRequest, "no changes supplied")
+			return
+		}
+		if err := s.auditRules.UpdateRule(r.Context(), rule); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to update rule")
+			return
+		}
+		writeJSON(w, http.StatusOK, toAdminAuditRuleDTO(rule))
+	case http.MethodDelete:
+		if err := s.auditRules.DeleteRule(r.Context(), code); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeError(w, http.StatusNotFound, "rule not found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "failed to delete rule")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func optionalString(val *string) string {
+	if val == nil {
+		return ""
+	}
+	return *val
+}
+
 func (s *Server) startGenerationMetricsLoop() {
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
@@ -2045,6 +2577,22 @@ type domainDTO struct {
 	PublishedAt      *time.Time `json:"published_at,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`
 	UpdatedAt        time.Time  `json:"updated_at"`
+}
+
+type fileDTO struct {
+	ID        string    `json:"id"`
+	Path      string    `json:"path"`
+	Size      int64     `json:"size"`
+	MimeType  string    `json:"mimeType"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+type fileEditDTO struct {
+	ID          string    `json:"id"`
+	EditedBy    string    `json:"editedBy"`
+	EditType    string    `json:"editType"`
+	Description string    `json:"description,omitempty"`
+	CreatedAt   time.Time `json:"createdAt"`
 }
 
 type generationDTO struct {
@@ -2221,6 +2769,32 @@ func toAdminPromptDTO(p sqlstore.SystemPrompt) adminPromptDTO {
 	}
 }
 
+type adminAuditRuleDTO struct {
+	Code        string    `json:"code"`
+	Title       string    `json:"title"`
+	Description *string   `json:"description,omitempty"`
+	Severity    string    `json:"severity"`
+	IsActive    bool      `json:"isActive"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+}
+
+func toAdminAuditRuleDTO(r sqlstore.AuditRule) adminAuditRuleDTO {
+	var desc *string
+	if strings.TrimSpace(r.Description) != "" {
+		desc = &r.Description
+	}
+	return adminAuditRuleDTO{
+		Code:        r.Code,
+		Title:       r.Title,
+		Description: desc,
+		Severity:    r.Severity,
+		IsActive:    r.IsActive,
+		CreatedAt:   r.CreatedAt,
+		UpdatedAt:   r.UpdatedAt,
+	}
+}
+
 func nullableStringPtr(ns sql.NullString) *string {
 	if ns.Valid {
 		v := ns.String
@@ -2392,6 +2966,10 @@ func (s *Server) authorizeProject(ctx context.Context, projectID string) (sqlsto
 
 // getProjectMemberRole возвращает роль пользователя в проекте (owner, editor, viewer)
 func (s *Server) getProjectMemberRole(ctx context.Context, projectID, email string) (string, error) {
+	// Админ имеет доступ ко всем проектам
+	if user, ok := currentUserFromContext(ctx); ok && strings.EqualFold(user.Role, "admin") {
+		return "admin", nil
+	}
 	// Проверяем, является ли пользователь владельцем
 	p, err := s.projects.GetByID(ctx, projectID)
 	if err != nil {
@@ -2436,6 +3014,136 @@ func hasProjectPermission(userRole string, memberRole string, requiredRole strin
 	requiredLevel := roleHierarchy[requiredRole]
 
 	return userLevel >= requiredLevel
+}
+
+func joinURLPath(parts []string) (string, error) {
+	if len(parts) == 0 {
+		return "", nil
+	}
+	segs := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p == "" {
+			continue
+		}
+		v, err := url.PathUnescape(p)
+		if err != nil {
+			return "", err
+		}
+		segs = append(segs, v)
+	}
+	return strings.Join(segs, "/"), nil
+}
+
+func sanitizeFilePath(p string) (string, error) {
+	if strings.Contains(p, "\\") {
+		return "", errors.New("path contains backslash")
+	}
+	clean := path.Clean(strings.TrimSpace(p))
+	if clean == "." || clean == "" {
+		return "", errors.New("path is empty")
+	}
+	if path.IsAbs(clean) {
+		return "", errors.New("path is absolute")
+	}
+	if strings.HasPrefix(clean, "../") || clean == ".." {
+		return "", errors.New("path traversal detected")
+	}
+	parts := strings.Split(clean, "/")
+	for _, part := range parts {
+		if part == ".." {
+			return "", errors.New("path traversal detected")
+		}
+	}
+	return clean, nil
+}
+
+func domainFilesDir(domainURL string) (string, error) {
+	domain := strings.TrimSpace(domainURL)
+	domain = strings.TrimPrefix(domain, "http://")
+	domain = strings.TrimPrefix(domain, "https://")
+	if idx := strings.IndexAny(domain, "/?"); idx >= 0 {
+		domain = domain[:idx]
+	}
+	if idx := strings.Index(domain, ":"); idx >= 0 {
+		domain = domain[:idx]
+	}
+	domain = strings.TrimSpace(domain)
+	if domain == "" {
+		return "", errors.New("domain is empty")
+	}
+	if strings.Contains(domain, "..") || strings.Contains(domain, "\\") || strings.ContainsAny(domain, " \t\n\r") {
+		return "", errors.New("invalid domain")
+	}
+	baseDir := "server"
+	info, err := os.Stat(baseDir)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("%s is not a directory", baseDir)
+	}
+	full := filepath.Join(baseDir, domain)
+	if err := ensurePathWithin(baseDir, full); err != nil {
+		return "", err
+	}
+	return full, nil
+}
+
+func ensurePathWithin(baseDir, target string) error {
+	baseAbs, err := filepath.Abs(baseDir)
+	if err != nil {
+		return err
+	}
+	targetAbs, err := filepath.Abs(target)
+	if err != nil {
+		return err
+	}
+	baseAbs = filepath.Clean(baseAbs)
+	if targetAbs == baseAbs {
+		return errors.New("path equals base dir")
+	}
+	if !strings.HasPrefix(targetAbs, baseAbs+string(os.PathSeparator)) {
+		return errors.New("path escapes base dir")
+	}
+	return nil
+}
+
+func detectMimeType(path string, content []byte) string {
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext != "" {
+		if t := mime.TypeByExtension(ext); t != "" {
+			return t
+		}
+	}
+	if len(content) > 0 {
+		return http.DetectContentType(content)
+	}
+	return "application/octet-stream"
+}
+
+func baseMimeType(m string) string {
+	return strings.TrimSpace(strings.SplitN(m, ";", 2)[0])
+}
+
+func validateMimeType(path string, detected string, existing string) error {
+	if strings.TrimSpace(detected) == "" {
+		return errors.New("mime type is empty")
+	}
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext == "" {
+		return errors.New("file extension is required")
+	}
+	expected := mime.TypeByExtension(ext)
+	if expected == "" && baseMimeType(detected) == "application/octet-stream" {
+		return errors.New("unsupported mime type")
+	}
+	if expected != "" && baseMimeType(detected) != baseMimeType(expected) {
+		return fmt.Errorf("mime type mismatch: expected %s, got %s", baseMimeType(expected), baseMimeType(detected))
+	}
+	if existing != "" && baseMimeType(existing) != baseMimeType(detected) {
+		return fmt.Errorf("mime type mismatch: expected %s, got %s", baseMimeType(existing), baseMimeType(detected))
+	}
+	return nil
 }
 
 // requireProjectRole проверяет права доступа к проекту

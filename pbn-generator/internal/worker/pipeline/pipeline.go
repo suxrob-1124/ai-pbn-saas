@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"obzornik-pbn-generator/internal/publisher"
 	"obzornik-pbn-generator/internal/store"
 	"obzornik-pbn-generator/internal/store/sqlstore"
 )
@@ -44,11 +45,13 @@ type PipelineState struct {
 	GenerationStore *sqlstore.GenerationStore
 	PromptStore     *sqlstore.PromptStore
 	ProjectStore    *sqlstore.ProjectStore
+	AuditStore      *sqlstore.AuditStore
 
 	// Services
 	LLMClient     LLMClient
 	PromptManager PromptManager
 	Analyzer      Analyzer
+	Publisher     publisher.Publisher
 
 	// Config
 	DefaultModel string // Дефолтная модель LLM

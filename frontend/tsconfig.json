@@ -18,7 +18,8 @@
     "jsx": "preserve",
     "incremental": true,
     "types": [
-      "node"
+      "node",
+      "monaco-editor"
     ],
     "plugins": [
       {

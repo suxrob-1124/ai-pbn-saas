@@ -39,6 +39,10 @@
 --   ('dom-1xbet-ru-003', 'proj-1xbet-ru-001', 'autogornostay.ru', '1xbet keyword', 'ru', 'ru', 'waiting', NOW(), NOW())
 -- ON CONFLICT (id) DO NOTHING;
 
+-- Удаляем устаревшие промпты, которые больше не используются
+DELETE FROM system_prompts WHERE id IN (
+    'prompt-404-page'
+);
 
 INSERT INTO system_prompts (id, name, description, body, stage, model, is_active, created_at, updated_at)
 VALUES (
@@ -59,7 +63,7 @@ VALUES (
     '# РОЛЬ
 Ты — ведущий SEO-аналитик. Твоя специализация — data-driven анализ поисковой выдачи (SERP) для выявления закономерностей и выигрышных стратегий. Ты работаешь с количественными метриками и качественным анализом текста.
 # ЦЕЛЬ
-Провести исчерпывающий анализ контента топ-10 сайтов по поисковому запросу "{{ keyword }}", синтезировав данные из двух источников: таблицы с метриками и текстового содержимого страниц. Твоя задача — сформулировать структурированные и четкие выводы, которые лягут в основу для создания технического задания на следующем этапе.
+Провести исчерпывающий анализ контента топ-20 сайтов по поисковому запросу "{{ keyword }}", синтезировав данные из двух источников: таблицы с метриками и текстового содержимого страниц. Твоя задача — сформулировать структурированные и четкие выводы, которые лягут в основу для создания технического задания на следующем этапе.
 
 # ВХОДНЫЕ ДАННЫЕ
 Я предоставлю тебе данные в двух частях:
@@ -247,49 +251,6 @@ footer_variant_id: {{ footer_variant_id }}',
     NOW()
 ),
 (
-    'prompt-404-page',
-    '404 страница',
-    'Промпт для генерации контента страницы 404 (страница не найдена)',
-    '# РОЛЬ
-
-Ты — веб-дизайнер и копирайтер. Твоя задача — создать дружелюбную и полезную страницу 404 (страница не найдена) для сайта.
-
-# КОНТЕКСТ
-
-Пользователь попал на несуществующую страницу. Нужно помочь ему найти нужную информацию, не создавая негативного впечатления.
-
-# ВХОДНЫЕ ДАННЫЕ
-
-- **Ключевое слово сайта:** {{ keyword }}
-- **Язык:** {{ language }}
-- **Страна:** {{ country }}
-- **Техническое задание:** {{ technical_spec }}
-
-# ЗАДАЧА
-
-Создай контент для страницы 404, который:
-1. Извиняется за неудобство дружелюбным тоном
-2. Объясняет, что страница не найдена
-3. Предлагает полезные действия (вернуться на главную, использовать поиск, посмотреть популярные статьи)
-4. Соответствует стилю и тону основного сайта (из технического задания)
-5. Использует ключевое слово сайта естественным образом
-
-# ФОРМАТ ВЫВОДА
-
-Предоставь контент в формате Markdown, включая:
-- Заголовок H1 (дружелюбное сообщение об ошибке)
-- Краткое описание проблемы
-- Список полезных действий (ссылки можно оформить как плейсхолдеры)
-- Опционально: форма поиска или популярные статьи
-
-Текст должен быть на языке {{ language }}.',
-    '404_page',
-    NULL,
-    TRUE,
-    NOW(),
-    NOW()
-),
-(
     'prompt-content-writer-v2',
     'Content Writer V2',
     'Промпт для написания контента на основе технического задания',
@@ -468,7 +429,15 @@ date: "{{ date }}"
     NOW(),
     NOW()
 )
-ON CONFLICT (id) DO UPDATE SET body = EXCLUDED.body, stage = EXCLUDED.stage, model = EXCLUDED.model, updated_at = NOW();
+ON CONFLICT (id) DO UPDATE
+SET
+    name = EXCLUDED.name,
+    description = EXCLUDED.description,
+    stage = EXCLUDED.stage,
+    model = EXCLUDED.model,
+    body = EXCLUDED.body,
+    is_active = EXCLUDED.is_active,
+    updated_at = NOW();
 
 -- Design Architect V2: Промпт для разработки дизайн-системы
 INSERT INTO system_prompts (id, name, description, body, stage, model, is_active, created_at, updated_at)
@@ -904,7 +873,15 @@ VALUES (
     NOW(),
     NOW()
 )
-ON CONFLICT (id) DO UPDATE SET body = EXCLUDED.body, stage = EXCLUDED.stage, model = EXCLUDED.model, updated_at = NOW();
+ON CONFLICT (id) DO UPDATE
+SET
+    name = EXCLUDED.name,
+    description = EXCLUDED.description,
+    stage = EXCLUDED.stage,
+    model = EXCLUDED.model,
+    body = EXCLUDED.body,
+    is_active = EXCLUDED.is_active,
+    updated_at = NOW();
 
 -- Prompt: SVG Logo Generator V2 (logo_generation)
 INSERT INTO system_prompts (id, name, description, body, stage, model, is_active, created_at, updated_at)
@@ -945,7 +922,15 @@ $$# РОЛЬ
     NOW(),
     NOW()
 )
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE
+SET
+    name = EXCLUDED.name,
+    description = EXCLUDED.description,
+    stage = EXCLUDED.stage,
+    model = EXCLUDED.model,
+    body = EXCLUDED.body,
+    is_active = EXCLUDED.is_active,
+    updated_at = NOW();
 
 -- Image prompt generator (для подготовки детальных промптов под картинки)
 INSERT INTO system_prompts (id, name, stage, model, is_active, created_at, updated_at, body)
@@ -985,7 +970,14 @@ JSON массив: `[{"slug": "...", "prompt": "..."}]`
 {{ technical_spec }}
 $$
 )
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE
+SET
+    name = EXCLUDED.name,
+    stage = EXCLUDED.stage,
+    model = EXCLUDED.model,
+    body = EXCLUDED.body,
+    is_active = EXCLUDED.is_active,
+    updated_at = NOW();
 
 -- Prompt: 404 Page Generator V2 (404_page)
 INSERT INTO system_prompts (id, name, stage, model, is_active, created_at, updated_at, body)
@@ -999,85 +991,69 @@ VALUES (
     NOW(),
 $$
 # РОЛЬ
-Ты — креативный Front-end разработчик. Твоя задача — создать страницу 404, которая идеально вписывается в дизайн сайта.
-
-# ВХОДНЫЕ ДАННЫЕ
-1.  **Design System:** Содержит ключ `pfx` (префикс классов, например "x9k3") и `style_name`.
-2.  **HTML Context:** Содержит пример хедера и футера.
+Ты — креативный Front-end разработчик и UX-дизайнер. Твоя задача — создать уникальную и запоминающуюся страницу ошибки 404, которая при этом органично вписывается в существующую дизайн-систему сайта.
 
 # ЗАДАЧА
-Сгенерировать полный файл `404.html`.
+Сгенерировать полный, самодостаточный HTML-файл (`404.html`), который использует предоставленные стили и компоненты, но представляет контент ошибки в творческой и визуально интересной манере.
 
-# ТРЕБОВАНИЯ К КОДУ
-1.  **Структура:**
-    - `<!doctype html>`, `<html>`, `<head>`, `<body>`.
-    - В `<head>` ОБЯЗАТЕЛЬНО вставь: `<link rel="stylesheet" href="style.css">`.
-    - Перед `</body>` ОБЯЗАТЕЛЬНО вставь: `<script src="script.js" defer></script>`.
-2.  **Стилизация (КРИТИЧНО):**
-    - Ты ОБЯЗАН использовать классы с префиксом `pfx` из входных данных.
-    - Оберни всё в `<div class="{pfx}-page-wrapper">`.
-    - Используй `<header class="{pfx}-page-header">` (скопируй структуру из HTML Context).
-    - Используй `<footer class="{pfx}-page-footer ...">` (скопируй структуру из HTML Context).
-    - Контент ошибки оберни в `<main class="{pfx}-main-content">` и `<section class="{pfx}-hero">`.
-    - Заголовок H1 должен иметь класс `{pfx}-h1`.
-    - Кнопка "На главную" должна иметь класс `{pfx}-cta`.
+# ПОШАГОВЫЙ ПЛАН ДЕЙСТВИЙ
 
-# КРЕАТИВНАЯ ЧАСТЬ
-Придумай забавный или тематический текст ошибки, подходящий под стиль `style_name`.
+### Шаг 1: Изучение дизайн-системы
+1.  **Проанализируй CSS:** Изучи переменные в `:root`, чтобы понять цветовую палитру, шрифты и общую эстетику (`style_name` из дизайн-плана).
+2.  **Проанализируй Компоненты:** Запомни структуру и классы для `<header>` и `<footer>`. Ты должен их переиспользовать.
 
-# ФОРМАТ ВЫВОДА
-Только чистый HTML код.
+### Шаг 2: Творческая концепция для `<main>`
+Придумай и реализуй **креативную концепцию** для центрального блока страницы. Она должна соответствовать общему стилю сайта. Вот несколько идей для вдохновения, но не ограничивайся ими:
+
+*   **Для стиля "Киберпанк":** Можно изобразить "глитч" в матрице, сообщение об ошибке на футуристическом терминале, потерянный сигнал.
+*   **Для стиля "Пиксель-арт":** Показать персонажа, который упал в яму, или сломанный игровой уровень.
+*   **Для стиля "Картина маслом":** Изобразить пустой холст, перевернутую картину или потерянный набросок.
+*   **Для "Фотореализма":** Минималистичная сцена с одним объектом не на своем месте.
+
+**Твоя реализация должна включать:**
+1.  **Главный визуальный элемент:** Это может быть крупный стилизованный заголовок `<h1>404</h1>` или интересный SVG-элемент, который ты создашь сам в духе `style_name`.
+2.  **Сообщение об ошибке:** Напиши остроумное или полезное сообщение, соответствующее концепции.
+3.  **Призыв к действию:** Обязательно добавь заметную кнопку или ссылку (`<a class="{pfx}-cta" href="/">...</a>`) для возврата на главную страницу.
+
+### Шаг 3: Сборка `404.html`
+1.  **Создай базовую HTML-структуру.**
+2.  **Секция `<head>`:**
+    *   Добавь мета-теги и осмысленный `<title>`.
+    *   **Вставь ВЕСЬ `Полный CSS-код`** внутрь тега `<style>`.
+3.  **Секция `<body>`:**
+    *   Используй основные классы-обертки (`{pfx}-page-wrapper`).
+    *   **Скопируй `<header>`** из `HTML-каркаса`, но удали из него элементы навигации.
+    *   **Вставь свой креативный `<main>`** из Шага 2. Убедись, что ты используешь правильные классы для контейнеров и типографики (`.{pfx}-container`, `.{pfx}-h1`, `.{pfx}-p` и т.д.).
+    *   **Скопируй `<footer>`** из `HTML-каркаса` целиком.
+    *   **Вставь `Полный JS-код`** в конце `<body>` внутри `<script>`.
+
+# ПРАВИЛА ВЫВОДА
+- Верни только один полный HTML-файл.
+- Никаких комментариев.
+- Все стили и скрипты должны быть встроены.
+- Все ссылки на странице должны вести только на главную страницу. **Строго "/"**.
 
 ---
-### Design System (JSON):
+### Дизайн-план (для `style_name` и `pfx`):
 {{ design_system }}
-
-### HTML Context (Header/Footer reference):
+### HTML-каркас (для <header>, <footer> и классов):
 {{ html_raw }}
+### Полный CSS-код:
+{{ css_content }}
+### Полный JS-код:
+{{ js_content }}
+### Язык для текста:
+{{ language }}
 $$
 )
-ON CONFLICT (id) DO NOTHING;
-
--- Prompt: SVG Logo Generator V2 (logo_generation)
-INSERT INTO system_prompts (id, name, description, body, stage, model, is_active, created_at, updated_at)
-VALUES (
-    'prompt-logo-generator-v2',
-    'SVG Logo Generator V2',
-    'Генерация цветных SVG логотипов из дизайн-системы',
-$$# РОЛЬ
-Ты — профессиональный дизайнер векторной графики с глубоким пониманием различных визуальных стилей, от классики до киберпанка. Твоя задача — создавать чистые, минималистичные и семантически верные SVG-логотипы.
-
-# ЗАДАЧА
-На основе предоставленной КОНЦЕПЦИИ и ВИЗУАЛЬНОГО СТИЛЯ из Design System, сгенерировать SVG-код для логотипа сайта.
-
-# КЛЮЧЕВЫЕ ПРАВИЛА (VISUAL STYLE)
-1.  **Синтез Стиля и Концепции:** Ты должен не просто нарисовать концепцию, а **визуально интерпретировать** ее через призму заданного стиля.
-    *   Если стиль "Киберпанк/Неон", используй резкие углы, "цифровые" формы, разрывы, глитч-элементы.
-    *   Если стиль "Классика/Люкс", используй засечки, тонкие линии, элегантность.
-    *   Если стиль "Пиксель-арт", логотип должен быть составлен из четких квадратных блоков.
-2.  **ЦВЕТА (КРИТИЧНО):**
-    *   Ты ОБЯЗАН использовать конкретные цвета из `color_palette` (hex-коды или oklch, переданные во входных данных).
-    *   **ЗАПРЕЩЕНО** использовать `currentColor`. Логотип должен быть цветным сам по себе.
-    *   Используй акцентные цвета для выделения главного.
-3.  **Только Символы:** Логотип должен быть исключительно символическим. Категорически запрещено вставлять любой текст (`<text>`) в SVG.
-
-# ТЕХНИЧЕСКИЕ ТРЕБОВАНИЯ
-1.  Ответ должен содержать ТОЛЬКО код `<svg>...</svg>`. Без Markdown (```), без XML пролога.
-2.  Обязательно добавь `xmlns="http://www.w3.org/2000/svg"`.
-3.  Обязательно добавь `viewBox="0 0 100 100"` (или другой квадратный).
-
-# ВХОДНЫЕ ДАННЫЕ
-{{ design_system }}
-
-# ФОРМАТ ВЫВОДА
-Только чистый SVG код.$$,
-    'logo_generation',
-    'gemini-2.5-pro',
-    TRUE,
-    NOW(),
-    NOW()
-)
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE
+SET
+    name = EXCLUDED.name,
+    stage = EXCLUDED.stage,
+    model = EXCLUDED.model,
+    body = EXCLUDED.body,
+    is_active = EXCLUDED.is_active,
+    updated_at = NOW();
 
 -- Prompt: HTML Slicer V2 (html_generation)
 INSERT INTO system_prompts (id, name, description, body, stage, model, is_active, created_at, updated_at)
@@ -1173,7 +1149,15 @@ $$# РОЛЬ
     NOW(),
     NOW()
 )
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE
+SET
+    name = EXCLUDED.name,
+    description = EXCLUDED.description,
+    stage = EXCLUDED.stage,
+    model = EXCLUDED.model,
+    body = EXCLUDED.body,
+    is_active = EXCLUDED.is_active,
+    updated_at = NOW();
 
 -- Prompt: CSS Generator V2 (css_generation)
 INSERT INTO system_prompts (id, name, description, body, stage, model, is_active, created_at, updated_at)
@@ -1266,7 +1250,15 @@ $$# РОЛЬ
     NOW(),
     NOW()
 )
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE
+SET
+    name = EXCLUDED.name,
+    description = EXCLUDED.description,
+    stage = EXCLUDED.stage,
+    model = EXCLUDED.model,
+    body = EXCLUDED.body,
+    is_active = EXCLUDED.is_active,
+    updated_at = NOW();
 
 -- Prompt: JS Generator V2 (js_generation)
 INSERT INTO system_prompts (id, name, description, body, stage, model, is_active, created_at, updated_at)
@@ -1329,4 +1321,12 @@ $$# РОЛЬ
     NOW(),
     NOW()
 )
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE
+SET
+    name = EXCLUDED.name,
+    description = EXCLUDED.description,
+    stage = EXCLUDED.stage,
+    model = EXCLUDED.model,
+    body = EXCLUDED.body,
+    is_active = EXCLUDED.is_active,
+    updated_at = NOW();

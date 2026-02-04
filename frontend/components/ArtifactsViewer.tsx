@@ -20,7 +20,13 @@ const ARTIFACT_GROUPS = [
   { id: "css", name: "🎨 CSS-стили", order: ["css_generation_prompt", "css_content"] },
   { id: "js", name: "⚙️ JS-логика", order: ["js_generation_prompt", "js_content"] },
   { id: "images", name: "🖼️ Генерация изображений", order: ["image_prompts", "generated_files"] },
+  { id: "page_404", name: "🚧 404 страница", order: ["404_page_prompt", "404_html"] },
+  { id: "audit", name: "🧪 Аудит сборки", order: ["audit_report", "audit_status", "audit_has_issues"] },
   { id: "final", name: "🚀 Финальная сборка", order: ["final_html", "zip_archive"] },
+];
+
+const ARTIFACT_ALIASES: Array<{ primary: string; alias: string }> = [
+  { primary: "competitor_analysis", alias: "llm_analysis" },
 ];
 
 const LABELS: Record<string, string> = {
@@ -49,6 +55,11 @@ const LABELS: Record<string, string> = {
   js_content: "Скрипты интерактивности",
   generated_files: "Список сгенерированных файлов",
   image_prompts: "Промпты для изображений",
+  "404_page_prompt": "📝 Промпт для 404",
+  "404_html": "Готовая 404 страница (HTML)",
+  audit_report: "Отчет аудита",
+  audit_status: "Статус аудита",
+  audit_has_issues: "Флаг проблем",
   final_html: "Финальный HTML",
   zip_archive: "ZIP архив сайта",
 };
@@ -79,6 +90,11 @@ const DESCRIPTIONS: Record<string, string> = {
   js_content: "Скрипты интерактивности",
   generated_files: "Итоговые файлы для публикации (zip-содержимое)",
   image_prompts: "JSON промпты для генерации изображений",
+  "404_page_prompt": "Промпт с подставленными данными для генерации 404 страницы",
+  "404_html": "Готовая HTML-страница 404",
+  audit_report: "Отчет аудита с найденными проблемами",
+  audit_status: "Итоговый статус аудита",
+  audit_has_issues: "Есть ли проблемы в сборке",
   final_html: "Финальный HTML с подключёнными style.css и script.js",
   zip_archive: "Архив сайта в base64",
 };
@@ -109,6 +125,11 @@ const TYPE_BY_KEY: Record<string, ArtifactType> = {
   js_content: "text",
   generated_files: "json",
   image_prompts: "json",
+  "404_page_prompt": "text",
+  "404_html": "text",
+  audit_report: "json",
+  audit_status: "text",
+  audit_has_issues: "text",
   final_html: "text",
   zip_archive: "binary",
 };
@@ -155,6 +176,17 @@ export function ArtifactsViewer({ artifacts }: { artifacts?: ArtifactRecord }) {
       if (key === "llm_requests" || key === "serp_raw") return;
       if (value !== undefined && value !== null && formatValue(value)) {
         artifactMap.set(key, value);
+      }
+    });
+
+    // Убираем дубли по известным alias-ключам, если содержимое совпадает
+    const normalize = (value: any) => formatValue(value).trim();
+    ARTIFACT_ALIASES.forEach(({ primary, alias }) => {
+      if (!artifactMap.has(primary) || !artifactMap.has(alias)) return;
+      const primaryValue = artifactMap.get(primary);
+      const aliasValue = artifactMap.get(alias);
+      if (normalize(primaryValue) === normalize(aliasValue)) {
+        artifactMap.delete(alias);
       }
     });
     
@@ -579,6 +611,9 @@ function decodeText(file: GeneratedFileItem) {
 
 export function LogsViewer({ logs }: { logs?: any }) {
   // Всегда показываем блок логов, даже если они пустые (для завершенных генераций)
+  const [levelFilter, setLevelFilter] = useState<"all" | "error" | "warn" | "info" | "success">("all");
+  const [viewMode, setViewMode] = useState<"formatted" | "raw">("formatted");
+
   const items = useMemo(() => {
     if (!logs) return [];
     if (Array.isArray(logs)) return logs;
@@ -596,23 +631,124 @@ export function LogsViewer({ logs }: { logs?: any }) {
     return [logs];
   }, [logs]);
 
+  const rawText = useMemo(
+    () =>
+      items
+        .map((entry) => {
+          if (typeof entry === "string") return entry;
+          try {
+            return JSON.stringify(entry, null, 2);
+          } catch {
+            return String(entry);
+          }
+        })
+        .join("\n"),
+    [items]
+  );
+
+  const lines = useMemo(() => {
+    const normalized: string[] = [];
+    items.forEach((entry) => {
+      let text = "";
+      if (typeof entry === "string") {
+        text = entry;
+      } else {
+        try {
+          text = JSON.stringify(entry, null, 2);
+        } catch {
+          text = String(entry);
+        }
+      }
+      text
+        .split("\n")
+        .map((line) => line.trimEnd())
+        .filter((line) => line.length > 0)
+        .forEach((line) => normalized.push(line));
+    });
+    return normalized;
+  }, [items]);
+
+  const parsedLines = useMemo(() => lines.map(parseLogLine), [lines]);
+  const filteredLines = useMemo(() => {
+    if (levelFilter === "all") return parsedLines;
+    return parsedLines.filter((line) => line.level === levelFilter);
+  }, [levelFilter, parsedLines]);
+
+  const rawOutput = useMemo(() => {
+    if (levelFilter === "all") return rawText;
+    return filteredLines.map((line) => line.raw).join("\n");
+  }, [filteredLines, levelFilter, rawText]);
+
   return (
     <div className="space-y-2">
-      <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Логи</h4>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Логи</h4>
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <div className="flex items-center gap-1">
+            <FilterBadge label="Все" active={levelFilter === "all"} onClick={() => setLevelFilter("all")} />
+            <FilterBadge label="Error" active={levelFilter === "error"} onClick={() => setLevelFilter("error")} tone="error" />
+            <FilterBadge label="Warn" active={levelFilter === "warn"} onClick={() => setLevelFilter("warn")} tone="warn" />
+            <FilterBadge label="Info" active={levelFilter === "info"} onClick={() => setLevelFilter("info")} tone="info" />
+            <FilterBadge label="Success" active={levelFilter === "success"} onClick={() => setLevelFilter("success")} tone="success" />
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setViewMode("formatted")}
+              className={`rounded-full px-2 py-0.5 border text-[11px] font-semibold ${
+                viewMode === "formatted"
+                  ? "bg-indigo-600 border-indigo-600 text-white"
+                  : "border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-200"
+              }`}
+            >
+              Формат
+            </button>
+            <button
+              onClick={() => setViewMode("raw")}
+              className={`rounded-full px-2 py-0.5 border text-[11px] font-semibold ${
+                viewMode === "raw"
+                  ? "bg-indigo-600 border-indigo-600 text-white"
+                  : "border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-200"
+              }`}
+            >
+              Сырой
+            </button>
+          </div>
+        </div>
+      </div>
       <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/40">
-        {items.length > 0 ? (
-          <pre className="text-xs p-3 overflow-auto text-slate-700 dark:text-slate-200 max-h-96">
-          {items
-            .map((entry) => {
-              if (typeof entry === "string") return entry;
-              try {
-                return JSON.stringify(entry, null, 2);
-              } catch {
-                return String(entry);
-              }
-            })
-            .join("\n")}
-        </pre>
+        {viewMode === "raw" ? (
+          rawOutput ? (
+            <pre className="text-xs p-3 overflow-auto text-slate-700 dark:text-slate-200 max-h-96 font-mono whitespace-pre-wrap">
+              {rawOutput}
+            </pre>
+          ) : (
+            <div className="text-xs p-3 text-slate-500 dark:text-slate-400 italic">
+              Логи пока недоступны
+            </div>
+          )
+        ) : filteredLines.length > 0 ? (
+          <div className="text-xs p-3 overflow-auto max-h-96 font-mono space-y-1">
+            {filteredLines.map((line, idx) => (
+              <div key={`${line.raw}-${idx}`} className="flex flex-wrap items-start gap-x-2 gap-y-1">
+                {line.timestamp && (
+                  <span className="text-slate-400 dark:text-slate-500 shrink-0">{line.timestamp}</span>
+                )}
+                {line.level && (
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${levelClass(line.level)}`}>
+                    {line.level}
+                  </span>
+                )}
+                {line.step && (
+                  <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                    {line.step}
+                  </span>
+                )}
+                <div className="min-w-0 flex-1">
+                  {renderLogMessage(line.message)}
+                </div>
+              </div>
+            ))}
+          </div>
         ) : (
           <div className="text-xs p-3 text-slate-500 dark:text-slate-400 italic">
             Логи пока недоступны
@@ -621,6 +757,166 @@ export function LogsViewer({ logs }: { logs?: any }) {
       </div>
     </div>
   );
+}
+
+function FilterBadge({
+  label,
+  active,
+  onClick,
+  tone,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+  tone?: "error" | "warn" | "info" | "success";
+}) {
+  const toneClass =
+    tone === "error"
+      ? "border-red-200 text-red-700 dark:border-red-700 dark:text-red-200"
+      : tone === "warn"
+      ? "border-amber-200 text-amber-700 dark:border-amber-700 dark:text-amber-200"
+      : tone === "info"
+      ? "border-blue-200 text-blue-700 dark:border-blue-700 dark:text-blue-200"
+      : tone === "success"
+      ? "border-emerald-200 text-emerald-700 dark:border-emerald-700 dark:text-emerald-200"
+      : "border-slate-200 text-slate-600 dark:border-slate-700 dark:text-slate-200";
+
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded-full px-2 py-0.5 border text-[11px] font-semibold ${
+        active ? "bg-indigo-600 border-indigo-600 text-white" : toneClass
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
+
+type ParsedLogLine = {
+  raw: string;
+  timestamp?: string;
+  level?: "error" | "warn" | "info" | "success";
+  step?: string;
+  message: string;
+};
+
+const TIMESTAMP_RE = /^(\d{4}-\d{2}-\d{2}T[\d:.+-Z]+)\s+(.*)$/;
+const STEP_RE = /(?:step=|step\s+'|step\s+)([a-z0-9_]+)/i;
+
+function parseLogLine(raw: string): ParsedLogLine {
+  let timestamp: string | undefined;
+  let message = raw;
+  const tsMatch = raw.match(TIMESTAMP_RE);
+  if (tsMatch) {
+    timestamp = tsMatch[1];
+    message = tsMatch[2];
+  }
+
+  const stepMatch = message.match(STEP_RE);
+  const step = stepMatch ? stepMatch[1] : undefined;
+
+  const lower = message.toLowerCase();
+  let level: ParsedLogLine["level"];
+  if (/(error|failed|fatal|ошибка|invalid|denied)/i.test(lower)) level = "error";
+  else if (/(warn|warning|skip|pause|cancell|отмена|пропуск)/i.test(lower)) level = "warn";
+  else if (/(completed successfully|success|готово|успешно|завершен)/i.test(lower)) level = "success";
+  else if (/(start|executing|checking|processing|начало|используется|создано|generated)/i.test(lower)) level = "info";
+
+  return { raw, timestamp, level, step, message };
+}
+
+function levelClass(level: ParsedLogLine["level"]): string {
+  switch (level) {
+    case "error":
+      return "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-200";
+    case "warn":
+      return "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200";
+    case "success":
+      return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200";
+    default:
+      return "bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-200";
+  }
+}
+
+function renderLogMessage(message: string) {
+  const jsonBlock = extractJsonBlock(message);
+  if (!jsonBlock) {
+    return <span className="text-slate-700 dark:text-slate-200 whitespace-pre-wrap break-words">{message}</span>;
+  }
+  return (
+    <div className="space-y-1 text-slate-700 dark:text-slate-200">
+      {jsonBlock.prefix && <span className="whitespace-pre-wrap break-words">{jsonBlock.prefix}</span>}
+      <pre className="text-[11px] bg-slate-100/70 dark:bg-slate-900/50 rounded-lg p-2 overflow-auto whitespace-pre-wrap">
+        {jsonBlock.pretty}
+      </pre>
+      {jsonBlock.suffix && <span className="whitespace-pre-wrap break-words">{jsonBlock.suffix}</span>}
+    </div>
+  );
+}
+
+function extractJsonBlock(message: string): { prefix: string; pretty: string; suffix: string } | null {
+  const starts = [];
+  for (let i = 0; i < message.length; i++) {
+    const char = message[i];
+    if (char === "{" || char === "[") starts.push(i);
+  }
+
+  for (const start of starts) {
+    const end = findJsonEnd(message, start);
+    if (end === -1) continue;
+    const candidate = message.slice(start, end + 1);
+    try {
+      const parsed = JSON.parse(candidate);
+      const pretty = JSON.stringify(parsed, null, 2);
+      return {
+        prefix: message.slice(0, start).trimEnd(),
+        pretty,
+        suffix: message.slice(end + 1).trimStart(),
+      };
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+function findJsonEnd(text: string, start: number): number {
+  const openChar = text[start];
+  const closeChar = openChar === "{" ? "}" : "]";
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < text.length; i++) {
+    const char = text[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (char === "\"") {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (char === openChar) {
+      depth++;
+    } else if (char === closeChar) {
+      depth--;
+      if (depth === 0) return i;
+    } else if (char === "{" || char === "[") {
+      depth++;
+    } else if (char === "}" || char === "]") {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
 }
 
 function parseArtifact(type: ArtifactType, raw: any) {
