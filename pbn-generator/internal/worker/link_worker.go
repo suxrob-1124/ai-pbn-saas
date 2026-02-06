@@ -267,8 +267,8 @@ func (w *LinkWorker) replaceInFile(ctx context.Context, task *sqlstore.LinkTask,
 		}
 		return false, fmt.Errorf("read html failed: %w", err)
 	}
-	updated, replaced := replaceLinkInContent(string(content), prevTask.AnchorText, prevTask.TargetURL, task.AnchorText, task.TargetURL)
-	if !replaced {
+	updated, replaced, removedTags := replaceLinkInContent(string(content), prevTask.AnchorText, prevTask.TargetURL, task.AnchorText, task.TargetURL)
+	if !replaced && len(removedTags) == 0 {
 		return false, nil
 	}
 	if err := os.WriteFile(full, []byte(updated), 0o644); err != nil {
@@ -276,6 +276,12 @@ func (w *LinkWorker) replaceInFile(ctx context.Context, task *sqlstore.LinkTask,
 	}
 	if err := w.recordFileEdit(ctx, task, rel, content, []byte(updated), "link_injection", "link task "+task.ID); err != nil {
 		return false, fmt.Errorf("record file edit: %w", err)
+	}
+	if len(removedTags) > 0 {
+		w.appendLog(ctx, task.ID, logLines, fmt.Sprintf("удалена ссылка из %s в %s", strings.Join(removedTags, "/"), rel))
+	}
+	if !replaced {
+		return false, nil
 	}
 	pos, _ := builder.FindAnchorInBody(updated, task.AnchorText, true)
 	if pos < 0 {
@@ -697,22 +703,121 @@ func defaultGenerated(anchorText, targetURL string) string {
 	return fmt.Sprintf("<p><a href=\"%s\">%s</a></p>", targetURL, anchorText)
 }
 
-func replaceLinkInContent(html string, oldAnchor string, oldTarget string, newAnchor string, newTarget string) (string, bool) {
+func replaceLinkInContent(html string, oldAnchor string, oldTarget string, newAnchor string, newTarget string) (string, bool, []string) {
 	oldAnchor = strings.TrimSpace(oldAnchor)
 	oldTarget = strings.TrimSpace(oldTarget)
 	newAnchor = strings.TrimSpace(newAnchor)
 	newTarget = strings.TrimSpace(newTarget)
 	if oldAnchor == "" || oldTarget == "" || newAnchor == "" || newTarget == "" {
-		return html, false
+		return html, false, nil
 	}
+	cleaned, removedTags := stripAnchorsInDisallowedTags(html, oldAnchor, oldTarget)
+	updated, replaced := replaceLinkInBody(cleaned, oldAnchor, oldTarget, newAnchor, newTarget)
+	if replaced {
+		return updated, true, removedTags
+	}
+	return cleaned, false, removedTags
+}
+
+func replaceLinkInBody(html string, oldAnchor string, oldTarget string, newAnchor string, newTarget string) (string, bool) {
 	pattern := `(?is)<a\b[^>]*\bhref\s*=\s*['"]` + regexp.QuoteMeta(oldTarget) + `['"][^>]*>\s*` + regexp.QuoteMeta(oldAnchor) + `\s*</a>`
 	re, err := regexp.Compile(pattern)
-	if err != nil || !re.MatchString(html) {
+	if err != nil {
+		return html, false
+	}
+	lower := strings.ToLower(html)
+	bodyStart := strings.Index(lower, "<body")
+	if bodyStart == -1 {
+		return html, false
+	}
+	openEnd := strings.Index(lower[bodyStart:], ">")
+	if openEnd == -1 {
+		return html, false
+	}
+	bodyContentStart := bodyStart + openEnd + 1
+	bodyEnd := strings.Index(lower[bodyContentStart:], "</body>")
+	if bodyEnd == -1 {
+		return html, false
+	}
+	bodyContentEnd := bodyContentStart + bodyEnd
+	body := html[bodyContentStart:bodyContentEnd]
+	if !re.MatchString(body) {
 		return html, false
 	}
 	replacement := fmt.Sprintf("<a href=\"%s\">%s</a>", newTarget, newAnchor)
-	updated := re.ReplaceAllString(html, replacement)
+	newBody := re.ReplaceAllString(body, replacement)
+	updated := html[:bodyContentStart] + newBody + html[bodyContentEnd:]
 	return updated, true
+}
+
+func stripAnchorsInDisallowedTags(html string, anchorText string, targetURL string) (string, []string) {
+	tags := []string{"title", "h1", "h2", "h3", "h4", "h5", "h6"}
+	updated := html
+	var removed []string
+	for _, tag := range tags {
+		reTag := regexp.MustCompile(`(?is)<` + tag + `\b[^>]*>.*?</` + tag + `>`)
+		updated = reTag.ReplaceAllStringFunc(updated, func(block string) string {
+			cleaned, didStrip := stripAnchors(block, anchorText, targetURL)
+			if didStrip {
+				removed = append(removed, tag)
+			}
+			return cleaned
+		})
+	}
+	return updated, uniqueStrings(removed)
+}
+
+func stripAnchors(html string, anchorText string, targetURL string) (string, bool) {
+	reAnchor := regexp.MustCompile(`(?is)<a\b[^>]*\bhref\s*=\s*['"]([^'"]+)['"][^>]*>(.*?)</a>`)
+	changed := false
+	updated := reAnchor.ReplaceAllStringFunc(html, func(match string) string {
+		sub := reAnchor.FindStringSubmatch(match)
+		if len(sub) < 3 {
+			return match
+		}
+		href := strings.TrimSpace(sub[1])
+		text := strings.TrimSpace(sub[2])
+		if shouldStripAnchor(href, text, anchorText, targetURL) {
+			changed = true
+			return text
+		}
+		return match
+	})
+	return updated, changed
+}
+
+func shouldStripAnchor(href string, text string, anchorText string, targetURL string) bool {
+	anchorText = strings.TrimSpace(anchorText)
+	targetURL = strings.TrimSpace(targetURL)
+	if anchorText == "" || targetURL == "" {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(text), anchorText) && strings.EqualFold(strings.TrimSpace(href), targetURL) {
+		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(text), anchorText) {
+		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(href), targetURL) {
+		return true
+	}
+	return false
+}
+
+func uniqueStrings(values []string) []string {
+	if len(values) == 0 {
+		return values
+	}
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
 }
 
 func parseFoundLocation(found string) string {
