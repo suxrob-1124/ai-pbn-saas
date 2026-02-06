@@ -180,7 +180,7 @@ func TestLinkWorkerInsert(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	htmlPath := filepath.Join(domainDir, "index.html")
-	if err := os.WriteFile(htmlPath, []byte("Hello anchor here"), 0o644); err != nil {
+	if err := os.WriteFile(htmlPath, []byte("<body>Hello anchor here</body>"), 0o644); err != nil {
 		t.Fatalf("write html: %v", err)
 	}
 
@@ -229,7 +229,7 @@ func TestLinkWorkerGenerate(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	htmlPath := filepath.Join(domainDir, "index.html")
-	if err := os.WriteFile(htmlPath, []byte("No links here"), 0o644); err != nil {
+	if err := os.WriteFile(htmlPath, []byte("<body>No links here</body>"), 0o644); err != nil {
 		t.Fatalf("write html: %v", err)
 	}
 
@@ -320,7 +320,7 @@ func TestLinkWorkerReplaceFromFoundLocation(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	htmlPath := filepath.Join(domainDir, "index.html")
-	if err := os.WriteFile(htmlPath, []byte(`<p><a href="https://old.example">old anchor</a></p>`), 0o644); err != nil {
+	if err := os.WriteFile(htmlPath, []byte(`<body><p><a href="https://old.example">old anchor</a></p></body>`), 0o644); err != nil {
 		t.Fatalf("write html: %v", err)
 	}
 
@@ -393,7 +393,7 @@ func TestLinkWorkerReplaceFallsBackToNewAnchor(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	htmlPath := filepath.Join(domainDir, "index.html")
-	if err := os.WriteFile(htmlPath, []byte("text with new anchor here"), 0o644); err != nil {
+	if err := os.WriteFile(htmlPath, []byte("<body>text with new anchor here</body>"), 0o644); err != nil {
 		t.Fatalf("write html: %v", err)
 	}
 
