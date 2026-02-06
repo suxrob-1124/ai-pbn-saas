@@ -48,7 +48,7 @@ export function GenerationResultActions({ artifacts }: Props) {
           disabled={!finalHtml}
           className="inline-flex items-center gap-2 rounded-lg border border-emerald-300 bg-white px-4 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700 dark:bg-slate-900 dark:text-emerald-200 dark:hover:bg-slate-800 disabled:opacity-60"
         >
-          <FiExternalLink /> Live Preview
+          <FiExternalLink /> Открыть предпросмотр
         </button>
       </div>
       {!zipData && <p className="text-xs text-emerald-900/80 dark:text-emerald-200/80">Артефакт zip_archive отсутствует.</p>}

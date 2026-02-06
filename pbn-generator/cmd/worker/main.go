@@ -13,6 +13,7 @@ import (
 	"obzornik-pbn-generator/internal/db"
 	"obzornik-pbn-generator/internal/store/sqlstore"
 	"obzornik-pbn-generator/internal/tasks"
+	"obzornik-pbn-generator/internal/worker"
 )
 
 func main() {
@@ -35,6 +36,8 @@ func main() {
 	userStore := sqlstore.NewUserStore(dbConn)
 	apiKeyUsageStore := sqlstore.NewAPIKeyUsageStore(dbConn)
 	siteFileStore := sqlstore.NewSiteFileStore(dbConn)
+	fileEditStore := sqlstore.NewFileEditStore(dbConn)
+	linkTaskStore := sqlstore.NewLinkTaskStore(dbConn)
 	auditStore := sqlstore.NewAuditStore(dbConn)
 
 	server := tasks.NewServer(cfg, 4)
@@ -60,6 +63,24 @@ func main() {
 			siteFileStore,
 			auditStore,
 		)
+	})
+	linkWorker := &worker.LinkWorker{
+		BaseDir:   "server",
+		Config:    cfg,
+		Logger:    sugar,
+		Tasks:     linkTaskStore,
+		Domains:   domainStore,
+		Projects:  projectStore,
+		Users:     userStore,
+		SiteFiles: siteFileStore,
+		FileEdits: fileEditStore,
+	}
+	mux.HandleFunc(tasks.TaskProcessLink, func(ctx context.Context, t *asynq.Task) error {
+		payload, err := tasks.ParseLinkTaskPayload(t)
+		if err != nil {
+			return err
+		}
+		return linkWorker.ProcessTask(ctx, payload.TaskID)
 	})
 
 	// Запускаем cleanup worker в отдельной горутине

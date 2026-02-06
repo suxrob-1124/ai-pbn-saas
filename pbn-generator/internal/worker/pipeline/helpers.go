@@ -41,6 +41,15 @@ func formatPromptForArtifact(prompt string) string {
 	return prompt
 }
 
+// sanitizeJSONBytes удаляет неподдерживаемые escape-последовательности (\u0000),
+// которые PostgreSQL не принимает в JSONB.
+func sanitizeJSONBytes(b []byte) []byte {
+	if len(b) == 0 {
+		return b
+	}
+	return bytes.ReplaceAll(b, []byte(`\u0000`), nil)
+}
+
 // mergeGeneratedFiles объединяет уже существующие файлы с новыми
 func mergeGeneratedFiles(existing any, additional []GeneratedFile) []GeneratedFile {
 	result := []GeneratedFile{}

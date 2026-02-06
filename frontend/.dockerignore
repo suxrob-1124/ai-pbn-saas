@@ -1,0 +1,12 @@
+node_modules
+.next
+dist
+out
+.turbo
+.cache
+.npm
+.pnpm-store
+coverage
+*.log
+Dockerfile
+docker-compose*.yml

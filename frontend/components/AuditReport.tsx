@@ -46,7 +46,7 @@ export function AuditReport({ report }: { report?: any }) {
 
   const status = (data.status || "ok").toLowerCase();
   const summary = data.summary || {};
-  const statusLabel = status === "error" ? "Ошибки" : status === "warn" ? "Предупреждения" : "OK";
+  const statusLabel = status === "error" ? "Ошибки" : status === "warn" ? "Предупреждения" : "ОК";
   const statusClass =
     status === "error"
       ? "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-200"
@@ -69,7 +69,7 @@ export function AuditReport({ report }: { report?: any }) {
         <div className="flex items-center gap-2 text-xs">
           <FilterButton label="Все" active={filter === "all"} onClick={() => setFilter("all")} />
           <FilterButton label="Ошибки" active={filter === "error"} onClick={() => setFilter("error")} tone="error" />
-          <FilterButton label="Warn" active={filter === "warn"} onClick={() => setFilter("warn")} tone="warn" />
+          <FilterButton label="Предупреждения" active={filter === "warn"} onClick={() => setFilter("warn")} tone="warn" />
         </div>
       </div>
 

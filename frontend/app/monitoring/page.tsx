@@ -47,7 +47,7 @@ export default function MonitoringPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow">
-          <h3 className="font-semibold mb-3">Latency (ms)</h3>
+          <h3 className="font-semibold mb-3">Задержка (мс)</h3>
           <div className="space-y-2">
             {latency.map((l) => (
               <div key={l.label}>
@@ -63,7 +63,7 @@ export default function MonitoringPage() {
           </div>
         </div>
         <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow">
-          <h3 className="font-semibold mb-3">Uptime (%)</h3>
+          <h3 className="font-semibold mb-3">Аптайм (%)</h3>
           <div className="space-y-2">
             {uptime.map((u) => (
               <div key={u.label} className="flex items-center justify-between">
@@ -87,13 +87,13 @@ function Status({ status }: { status: string }) {
   if (status === "OK") {
     return (
       <span className="text-xs text-green-400 flex items-center gap-1">
-        <FiCheckCircle /> OK
+        <FiCheckCircle /> ОК
       </span>
     );
   }
   return (
     <span className="text-xs text-amber-400 flex items-center gap-1">
-      <FiAlertTriangle /> {status}
+      <FiAlertTriangle /> Внимание
     </span>
   );
 }

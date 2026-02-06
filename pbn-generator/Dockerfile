@@ -12,6 +12,7 @@ COPY . .
 RUN CGO_ENABLED=0 go build -o /bin/authserver ./cmd/authserver && \
     CGO_ENABLED=0 go build -o /bin/migrate ./cmd/migrate && \
     CGO_ENABLED=0 go build -o /bin/healthcheck ./cmd/healthcheck && \
+    CGO_ENABLED=0 go build -o /bin/scheduler ./cmd/scheduler && \
     CGO_ENABLED=1 go build -o /bin/worker ./cmd/worker
 
 # Runtime образ: используем distroless/cc вместо base-debian12
@@ -23,6 +24,7 @@ WORKDIR /app
 COPY --from=build /bin/authserver /bin/authserver
 COPY --from=build /bin/migrate /bin/migrate
 COPY --from=build /bin/healthcheck /bin/healthcheck
+COPY --from=build /bin/scheduler /bin/scheduler
 COPY --from=build /bin/worker /bin/worker
 USER nonroot:nonroot
 EXPOSE 8080

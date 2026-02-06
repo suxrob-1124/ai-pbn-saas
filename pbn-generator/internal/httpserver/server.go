@@ -23,6 +23,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/robfig/cron/v3"
 	"go.uber.org/zap"
 
 	"obzornik-pbn-generator/internal/auth"
@@ -51,6 +52,7 @@ type DomainStore interface {
 	UpdateKeyword(ctx context.Context, id, keyword string) error
 	SetLastGeneration(ctx context.Context, id, genID string) error
 	UpdateExtras(ctx context.Context, id, country, language string, exclude, server sql.NullString) (bool, error)
+	UpdateLinkSettings(ctx context.Context, id string, anchorText, acceptorURL sql.NullString) (bool, error)
 	Delete(ctx context.Context, id string) error
 	EnsureDefaultServer(ctx context.Context, email string) error
 }
@@ -80,6 +82,28 @@ type PromptStore interface {
 	Get(ctx context.Context, id string) (sqlstore.SystemPrompt, error)
 }
 
+type ScheduleStore interface {
+	Create(ctx context.Context, schedule sqlstore.Schedule) error
+	Get(ctx context.Context, scheduleID string) (*sqlstore.Schedule, error)
+	List(ctx context.Context, projectID string) ([]sqlstore.Schedule, error)
+	Update(ctx context.Context, scheduleID string, updates sqlstore.ScheduleUpdates) error
+	Delete(ctx context.Context, scheduleID string) error
+	ListActive(ctx context.Context) ([]sqlstore.Schedule, error)
+}
+
+type LinkScheduleStore interface {
+	GetByProject(ctx context.Context, projectID string) (*sqlstore.LinkSchedule, error)
+	Upsert(ctx context.Context, schedule sqlstore.LinkSchedule) (*sqlstore.LinkSchedule, error)
+	DisableByProject(ctx context.Context, projectID string) error
+}
+
+type GenQueueStore interface {
+	Enqueue(ctx context.Context, item sqlstore.QueueItem) error
+	Get(ctx context.Context, itemID string) (*sqlstore.QueueItem, error)
+	ListByProject(ctx context.Context, projectID string) ([]sqlstore.QueueItem, error)
+	Delete(ctx context.Context, itemID string) error
+}
+
 type SiteFileStore interface {
 	Get(ctx context.Context, fileID string) (*sqlstore.SiteFile, error)
 	List(ctx context.Context, domainID string) ([]sqlstore.SiteFile, error)
@@ -93,6 +117,17 @@ type FileEditStore interface {
 	ListByFile(ctx context.Context, fileID string, limit int) ([]sqlstore.FileEdit, error)
 }
 
+type LinkTaskStore interface {
+	Create(ctx context.Context, task sqlstore.LinkTask) error
+	Get(ctx context.Context, taskID string) (*sqlstore.LinkTask, error)
+	ListByDomain(ctx context.Context, domainID string, filters sqlstore.LinkTaskFilters) ([]sqlstore.LinkTask, error)
+	ListByProject(ctx context.Context, projectID string, filters sqlstore.LinkTaskFilters) ([]sqlstore.LinkTask, error)
+	ListAll(ctx context.Context, filters sqlstore.LinkTaskFilters) ([]sqlstore.LinkTask, error)
+	ListPending(ctx context.Context, limit int) ([]sqlstore.LinkTask, error)
+	Update(ctx context.Context, taskID string, updates sqlstore.LinkTaskUpdates) error
+	Delete(ctx context.Context, taskID string) error
+}
+
 type Server struct {
 	cfg            config.Config
 	svc            *auth.Service
@@ -101,9 +136,13 @@ type Server struct {
 	domains        DomainStore
 	generations    GenerationStore
 	prompts        PromptStore
+	schedules      ScheduleStore
+	linkSchedules  LinkScheduleStore
 	auditRules     *sqlstore.AuditStore
 	siteFiles      SiteFileStore
 	fileEdits      FileEditStore
+	linkTasks      LinkTaskStore
+	genQueue       GenQueueStore
 	tasks          tasks.Enqueuer
 	reqDuration    *prometheus.HistogramVec
 	reqCounter     *prometheus.CounterVec
@@ -112,7 +151,7 @@ type Server struct {
 	logger         *zap.SugaredLogger
 }
 
-func New(cfg config.Config, svc *auth.Service, logger *zap.SugaredLogger, projects ProjectStore, projectMembers *sqlstore.ProjectMemberStore, domains DomainStore, generations GenerationStore, prompts PromptStore, auditRules *sqlstore.AuditStore, siteFiles SiteFileStore, fileEdits FileEditStore, tq tasks.Enqueuer) *Server {
+func New(cfg config.Config, svc *auth.Service, logger *zap.SugaredLogger, projects ProjectStore, projectMembers *sqlstore.ProjectMemberStore, domains DomainStore, generations GenerationStore, prompts PromptStore, schedules ScheduleStore, linkSchedules LinkScheduleStore, auditRules *sqlstore.AuditStore, siteFiles SiteFileStore, fileEdits FileEditStore, linkTasks LinkTaskStore, genQueue GenQueueStore, tq tasks.Enqueuer) *Server {
 	if logger == nil {
 		logger = zap.NewNop().Sugar()
 	}
@@ -143,9 +182,13 @@ func New(cfg config.Config, svc *auth.Service, logger *zap.SugaredLogger, projec
 		domains:        domains,
 		generations:    generations,
 		prompts:        prompts,
+		schedules:      schedules,
+		linkSchedules:  linkSchedules,
 		auditRules:     auditRules,
 		siteFiles:      siteFiles,
 		fileEdits:      fileEdits,
+		linkTasks:      linkTasks,
+		genQueue:       genQueue,
 		tasks:          tq,
 		reqDuration:    reqDuration,
 		reqCounter:     reqCounter,
@@ -180,6 +223,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("/api/domains/", s.withAuth(http.HandlerFunc(s.handleDomainActions)))
 	mux.Handle("/api/generations", s.withAuth(http.HandlerFunc(s.handleGenerations)))
 	mux.Handle("/api/generations/", s.withAuth(http.HandlerFunc(s.handleGenerationByID)))
+	mux.Handle("/api/links", s.withAuth(http.HandlerFunc(s.handleLinks)))
+	mux.Handle("/api/links/", s.withAuth(http.HandlerFunc(s.handleLinkByID)))
+	mux.Handle("/api/queue/", s.withAuth(http.HandlerFunc(s.handleQueueItem)))
 	mux.Handle("/api/admin/users", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminUsers))))
 	mux.Handle("/api/admin/users/", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminUserRoute))))
 	mux.Handle("/api/admin/prompts", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminPrompts))))
@@ -851,6 +897,43 @@ func (s *Server) handleProjectByID(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if len(parts) > 1 && parts[1] == "schedules" {
+		if len(parts) > 2 {
+			scheduleID, err := url.PathUnescape(parts[2])
+			if err != nil || strings.TrimSpace(scheduleID) == "" {
+				writeError(w, http.StatusBadRequest, "invalid schedule id")
+				return
+			}
+			action := ""
+			if len(parts) > 3 {
+				action = parts[3]
+			}
+			if action == "trigger" {
+				s.handleProjectScheduleTrigger(w, r, projectID, scheduleID)
+				return
+			}
+			s.handleProjectScheduleByID(w, r, projectID, scheduleID)
+			return
+		}
+		s.handleProjectSchedules(w, r, projectID)
+		return
+	}
+	if len(parts) > 1 && parts[1] == "link-schedule" {
+		action := ""
+		if len(parts) > 2 {
+			action = parts[2]
+		}
+		if action == "trigger" {
+			s.handleProjectLinkScheduleTrigger(w, r, projectID)
+			return
+		}
+		s.handleProjectLinkSchedule(w, r, projectID)
+		return
+	}
+	if len(parts) > 1 && parts[1] == "queue" {
+		s.handleProjectQueue(w, r, projectID)
+		return
+	}
 
 	user, ok := currentUserFromContext(r.Context())
 	if !ok || user.Email == "" {
@@ -1082,6 +1165,10 @@ func (s *Server) handleDomainActions(w http.ResponseWriter, r *http.Request) {
 		s.handleDomainGenerate(w, r, domainID)
 	case "generations":
 		s.handleDomainGenerations(w, r, domainID)
+	case "links":
+		s.handleDomainLinks(w, r, domainID, parts[2:])
+	case "link":
+		s.handleDomainLinkRun(w, r, domainID, parts[2:])
 	case "files":
 		s.handleDomainFiles(w, r, domainID, parts[2:])
 	case "":
@@ -1107,12 +1194,14 @@ func (s *Server) handleDomainBase(w http.ResponseWriter, r *http.Request, domain
 		}
 		defer r.Body.Close()
 		var body struct {
-			Keyword        *string `json:"keyword"`
-			Status         *string `json:"status"`
-			Country        *string `json:"country"`
-			Language       *string `json:"language"`
-			ExcludeDomains *string `json:"exclude_domains"`
-			ServerID       *string `json:"server_id"`
+			Keyword         *string `json:"keyword"`
+			Status          *string `json:"status"`
+			Country         *string `json:"country"`
+			Language        *string `json:"language"`
+			ExcludeDomains  *string `json:"exclude_domains"`
+			ServerID        *string `json:"server_id"`
+			LinkAnchorText  *string `json:"link_anchor_text"`
+			LinkAcceptorURL *string `json:"link_acceptor_url"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid body")
@@ -1156,7 +1245,31 @@ func (s *Server) handleDomainBase(w http.ResponseWriter, r *http.Request, domain
 		} else {
 			server = d.ServerID
 		}
+		linkAnchor := d.LinkAnchorText
+		if body.LinkAnchorText != nil {
+			val := strings.TrimSpace(*body.LinkAnchorText)
+			if val == "" {
+				linkAnchor = sql.NullString{}
+			} else {
+				linkAnchor = sqlstore.NullableString(val)
+			}
+		}
+		linkAcceptor := d.LinkAcceptorURL
+		if body.LinkAcceptorURL != nil {
+			val := strings.TrimSpace(*body.LinkAcceptorURL)
+			if val == "" {
+				linkAcceptor = sql.NullString{}
+			} else {
+				linkAcceptor = sqlstore.NullableString(val)
+			}
+		}
 		_, _ = s.domains.UpdateExtras(r.Context(), domainID, d.TargetCountry, d.TargetLanguage, d.ExcludeDomains, server)
+		if body.LinkAnchorText != nil || body.LinkAcceptorURL != nil {
+			if _, err := s.domains.UpdateLinkSettings(r.Context(), domainID, linkAnchor, linkAcceptor); err != nil {
+				writeError(w, http.StatusInternalServerError, "could not update domain")
+				return
+			}
+		}
 		d, _ = s.domains.Get(r.Context(), domainID)
 		writeJSON(w, http.StatusOK, toDomainDTO(d))
 	case http.MethodDelete:
@@ -1315,7 +1428,25 @@ func (s *Server) handleDomainGenerations(w http.ResponseWriter, r *http.Request,
 		writeError(w, http.StatusInternalServerError, "could not list generations")
 		return
 	}
-	writeJSON(w, http.StatusOK, toGenerationDTOs(list))
+	domainMap := map[string]string{}
+	for _, g := range list {
+		if _, ok := domainMap[g.DomainID]; ok {
+			continue
+		}
+		if d, err := s.domains.Get(r.Context(), g.DomainID); err == nil {
+			domainMap[g.DomainID] = d.URL
+		}
+	}
+	resp := make([]generationDTO, 0, len(list))
+	for _, g := range list {
+		var url *string
+		if v, ok := domainMap[g.DomainID]; ok {
+			val := v
+			url = &val
+		}
+		resp = append(resp, toGenerationDTOWithDomain(g, url))
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleDomainFiles(w http.ResponseWriter, r *http.Request, domainID string, parts []string) {
@@ -1421,6 +1552,328 @@ func (s *Server) handleDomainFiles(w http.ResponseWriter, r *http.Request, domai
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+func (s *Server) handleDomainLinks(w http.ResponseWriter, r *http.Request, domainID string, parts []string) {
+	type linkTaskImportItem struct {
+		AnchorText        string `json:"anchor_text"`
+		TargetURL         string `json:"target_url"`
+		ScheduledFor      string `json:"scheduled_for"`
+		ScheduledForCamel string `json:"scheduledFor"`
+	}
+
+	user, ok := currentUserFromContext(r.Context())
+	if !ok || user.Email == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if s.linkTasks == nil {
+		writeError(w, http.StatusInternalServerError, "link tasks not configured")
+		return
+	}
+	domain, project, err := s.authorizeDomain(r.Context(), domainID)
+	if err != nil {
+		respondAuthzError(w, err, "domain not found")
+		return
+	}
+
+	memberRole := ""
+	if !strings.EqualFold(user.Role, "admin") {
+		role, err := s.getProjectMemberRole(r.Context(), project.ID, user.Email)
+		if err != nil {
+			writeError(w, http.StatusForbidden, "access denied")
+			return
+		}
+		memberRole = role
+	}
+
+	action := ""
+	if len(parts) > 0 {
+		action = parts[0]
+	}
+	if action == "import" {
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		if !ensureJSON(w, r) {
+			return
+		}
+		if err := requireApprovedUser(user); err != nil {
+			writeError(w, http.StatusForbidden, err.Error())
+			return
+		}
+		if !hasProjectPermission(user.Role, memberRole, "editor") {
+			writeError(w, http.StatusForbidden, "insufficient permissions: editor role required")
+			return
+		}
+		defer r.Body.Close()
+		var body struct {
+			Items []linkTaskImportItem `json:"items"`
+			Text  string               `json:"text"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid body")
+			return
+		}
+		if len(body.Items) == 0 && strings.TrimSpace(body.Text) == "" {
+			writeError(w, http.StatusBadRequest, "no tasks provided")
+			return
+		}
+
+		records := body.Items
+		if len(records) == 0 {
+			lines := strings.Split(body.Text, "\n")
+			for _, line := range lines {
+				line = strings.TrimSpace(line)
+				if line == "" {
+					continue
+				}
+				parts := strings.SplitN(line, ",", 3)
+				item := linkTaskImportItem{
+					AnchorText: strings.TrimSpace(parts[0]),
+				}
+				if len(parts) > 1 {
+					item.TargetURL = strings.TrimSpace(parts[1])
+				}
+				if len(parts) > 2 {
+					item.ScheduledFor = strings.TrimSpace(parts[2])
+				}
+				records = append(records, item)
+			}
+		}
+
+		created := 0
+		now := time.Now().UTC()
+		for _, item := range records {
+			anchor := strings.TrimSpace(item.AnchorText)
+			target := strings.TrimSpace(item.TargetURL)
+			if anchor == "" || target == "" {
+				continue
+			}
+			scheduledFor, err := parseScheduledFor(item.ScheduledFor, item.ScheduledForCamel, now)
+			if err != nil {
+				if s.logger != nil {
+					s.logger.Warnf("import link task scheduled_for invalid: %v", err)
+				}
+				continue
+			}
+			task := sqlstore.LinkTask{
+				ID:           uuid.NewString(),
+				DomainID:     domain.ID,
+				AnchorText:   anchor,
+				TargetURL:    target,
+				ScheduledFor: scheduledFor,
+				Status:       "pending",
+				Attempts:     0,
+				CreatedBy:    user.Email,
+				CreatedAt:    now,
+			}
+			if err := s.linkTasks.Create(r.Context(), task); err != nil {
+				if s.logger != nil {
+					s.logger.Warnf("import link task failed: %v", err)
+				}
+				continue
+			}
+			created++
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{"created": created})
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		if !hasProjectPermission(user.Role, memberRole, "viewer") {
+			writeError(w, http.StatusForbidden, "insufficient permissions: viewer role required")
+			return
+		}
+		filters, err := parseLinkTaskFilters(r)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		list, err := s.linkTasks.ListByDomain(r.Context(), domainID, filters)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not list link tasks")
+			return
+		}
+		resp := make([]linkTaskDTO, 0, len(list))
+		for _, task := range list {
+			resp = append(resp, toLinkTaskDTO(task))
+		}
+		writeJSON(w, http.StatusOK, resp)
+	case http.MethodPost:
+		if !ensureJSON(w, r) {
+			return
+		}
+		if err := requireApprovedUser(user); err != nil {
+			writeError(w, http.StatusForbidden, err.Error())
+			return
+		}
+		if !hasProjectPermission(user.Role, memberRole, "editor") {
+			writeError(w, http.StatusForbidden, "insufficient permissions: editor role required")
+			return
+		}
+		defer r.Body.Close()
+		var body struct {
+			AnchorText        string `json:"anchor_text"`
+			TargetURL         string `json:"target_url"`
+			ScheduledFor      string `json:"scheduled_for"`
+			ScheduledForCamel string `json:"scheduledFor"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid body")
+			return
+		}
+		anchor := strings.TrimSpace(body.AnchorText)
+		target := strings.TrimSpace(body.TargetURL)
+		if anchor == "" || target == "" {
+			writeError(w, http.StatusBadRequest, "anchor_text and target_url are required")
+			return
+		}
+		now := time.Now().UTC()
+		scheduledFor, err := parseScheduledFor(body.ScheduledFor, body.ScheduledForCamel, now)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid scheduled_for")
+			return
+		}
+		task := sqlstore.LinkTask{
+			ID:           uuid.NewString(),
+			DomainID:     domain.ID,
+			AnchorText:   anchor,
+			TargetURL:    target,
+			ScheduledFor: scheduledFor,
+			Status:       "pending",
+			Attempts:     0,
+			CreatedBy:    user.Email,
+			CreatedAt:    now,
+		}
+		if err := s.linkTasks.Create(r.Context(), task); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to create link task")
+			return
+		}
+		writeJSON(w, http.StatusCreated, toLinkTaskDTO(task))
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) handleDomainLinkRun(w http.ResponseWriter, r *http.Request, domainID string, parts []string) {
+	if len(parts) == 0 || parts[0] != "run" {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	user, ok := currentUserFromContext(r.Context())
+	if !ok || user.Email == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if s.linkTasks == nil {
+		writeError(w, http.StatusInternalServerError, "link tasks not configured")
+		return
+	}
+	if err := requireApprovedUser(user); err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	}
+	domain, project, err := s.authorizeDomain(r.Context(), domainID)
+	if err != nil {
+		respondAuthzError(w, err, "domain not found")
+		return
+	}
+	memberRole := ""
+	if !strings.EqualFold(user.Role, "admin") {
+		role, err := s.getProjectMemberRole(r.Context(), project.ID, user.Email)
+		if err != nil {
+			writeError(w, http.StatusForbidden, "access denied")
+			return
+		}
+		memberRole = role
+	}
+	if !hasProjectPermission(user.Role, memberRole, "editor") {
+		writeError(w, http.StatusForbidden, "insufficient permissions: editor role required")
+		return
+	}
+
+	anchor := strings.TrimSpace(domain.LinkAnchorText.String)
+	target := strings.TrimSpace(domain.LinkAcceptorURL.String)
+	if !domain.LinkAnchorText.Valid || !domain.LinkAcceptorURL.Valid || anchor == "" || target == "" {
+		writeError(w, http.StatusBadRequest, "link settings not configured")
+		return
+	}
+
+	now := time.Now().UTC()
+	activeTask, err := s.findActiveLinkTask(r.Context(), domainID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not load link tasks")
+		return
+	}
+
+	if activeTask != nil {
+		status := "pending"
+		attempts := 0
+		nullStr := sql.NullString{}
+		nullTime := sql.NullTime{}
+		updates := sqlstore.LinkTaskUpdates{
+			AnchorText:       &anchor,
+			TargetURL:        &target,
+			Status:           &status,
+			Attempts:         &attempts,
+			ScheduledFor:     &now,
+			FoundLocation:    &nullStr,
+			GeneratedContent: &nullStr,
+			ErrorMessage:     &nullStr,
+			CompletedAt:      &nullTime,
+		}
+		if err := s.linkTasks.Update(r.Context(), activeTask.ID, updates); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to update link task")
+			return
+		}
+		updated, _ := s.linkTasks.Get(r.Context(), activeTask.ID)
+		if updated == nil {
+			writeJSON(w, http.StatusOK, map[string]string{"status": "queued"})
+			return
+		}
+		writeJSON(w, http.StatusOK, toLinkTaskDTO(*updated))
+		return
+	}
+
+	task := sqlstore.LinkTask{
+		ID:           uuid.NewString(),
+		DomainID:     domain.ID,
+		AnchorText:   anchor,
+		TargetURL:    target,
+		ScheduledFor: now,
+		Status:       "pending",
+		Attempts:     0,
+		CreatedBy:    user.Email,
+		CreatedAt:    now,
+	}
+	if err := s.linkTasks.Create(r.Context(), task); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create link task")
+		return
+	}
+	writeJSON(w, http.StatusCreated, toLinkTaskDTO(task))
+}
+
+func (s *Server) findActiveLinkTask(ctx context.Context, domainID string) (*sqlstore.LinkTask, error) {
+	activeStatuses := []string{"pending", "searching", "found"}
+	for _, status := range activeStatuses {
+		filters := sqlstore.LinkTaskFilters{Status: &status, Limit: 1}
+		list, err := s.linkTasks.ListByDomain(ctx, domainID, filters)
+		if err != nil {
+			return nil, err
+		}
+		if len(list) > 0 {
+			task := list[0]
+			return &task, nil
+		}
+	}
+	return nil, nil
 }
 
 func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request, domain sqlstore.Domain, relPath string) {
@@ -1654,7 +2107,27 @@ func (s *Server) handleGenerations(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not list generations")
 		return
 	}
-	writeJSON(w, http.StatusOK, toGenerationDTOs(list))
+	domainMap := map[string]string{}
+	if s.domains != nil {
+		for _, g := range list {
+			if _, ok := domainMap[g.DomainID]; ok {
+				continue
+			}
+			if d, err := s.domains.Get(r.Context(), g.DomainID); err == nil && strings.TrimSpace(d.URL) != "" {
+				domainMap[g.DomainID] = d.URL
+			}
+		}
+	}
+	resp := make([]generationDTO, 0, len(list))
+	for _, g := range list {
+		var url *string
+		if v, ok := domainMap[g.DomainID]; ok {
+			val := v
+			url = &val
+		}
+		resp = append(resp, toGenerationDTOWithDomain(g, url))
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleGenerationByID(w http.ResponseWriter, r *http.Request) {
@@ -2186,6 +2659,1108 @@ func (s *Server) handleProjectMemberByEmail(w http.ResponseWriter, r *http.Reque
 	}
 }
 
+func (s *Server) handleProjectSchedules(w http.ResponseWriter, r *http.Request, projectID string) {
+	user, ok := currentUserFromContext(r.Context())
+	if !ok || user.Email == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if s.schedules == nil {
+		writeError(w, http.StatusInternalServerError, "schedules not configured")
+		return
+	}
+
+	if _, err := s.authorizeProject(r.Context(), projectID); err != nil {
+		respondAuthzError(w, err, "project not found")
+		return
+	}
+
+	memberRole := ""
+	if !strings.EqualFold(user.Role, "admin") {
+		role, err := s.getProjectMemberRole(r.Context(), projectID, user.Email)
+		if err != nil {
+			writeError(w, http.StatusForbidden, "access denied")
+			return
+		}
+		memberRole = role
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		if !hasProjectPermission(user.Role, memberRole, "viewer") {
+			writeError(w, http.StatusForbidden, "insufficient permissions: viewer role required")
+			return
+		}
+		list, err := s.schedules.List(r.Context(), projectID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not list schedules")
+			return
+		}
+		resp := make([]scheduleDTO, 0, len(list))
+		for _, sched := range list {
+			resp = append(resp, toScheduleDTO(sched))
+		}
+		writeJSON(w, http.StatusOK, resp)
+	case http.MethodPost:
+		if !ensureJSON(w, r) {
+			return
+		}
+		if err := requireApprovedUser(user); err != nil {
+			writeError(w, http.StatusForbidden, err.Error())
+			return
+		}
+		if !hasProjectPermission(user.Role, memberRole, "editor") {
+			writeError(w, http.StatusForbidden, "insufficient permissions: editor role required")
+			return
+		}
+		if existing, err := s.schedules.List(r.Context(), projectID); err == nil && len(existing) > 0 {
+			writeError(w, http.StatusConflict, "schedule already exists for project")
+			return
+		}
+		defer r.Body.Close()
+		var body struct {
+			Name        string          `json:"name"`
+			Description *string         `json:"description"`
+			Strategy    string          `json:"strategy"`
+			Config      json.RawMessage `json:"config"`
+			IsActive    *bool           `json:"isActive"`
+			Timezone    *string         `json:"timezone"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid body")
+			return
+		}
+		name := strings.TrimSpace(body.Name)
+		if name == "" {
+			writeError(w, http.StatusBadRequest, "name is required")
+			return
+		}
+		strategy := strings.TrimSpace(body.Strategy)
+		if strategy == "" {
+			writeError(w, http.StatusBadRequest, "strategy is required")
+			return
+		}
+		if len(body.Config) == 0 || strings.TrimSpace(string(body.Config)) == "null" {
+			writeError(w, http.StatusBadRequest, "config is required")
+			return
+		}
+		isActive := true
+		if body.IsActive != nil {
+			isActive = *body.IsActive
+		}
+		var timezone sql.NullString
+		if body.Timezone != nil {
+			tz := strings.TrimSpace(*body.Timezone)
+			if tz != "" {
+				timezone = sqlstore.NullableString(tz)
+			}
+		}
+
+		now := time.Now().UTC()
+		sched := sqlstore.Schedule{
+			ID:          uuid.NewString(),
+			ProjectID:   projectID,
+			Name:        name,
+			Description: nullStringFromOptional(body.Description),
+			Strategy:    strategy,
+			Config:      body.Config,
+			IsActive:    isActive,
+			CreatedBy:   user.Email,
+			Timezone:    timezone,
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		}
+		if err := s.schedules.Create(r.Context(), sched); err != nil {
+			if strings.Contains(err.Error(), "uniq_gen_schedules_project") {
+				writeError(w, http.StatusConflict, "schedule already exists for project")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "failed to create schedule")
+			return
+		}
+		created := sched
+		if stored, err := s.schedules.Get(r.Context(), sched.ID); err == nil {
+			created = *stored
+		}
+		writeJSON(w, http.StatusCreated, toScheduleDTO(created))
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) handleProjectScheduleByID(w http.ResponseWriter, r *http.Request, projectID, scheduleID string) {
+	user, ok := currentUserFromContext(r.Context())
+	if !ok || user.Email == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if s.schedules == nil {
+		writeError(w, http.StatusInternalServerError, "schedules not configured")
+		return
+	}
+
+	if _, err := s.authorizeProject(r.Context(), projectID); err != nil {
+		respondAuthzError(w, err, "project not found")
+		return
+	}
+
+	memberRole := ""
+	if !strings.EqualFold(user.Role, "admin") {
+		role, err := s.getProjectMemberRole(r.Context(), projectID, user.Email)
+		if err != nil {
+			writeError(w, http.StatusForbidden, "access denied")
+			return
+		}
+		memberRole = role
+	}
+
+	sched, err := s.schedules.Get(r.Context(), scheduleID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "schedule not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not load schedule")
+		return
+	}
+	if sched.ProjectID != projectID {
+		writeError(w, http.StatusNotFound, "schedule not found")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		if !hasProjectPermission(user.Role, memberRole, "viewer") {
+			writeError(w, http.StatusForbidden, "insufficient permissions: viewer role required")
+			return
+		}
+		writeJSON(w, http.StatusOK, toScheduleDTO(*sched))
+	case http.MethodPatch:
+		if !ensureJSON(w, r) {
+			return
+		}
+		if err := requireApprovedUser(user); err != nil {
+			writeError(w, http.StatusForbidden, err.Error())
+			return
+		}
+		if !hasProjectPermission(user.Role, memberRole, "editor") {
+			writeError(w, http.StatusForbidden, "insufficient permissions: editor role required")
+			return
+		}
+		defer r.Body.Close()
+		var body struct {
+			Name        *string          `json:"name"`
+			Description *string          `json:"description"`
+			Strategy    *string          `json:"strategy"`
+			Config      *json.RawMessage `json:"config"`
+			IsActive    *bool            `json:"isActive"`
+			Timezone    *string          `json:"timezone"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid body")
+			return
+		}
+		var updates sqlstore.ScheduleUpdates
+		if body.Name != nil {
+			name := strings.TrimSpace(*body.Name)
+			if name == "" {
+				writeError(w, http.StatusBadRequest, "name cannot be empty")
+				return
+			}
+			updates.Name = &name
+		}
+		if body.Description != nil {
+			desc := strings.TrimSpace(*body.Description)
+			updates.Description = &sql.NullString{String: desc, Valid: desc != ""}
+		}
+		if body.Strategy != nil {
+			strategy := strings.TrimSpace(*body.Strategy)
+			if strategy == "" {
+				writeError(w, http.StatusBadRequest, "strategy cannot be empty")
+				return
+			}
+			updates.Strategy = &strategy
+		}
+		if body.Config != nil {
+			if len(*body.Config) == 0 || strings.TrimSpace(string(*body.Config)) == "null" {
+				writeError(w, http.StatusBadRequest, "config cannot be empty")
+				return
+			}
+			updates.Config = body.Config
+		}
+		if body.IsActive != nil {
+			updates.IsActive = body.IsActive
+		}
+		if body.Timezone != nil {
+			tz := strings.TrimSpace(*body.Timezone)
+			updates.Timezone = &sql.NullString{String: tz, Valid: tz != ""}
+		}
+		if updates.Name == nil && updates.Description == nil && updates.Strategy == nil && updates.Config == nil && updates.IsActive == nil && updates.Timezone == nil {
+			writeError(w, http.StatusBadRequest, "no updates provided")
+			return
+		}
+		if err := s.schedules.Update(r.Context(), scheduleID, updates); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to update schedule")
+			return
+		}
+		updated, err := s.schedules.Get(r.Context(), scheduleID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not load schedule")
+			return
+		}
+		writeJSON(w, http.StatusOK, toScheduleDTO(*updated))
+	case http.MethodDelete:
+		if err := requireApprovedUser(user); err != nil {
+			writeError(w, http.StatusForbidden, err.Error())
+			return
+		}
+		if !hasProjectPermission(user.Role, memberRole, "editor") {
+			writeError(w, http.StatusForbidden, "insufficient permissions: editor role required")
+			return
+		}
+		if err := s.schedules.Delete(r.Context(), scheduleID); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to delete schedule")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) handleProjectScheduleTrigger(w http.ResponseWriter, r *http.Request, projectID, scheduleID string) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	user, ok := currentUserFromContext(r.Context())
+	if !ok || user.Email == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if s.schedules == nil {
+		writeError(w, http.StatusInternalServerError, "schedules not configured")
+		return
+	}
+	if s.genQueue == nil {
+		writeError(w, http.StatusInternalServerError, "generation queue not configured")
+		return
+	}
+	if err := requireApprovedUser(user); err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	}
+
+	if _, err := s.authorizeProject(r.Context(), projectID); err != nil {
+		respondAuthzError(w, err, "project not found")
+		return
+	}
+
+	memberRole := ""
+	if !strings.EqualFold(user.Role, "admin") {
+		role, err := s.getProjectMemberRole(r.Context(), projectID, user.Email)
+		if err != nil {
+			writeError(w, http.StatusForbidden, "access denied")
+			return
+		}
+		memberRole = role
+	}
+	if !hasProjectPermission(user.Role, memberRole, "editor") {
+		writeError(w, http.StatusForbidden, "insufficient permissions: editor role required")
+		return
+	}
+
+	sched, err := s.schedules.Get(r.Context(), scheduleID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "schedule not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not load schedule")
+		return
+	}
+	if sched.ProjectID != projectID {
+		writeError(w, http.StatusNotFound, "schedule not found")
+		return
+	}
+
+	domains, err := s.domains.ListByProject(r.Context(), projectID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not list domains")
+		return
+	}
+	cfg, err := parseScheduleConfig(sched.Config)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid schedule config")
+		return
+	}
+	queueItems, err := s.genQueue.ListByProject(r.Context(), projectID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not load queue")
+		return
+	}
+
+	now := time.Now().UTC().Truncate(time.Minute)
+	enqueued, err := enqueueScheduleDomains(r.Context(), s.genQueue, *sched, cfg, domains, queueItems, now)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to enqueue generation")
+		return
+	}
+
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"status":   "queued",
+		"enqueued": enqueued,
+	})
+}
+
+func (s *Server) handleProjectLinkSchedule(w http.ResponseWriter, r *http.Request, projectID string) {
+	user, ok := currentUserFromContext(r.Context())
+	if !ok || user.Email == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if s.linkSchedules == nil {
+		writeError(w, http.StatusInternalServerError, "link schedules not configured")
+		return
+	}
+
+	if _, err := s.authorizeProject(r.Context(), projectID); err != nil {
+		respondAuthzError(w, err, "project not found")
+		return
+	}
+
+	memberRole := ""
+	if !strings.EqualFold(user.Role, "admin") {
+		role, err := s.getProjectMemberRole(r.Context(), projectID, user.Email)
+		if err != nil {
+			writeError(w, http.StatusForbidden, "access denied")
+			return
+		}
+		memberRole = role
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		if !hasProjectPermission(user.Role, memberRole, "viewer") {
+			writeError(w, http.StatusForbidden, "insufficient permissions: viewer role required")
+			return
+		}
+		sched, err := s.linkSchedules.GetByProject(r.Context(), projectID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeError(w, http.StatusNotFound, "link schedule not found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "could not load link schedule")
+			return
+		}
+		writeJSON(w, http.StatusOK, toLinkScheduleDTO(*sched))
+	case http.MethodPut:
+		if !ensureJSON(w, r) {
+			return
+		}
+		if err := requireApprovedUser(user); err != nil {
+			writeError(w, http.StatusForbidden, err.Error())
+			return
+		}
+		if !hasProjectPermission(user.Role, memberRole, "editor") {
+			writeError(w, http.StatusForbidden, "insufficient permissions: editor role required")
+			return
+		}
+		defer r.Body.Close()
+		var body struct {
+			Name     string          `json:"name"`
+			Config   json.RawMessage `json:"config"`
+			IsActive *bool           `json:"isActive"`
+			Timezone *string         `json:"timezone"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid body")
+			return
+		}
+		name := strings.TrimSpace(body.Name)
+		if name == "" {
+			writeError(w, http.StatusBadRequest, "name is required")
+			return
+		}
+		if len(body.Config) == 0 || strings.TrimSpace(string(body.Config)) == "null" {
+			writeError(w, http.StatusBadRequest, "config is required")
+			return
+		}
+		isActive := true
+		if body.IsActive != nil {
+			isActive = *body.IsActive
+		}
+
+		var timezone sql.NullString
+		if body.Timezone != nil {
+			tz := strings.TrimSpace(*body.Timezone)
+			if tz != "" {
+				if _, err := time.LoadLocation(tz); err != nil {
+					writeError(w, http.StatusBadRequest, "invalid timezone")
+					return
+				}
+				timezone = sqlstore.NullableString(tz)
+			}
+		}
+
+		existing, _ := s.linkSchedules.GetByProject(r.Context(), projectID)
+		if !timezone.Valid && existing != nil && existing.Timezone.Valid {
+			timezone = existing.Timezone
+		}
+
+		cfg, err := parseScheduleConfig(body.Config)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid schedule config")
+			return
+		}
+
+		loc := time.UTC
+		if timezone.Valid {
+			if tz, err := time.LoadLocation(strings.TrimSpace(timezone.String)); err == nil {
+				loc = tz
+			}
+		}
+		now := time.Now().UTC()
+		localNow := now.In(loc)
+		lastRunLocal := time.Time{}
+		if existing != nil && existing.LastRunAt.Valid {
+			lastRunLocal = existing.LastRunAt.Time.In(loc)
+		}
+		nextRunLocal, _, err := computeLinkScheduleNextRun(cfg, localNow, lastRunLocal)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid schedule config")
+			return
+		}
+		nextRunUTC := sql.NullTime{}
+		if !nextRunLocal.IsZero() {
+			nextRunUTC = sql.NullTime{Time: nextRunLocal.In(time.UTC), Valid: true}
+		}
+
+		sched := sqlstore.LinkSchedule{
+			ID:        uuid.NewString(),
+			ProjectID: projectID,
+			Name:      name,
+			Config:    body.Config,
+			IsActive:  isActive,
+			CreatedBy: user.Email,
+			CreatedAt: now,
+			NextRunAt: nextRunUTC,
+			Timezone:  timezone,
+		}
+		stored, err := s.linkSchedules.Upsert(r.Context(), sched)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to upsert link schedule")
+			return
+		}
+		writeJSON(w, http.StatusOK, toLinkScheduleDTO(*stored))
+	case http.MethodDelete:
+		if err := requireApprovedUser(user); err != nil {
+			writeError(w, http.StatusForbidden, err.Error())
+			return
+		}
+		if !hasProjectPermission(user.Role, memberRole, "editor") {
+			writeError(w, http.StatusForbidden, "insufficient permissions: editor role required")
+			return
+		}
+		if err := s.linkSchedules.DisableByProject(r.Context(), projectID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeError(w, http.StatusNotFound, "link schedule not found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "failed to disable link schedule")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "disabled"})
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) handleProjectLinkScheduleTrigger(w http.ResponseWriter, r *http.Request, projectID string) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	user, ok := currentUserFromContext(r.Context())
+	if !ok || user.Email == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if s.linkSchedules == nil {
+		writeError(w, http.StatusInternalServerError, "link schedules not configured")
+		return
+	}
+	if s.linkTasks == nil {
+		writeError(w, http.StatusInternalServerError, "link tasks not configured")
+		return
+	}
+	if err := requireApprovedUser(user); err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	}
+
+	if _, err := s.authorizeProject(r.Context(), projectID); err != nil {
+		respondAuthzError(w, err, "project not found")
+		return
+	}
+
+	memberRole := ""
+	if !strings.EqualFold(user.Role, "admin") {
+		role, err := s.getProjectMemberRole(r.Context(), projectID, user.Email)
+		if err != nil {
+			writeError(w, http.StatusForbidden, "access denied")
+			return
+		}
+		memberRole = role
+	}
+	if !hasProjectPermission(user.Role, memberRole, "editor") {
+		writeError(w, http.StatusForbidden, "insufficient permissions: editor role required")
+		return
+	}
+
+	sched, err := s.linkSchedules.GetByProject(r.Context(), projectID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "link schedule not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not load link schedule")
+		return
+	}
+	cfg, err := parseScheduleConfig(sched.Config)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid schedule config")
+		return
+	}
+
+	domains, err := s.domains.ListByProject(r.Context(), projectID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not list domains")
+		return
+	}
+	eligible := filterLinkDomains(domains)
+	activeTasks, err := listActiveLinkTasksByProject(r.Context(), s.linkTasks, projectID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not load link tasks")
+		return
+	}
+	activeByDomain := map[string]sqlstore.LinkTask{}
+	for _, task := range activeTasks {
+		activeByDomain[task.DomainID] = task
+	}
+
+	limit := cfg.Limit
+	if limit <= 0 {
+		limit = len(eligible)
+	}
+	activeEligible := 0
+	for _, d := range eligible {
+		if _, ok := activeByDomain[d.ID]; ok {
+			activeEligible++
+		}
+	}
+	remaining := limit - activeEligible
+	if remaining < 0 {
+		remaining = 0
+	}
+
+	now := time.Now().UTC()
+	updated := 0
+	created := 0
+	for _, d := range eligible {
+		anchor := strings.TrimSpace(d.LinkAnchorText.String)
+		target := strings.TrimSpace(d.LinkAcceptorURL.String)
+		if task, ok := activeByDomain[d.ID]; ok {
+			status := "pending"
+			attempts := 0
+			nullStr := sql.NullString{}
+			nullTime := sql.NullTime{}
+			updates := sqlstore.LinkTaskUpdates{
+				AnchorText:       &anchor,
+				TargetURL:        &target,
+				Status:           &status,
+				Attempts:         &attempts,
+				ScheduledFor:     &now,
+				FoundLocation:    &nullStr,
+				GeneratedContent: &nullStr,
+				ErrorMessage:     &nullStr,
+				CompletedAt:      &nullTime,
+			}
+			if err := s.linkTasks.Update(r.Context(), task.ID, updates); err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to update link task")
+				return
+			}
+			updated++
+			continue
+		}
+
+		if remaining == 0 {
+			continue
+		}
+		task := sqlstore.LinkTask{
+			ID:           uuid.NewString(),
+			DomainID:     d.ID,
+			AnchorText:   anchor,
+			TargetURL:    target,
+			ScheduledFor: now,
+			Status:       "pending",
+			Attempts:     0,
+			CreatedBy:    user.Email,
+			CreatedAt:    now,
+		}
+		if err := s.linkTasks.Create(r.Context(), task); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to create link task")
+			return
+		}
+		created++
+		remaining--
+	}
+
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"status":   "queued",
+		"created":  created,
+		"updated":  updated,
+		"eligible": len(eligible),
+	})
+}
+
+func (s *Server) handleProjectQueue(w http.ResponseWriter, r *http.Request, projectID string) {
+	user, ok := currentUserFromContext(r.Context())
+	if !ok || user.Email == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if s.genQueue == nil {
+		writeError(w, http.StatusInternalServerError, "generation queue not configured")
+		return
+	}
+
+	if _, err := s.authorizeProject(r.Context(), projectID); err != nil {
+		respondAuthzError(w, err, "project not found")
+		return
+	}
+
+	memberRole := ""
+	if !strings.EqualFold(user.Role, "admin") {
+		role, err := s.getProjectMemberRole(r.Context(), projectID, user.Email)
+		if err != nil {
+			writeError(w, http.StatusForbidden, "access denied")
+			return
+		}
+		memberRole = role
+	}
+	if !hasProjectPermission(user.Role, memberRole, "viewer") {
+		writeError(w, http.StatusForbidden, "insufficient permissions: viewer role required")
+		return
+	}
+
+	items, err := s.genQueue.ListByProject(r.Context(), projectID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not load queue")
+		return
+	}
+	domainMap := map[string]string{}
+	if domains, err := s.domains.ListByProject(r.Context(), projectID); err == nil {
+		for _, d := range domains {
+			domainMap[d.ID] = d.URL
+		}
+	}
+	resp := make([]queueItemDTO, 0, len(items))
+	for _, item := range items {
+		dto := toQueueItemDTO(item)
+		if url, ok := domainMap[item.DomainID]; ok {
+			dto.DomainURL = &url
+		}
+		resp = append(resp, dto)
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleQueueItem(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	user, ok := currentUserFromContext(r.Context())
+	if !ok || user.Email == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if s.genQueue == nil {
+		writeError(w, http.StatusInternalServerError, "generation queue not configured")
+		return
+	}
+
+	itemID := strings.TrimPrefix(r.URL.Path, "/api/queue/")
+	itemID = strings.TrimSpace(itemID)
+	if itemID == "" {
+		writeError(w, http.StatusBadRequest, "missing queue item id")
+		return
+	}
+
+	item, err := s.genQueue.Get(r.Context(), itemID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "queue item not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not load queue item")
+		return
+	}
+
+	domain, err := s.domains.Get(r.Context(), item.DomainID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "domain not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not load domain")
+		return
+	}
+
+	if _, err := s.authorizeProject(r.Context(), domain.ProjectID); err != nil {
+		respondAuthzError(w, err, "project not found")
+		return
+	}
+
+	memberRole := ""
+	if !strings.EqualFold(user.Role, "admin") {
+		role, err := s.getProjectMemberRole(r.Context(), domain.ProjectID, user.Email)
+		if err != nil {
+			writeError(w, http.StatusForbidden, "access denied")
+			return
+		}
+		memberRole = role
+	}
+	if !hasProjectPermission(user.Role, memberRole, "editor") {
+		writeError(w, http.StatusForbidden, "insufficient permissions: editor role required")
+		return
+	}
+
+	if err := s.genQueue.Delete(r.Context(), itemID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete queue item")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+func (s *Server) handleLinks(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	user, ok := currentUserFromContext(r.Context())
+	if !ok || user.Email == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if s.linkTasks == nil {
+		writeError(w, http.StatusInternalServerError, "link tasks not configured")
+		return
+	}
+
+	filters, err := parseLinkTaskFilters(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	query := r.URL.Query()
+	domainID := strings.TrimSpace(query.Get("domain_id"))
+	projectID := strings.TrimSpace(query.Get("project_id"))
+
+	var list []sqlstore.LinkTask
+	switch {
+	case domainID != "":
+		domain, project, err := s.authorizeDomain(r.Context(), domainID)
+		if err != nil {
+			respondAuthzError(w, err, "domain not found")
+			return
+		}
+		memberRole := ""
+		if !strings.EqualFold(user.Role, "admin") {
+			role, err := s.getProjectMemberRole(r.Context(), project.ID, user.Email)
+			if err != nil {
+				writeError(w, http.StatusForbidden, "access denied")
+				return
+			}
+			memberRole = role
+		}
+		if !hasProjectPermission(user.Role, memberRole, "viewer") {
+			writeError(w, http.StatusForbidden, "insufficient permissions: viewer role required")
+			return
+		}
+		list, err = s.linkTasks.ListByDomain(r.Context(), domain.ID, filters)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not list link tasks")
+			return
+		}
+	case projectID != "":
+		if _, err := s.authorizeProject(r.Context(), projectID); err != nil {
+			respondAuthzError(w, err, "project not found")
+			return
+		}
+		memberRole := ""
+		if !strings.EqualFold(user.Role, "admin") {
+			role, err := s.getProjectMemberRole(r.Context(), projectID, user.Email)
+			if err != nil {
+				writeError(w, http.StatusForbidden, "access denied")
+				return
+			}
+			memberRole = role
+		}
+		if !hasProjectPermission(user.Role, memberRole, "viewer") {
+			writeError(w, http.StatusForbidden, "insufficient permissions: viewer role required")
+			return
+		}
+		list, err = s.linkTasks.ListByProject(r.Context(), projectID, filters)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not list link tasks")
+			return
+		}
+	default:
+		if !strings.EqualFold(user.Role, "admin") {
+			writeError(w, http.StatusForbidden, "admin only")
+			return
+		}
+		list, err = s.linkTasks.ListAll(r.Context(), filters)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not list link tasks")
+			return
+		}
+	}
+
+	resp := make([]linkTaskDTO, 0, len(list))
+	for _, task := range list {
+		resp = append(resp, toLinkTaskDTO(task))
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleLinkByID(w http.ResponseWriter, r *http.Request) {
+	user, ok := currentUserFromContext(r.Context())
+	if !ok || user.Email == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if s.linkTasks == nil {
+		writeError(w, http.StatusInternalServerError, "link tasks not configured")
+		return
+	}
+
+	path := strings.TrimPrefix(r.URL.Path, "/api/links/")
+	parts := strings.Split(path, "/")
+	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
+		writeError(w, http.StatusBadRequest, "missing link task id")
+		return
+	}
+	taskID, err := url.PathUnescape(parts[0])
+	if err != nil || strings.TrimSpace(taskID) == "" {
+		writeError(w, http.StatusBadRequest, "invalid link task id")
+		return
+	}
+	action := ""
+	if len(parts) > 1 {
+		action = parts[1]
+	}
+
+	task, err := s.linkTasks.Get(r.Context(), taskID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "link task not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not load link task")
+		return
+	}
+
+	domain, err := s.domains.Get(r.Context(), task.DomainID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "domain not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not load domain")
+		return
+	}
+	if _, err := s.authorizeProject(r.Context(), domain.ProjectID); err != nil {
+		respondAuthzError(w, err, "project not found")
+		return
+	}
+
+	memberRole := ""
+	if !strings.EqualFold(user.Role, "admin") {
+		role, err := s.getProjectMemberRole(r.Context(), domain.ProjectID, user.Email)
+		if err != nil {
+			writeError(w, http.StatusForbidden, "access denied")
+			return
+		}
+		memberRole = role
+	}
+
+	if action == "retry" {
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		if err := requireApprovedUser(user); err != nil {
+			writeError(w, http.StatusForbidden, err.Error())
+			return
+		}
+		if !hasProjectPermission(user.Role, memberRole, "editor") {
+			writeError(w, http.StatusForbidden, "insufficient permissions: editor role required")
+			return
+		}
+
+		now := time.Now().UTC()
+		status := "pending"
+		attempts := task.Attempts + 1
+		updates := sqlstore.LinkTaskUpdates{
+			Status:       &status,
+			Attempts:     &attempts,
+			ScheduledFor: &now,
+			ErrorMessage: &sql.NullString{},
+			CompletedAt:  &sql.NullTime{},
+		}
+		if err := s.linkTasks.Update(r.Context(), taskID, updates); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to retry link task")
+			return
+		}
+		updated, _ := s.linkTasks.Get(r.Context(), taskID)
+		if updated == nil {
+			writeJSON(w, http.StatusOK, map[string]string{"status": "queued"})
+			return
+		}
+		writeJSON(w, http.StatusOK, toLinkTaskDTO(*updated))
+		return
+	}
+
+	switch r.Method {
+	case http.MethodPatch:
+		if !ensureJSON(w, r) {
+			return
+		}
+		if err := requireApprovedUser(user); err != nil {
+			writeError(w, http.StatusForbidden, err.Error())
+			return
+		}
+		if !hasProjectPermission(user.Role, memberRole, "editor") {
+			writeError(w, http.StatusForbidden, "insufficient permissions: editor role required")
+			return
+		}
+		defer r.Body.Close()
+		var body struct {
+			ScheduledFor      string `json:"scheduled_for"`
+			ScheduledForCamel string `json:"scheduledFor"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid body")
+			return
+		}
+		now := time.Now().UTC()
+		scheduledFor, err := parseScheduledFor(body.ScheduledFor, body.ScheduledForCamel, now)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid scheduled_for")
+			return
+		}
+		updates := sqlstore.LinkTaskUpdates{ScheduledFor: &scheduledFor}
+		if err := s.linkTasks.Update(r.Context(), taskID, updates); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to update link task")
+			return
+		}
+		updated, _ := s.linkTasks.Get(r.Context(), taskID)
+		if updated == nil {
+			writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+			return
+		}
+		writeJSON(w, http.StatusOK, toLinkTaskDTO(*updated))
+	case http.MethodDelete:
+		if err := requireApprovedUser(user); err != nil {
+			writeError(w, http.StatusForbidden, err.Error())
+			return
+		}
+		if !hasProjectPermission(user.Role, memberRole, "editor") {
+			writeError(w, http.StatusForbidden, "insufficient permissions: editor role required")
+			return
+		}
+		if err := s.linkTasks.Delete(r.Context(), taskID); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to delete link task")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func parseLinkTaskFilters(r *http.Request) (sqlstore.LinkTaskFilters, error) {
+	query := r.URL.Query()
+	filters := sqlstore.LinkTaskFilters{}
+
+	if status := strings.TrimSpace(query.Get("status")); status != "" {
+		filters.Status = &status
+	}
+	if from := strings.TrimSpace(query.Get("scheduled_from")); from != "" {
+		t, err := time.Parse(time.RFC3339, from)
+		if err != nil {
+			return filters, fmt.Errorf("invalid scheduled_from")
+		}
+		tt := t.UTC()
+		filters.ScheduledAfter = &tt
+	} else if from := strings.TrimSpace(query.Get("scheduledFrom")); from != "" {
+		t, err := time.Parse(time.RFC3339, from)
+		if err != nil {
+			return filters, fmt.Errorf("invalid scheduled_from")
+		}
+		tt := t.UTC()
+		filters.ScheduledAfter = &tt
+	}
+	if to := strings.TrimSpace(query.Get("scheduled_to")); to != "" {
+		t, err := time.Parse(time.RFC3339, to)
+		if err != nil {
+			return filters, fmt.Errorf("invalid scheduled_to")
+		}
+		tt := t.UTC()
+		filters.ScheduledBefore = &tt
+	} else if to := strings.TrimSpace(query.Get("scheduledTo")); to != "" {
+		t, err := time.Parse(time.RFC3339, to)
+		if err != nil {
+			return filters, fmt.Errorf("invalid scheduled_to")
+		}
+		tt := t.UTC()
+		filters.ScheduledBefore = &tt
+	}
+	if limitStr := strings.TrimSpace(query.Get("limit")); limitStr != "" {
+		limit, err := strconv.Atoi(limitStr)
+		if err != nil || limit < 0 {
+			return filters, fmt.Errorf("invalid limit")
+		}
+		filters.Limit = limit
+	}
+
+	return filters, nil
+}
+
+func parseScheduledFor(primary string, fallback string, defaultTime time.Time) (time.Time, error) {
+	value := strings.TrimSpace(primary)
+	if value == "" {
+		value = strings.TrimSpace(fallback)
+	}
+	if value == "" {
+		return defaultTime, nil
+	}
+	t, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return t.UTC(), nil
+}
+
 func (s *Server) handleAdminPrompts(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -2564,19 +4139,26 @@ type projectDTO struct {
 }
 
 type domainDTO struct {
-	ID               string     `json:"id"`
-	ProjectID        string     `json:"project_id"`
-	ServerID         *string    `json:"server_id,omitempty"`
-	URL              string     `json:"url"`
-	MainKeyword      string     `json:"main_keyword,omitempty"`
-	TargetCountry    string     `json:"target_country,omitempty"`
-	TargetLanguage   string     `json:"target_language,omitempty"`
-	ExcludeDomains   *string    `json:"exclude_domains,omitempty"`
-	Status           string     `json:"status"`
-	LastGenerationID *string    `json:"last_generation_id,omitempty"`
-	PublishedAt      *time.Time `json:"published_at,omitempty"`
-	CreatedAt        time.Time  `json:"created_at"`
-	UpdatedAt        time.Time  `json:"updated_at"`
+	ID                 string     `json:"id"`
+	ProjectID          string     `json:"project_id"`
+	ServerID           *string    `json:"server_id,omitempty"`
+	URL                string     `json:"url"`
+	MainKeyword        string     `json:"main_keyword,omitempty"`
+	TargetCountry      string     `json:"target_country,omitempty"`
+	TargetLanguage     string     `json:"target_language,omitempty"`
+	ExcludeDomains     *string    `json:"exclude_domains,omitempty"`
+	Status             string     `json:"status"`
+	LastGenerationID   *string    `json:"last_generation_id,omitempty"`
+	PublishedAt        *time.Time `json:"published_at,omitempty"`
+	LinkAnchorText     *string    `json:"link_anchor_text,omitempty"`
+	LinkAcceptorURL    *string    `json:"link_acceptor_url,omitempty"`
+	LinkStatus         *string    `json:"link_status,omitempty"`
+	LinkUpdatedAt      *time.Time `json:"link_updated_at,omitempty"`
+	LinkLastTaskID     *string    `json:"link_last_task_id,omitempty"`
+	LinkFilePath       *string    `json:"link_file_path,omitempty"`
+	LinkAnchorSnapshot *string    `json:"link_anchor_snapshot,omitempty"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
 }
 
 type fileDTO struct {
@@ -2595,9 +4177,27 @@ type fileEditDTO struct {
 	CreatedAt   time.Time `json:"createdAt"`
 }
 
+type linkTaskDTO struct {
+	ID               string     `json:"id"`
+	DomainID         string     `json:"domain_id"`
+	AnchorText       string     `json:"anchor_text"`
+	TargetURL        string     `json:"target_url"`
+	ScheduledFor     time.Time  `json:"scheduled_for"`
+	Status           string     `json:"status"`
+	FoundLocation    *string    `json:"found_location,omitempty"`
+	GeneratedContent *string    `json:"generated_content,omitempty"`
+	ErrorMessage     *string    `json:"error_message,omitempty"`
+	LogLines         []string   `json:"log_lines,omitempty"`
+	Attempts         int        `json:"attempts"`
+	CreatedBy        string     `json:"created_by"`
+	CreatedAt        time.Time  `json:"created_at"`
+	CompletedAt      *time.Time `json:"completed_at,omitempty"`
+}
+
 type generationDTO struct {
 	ID         string     `json:"id"`
 	DomainID   string     `json:"domain_id"`
+	DomainURL  *string    `json:"domain_url,omitempty"`
 	Status     string     `json:"status"`
 	Progress   int        `json:"progress"`
 	Error      *string    `json:"error,omitempty"`
@@ -2636,6 +4236,48 @@ type projectMemberDTO struct {
 	Email     string    `json:"email"`
 	Role      string    `json:"role"`
 	CreatedAt time.Time `json:"createdAt"`
+}
+
+type scheduleDTO struct {
+	ID          string          `json:"id"`
+	ProjectID   string          `json:"project_id"`
+	Name        string          `json:"name"`
+	Description *string         `json:"description,omitempty"`
+	Strategy    string          `json:"strategy"`
+	Config      json.RawMessage `json:"config"`
+	IsActive    bool            `json:"isActive"`
+	CreatedBy   string          `json:"createdBy"`
+	LastRunAt   *time.Time      `json:"last_run_at,omitempty"`
+	NextRunAt   *time.Time      `json:"next_run_at,omitempty"`
+	Timezone    *string         `json:"timezone,omitempty"`
+	CreatedAt   time.Time       `json:"createdAt"`
+	UpdatedAt   time.Time       `json:"updatedAt"`
+}
+
+type linkScheduleDTO struct {
+	ID        string          `json:"id"`
+	ProjectID string          `json:"project_id"`
+	Name      string          `json:"name"`
+	Config    json.RawMessage `json:"config"`
+	IsActive  bool            `json:"isActive"`
+	CreatedBy string          `json:"createdBy"`
+	LastRunAt *time.Time      `json:"last_run_at,omitempty"`
+	NextRunAt *time.Time      `json:"next_run_at,omitempty"`
+	Timezone  *string         `json:"timezone,omitempty"`
+	CreatedAt time.Time       `json:"createdAt"`
+}
+
+type queueItemDTO struct {
+	ID           string     `json:"id"`
+	DomainID     string     `json:"domain_id"`
+	DomainURL    *string    `json:"domain_url,omitempty"`
+	ScheduleID   *string    `json:"schedule_id,omitempty"`
+	Priority     int        `json:"priority"`
+	ScheduledFor time.Time  `json:"scheduled_for"`
+	Status       string     `json:"status"`
+	ErrorMessage *string    `json:"error_message,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	ProcessedAt  *time.Time `json:"processed_at,omitempty"`
 }
 
 func (s *Server) toProjectDTO(ctx context.Context, p sqlstore.Project) projectDTO {
@@ -2694,19 +4336,26 @@ func toProjectDTOs(list []sqlstore.Project) []projectDTO {
 
 func toDomainDTO(d sqlstore.Domain) domainDTO {
 	return domainDTO{
-		ID:               d.ID,
-		ProjectID:        d.ProjectID,
-		ServerID:         nullableStringPtr(d.ServerID),
-		URL:              d.URL,
-		MainKeyword:      d.MainKeyword,
-		TargetCountry:    d.TargetCountry,
-		TargetLanguage:   d.TargetLanguage,
-		ExcludeDomains:   nullableStringPtr(d.ExcludeDomains),
-		Status:           d.Status,
-		LastGenerationID: nullableStringPtr(d.LastGenerationID),
-		PublishedAt:      nullableTimePtr(d.PublishedAt),
-		CreatedAt:        d.CreatedAt,
-		UpdatedAt:        d.UpdatedAt,
+		ID:                 d.ID,
+		ProjectID:          d.ProjectID,
+		ServerID:           nullableStringPtr(d.ServerID),
+		URL:                d.URL,
+		MainKeyword:        d.MainKeyword,
+		TargetCountry:      d.TargetCountry,
+		TargetLanguage:     d.TargetLanguage,
+		ExcludeDomains:     nullableStringPtr(d.ExcludeDomains),
+		Status:             d.Status,
+		LastGenerationID:   nullableStringPtr(d.LastGenerationID),
+		PublishedAt:        nullableTimePtr(d.PublishedAt),
+		LinkAnchorText:     nullableStringPtr(d.LinkAnchorText),
+		LinkAcceptorURL:    nullableStringPtr(d.LinkAcceptorURL),
+		LinkStatus:         nullableStringPtr(d.LinkStatus),
+		LinkUpdatedAt:      nullableTimePtr(d.LinkUpdatedAt),
+		LinkLastTaskID:     nullableStringPtr(d.LinkLastTaskID),
+		LinkFilePath:       nullableStringPtr(d.LinkFilePath),
+		LinkAnchorSnapshot: nullableStringPtr(d.LinkAnchorSnapshot),
+		CreatedAt:          d.CreatedAt,
+		UpdatedAt:          d.UpdatedAt,
 	}
 }
 
@@ -2743,6 +4392,12 @@ func toGenerationDTOs(list []sqlstore.Generation) []generationDTO {
 	return out
 }
 
+func toGenerationDTOWithDomain(g sqlstore.Generation, domainURL *string) generationDTO {
+	dto := toGenerationDTO(g)
+	dto.DomainURL = domainURL
+	return dto
+}
+
 func toAdminUserDTO(u auth.User) adminUserDTO {
 	return adminUserDTO{
 		Email:           u.Email,
@@ -2766,6 +4421,454 @@ func toAdminPromptDTO(p sqlstore.SystemPrompt) adminPromptDTO {
 		IsActive:    p.IsActive,
 		CreatedAt:   p.CreatedAt,
 		UpdatedAt:   p.UpdatedAt,
+	}
+}
+
+func toScheduleDTO(s sqlstore.Schedule) scheduleDTO {
+	var cfg json.RawMessage
+	if len(s.Config) > 0 {
+		cfg = json.RawMessage(s.Config)
+	}
+	return scheduleDTO{
+		ID:          s.ID,
+		ProjectID:   s.ProjectID,
+		Name:        s.Name,
+		Description: nullableStringPtr(s.Description),
+		Strategy:    s.Strategy,
+		Config:      cfg,
+		IsActive:    s.IsActive,
+		CreatedBy:   s.CreatedBy,
+		LastRunAt:   nullableTimePtr(s.LastRunAt),
+		NextRunAt:   nullableTimePtr(s.NextRunAt),
+		Timezone:    nullableStringPtr(s.Timezone),
+		CreatedAt:   s.CreatedAt,
+		UpdatedAt:   s.UpdatedAt,
+	}
+}
+
+func toLinkScheduleDTO(s sqlstore.LinkSchedule) linkScheduleDTO {
+	return linkScheduleDTO{
+		ID:        s.ID,
+		ProjectID: s.ProjectID,
+		Name:      s.Name,
+		Config:    s.Config,
+		IsActive:  s.IsActive,
+		CreatedBy: s.CreatedBy,
+		LastRunAt: nullableTimePtr(s.LastRunAt),
+		NextRunAt: nullableTimePtr(s.NextRunAt),
+		Timezone:  nullableStringPtr(s.Timezone),
+		CreatedAt: s.CreatedAt,
+	}
+}
+
+type scheduleConfig struct {
+	Limit    int
+	Cron     string
+	Time     string
+	Weekday  string
+	Day      int
+	Interval string
+}
+
+func parseScheduleConfig(raw json.RawMessage) (scheduleConfig, error) {
+	if len(raw) == 0 {
+		return scheduleConfig{}, nil
+	}
+	var data map[string]any
+	if err := json.Unmarshal(raw, &data); err != nil {
+		return scheduleConfig{}, err
+	}
+	cfg := scheduleConfig{}
+	if v, ok := data["limit"].(float64); ok {
+		cfg.Limit = int(v)
+	}
+	if v, ok := data["cron"].(string); ok {
+		cfg.Cron = strings.TrimSpace(v)
+	}
+	if v, ok := data["time"].(string); ok {
+		cfg.Time = strings.TrimSpace(v)
+	}
+	if v, ok := data["weekday"].(string); ok {
+		cfg.Weekday = strings.TrimSpace(v)
+	}
+	if v, ok := data["day"].(float64); ok {
+		cfg.Day = int(v)
+	}
+	if v, ok := data["day"].(string); ok {
+		if parsed, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			cfg.Day = parsed
+		}
+	}
+	if v, ok := data["interval"].(string); ok {
+		cfg.Interval = strings.TrimSpace(v)
+	}
+	return cfg, nil
+}
+
+func computeLinkScheduleNextRun(cfg scheduleConfig, now time.Time, lastRun time.Time) (time.Time, bool, error) {
+	strategy := "daily"
+	if strings.TrimSpace(cfg.Cron) != "" || strings.TrimSpace(cfg.Interval) != "" {
+		strategy = "custom"
+	} else if strings.TrimSpace(cfg.Weekday) != "" || cfg.Day > 0 {
+		strategy = "weekly"
+	}
+	return computeScheduleNextRun(strategy, cfg, now, lastRun)
+}
+
+func computeScheduleNextRun(strategy string, cfg scheduleConfig, now time.Time, lastRun time.Time) (time.Time, bool, error) {
+	strategy = strings.ToLower(strings.TrimSpace(strategy))
+	if strategy == "" {
+		return time.Time{}, false, fmt.Errorf("strategy is required")
+	}
+
+	if strategy == "immediate" {
+		return time.Time{}, lastRun.IsZero(), nil
+	}
+
+	if cfg.Interval != "" {
+		interval, err := parseInterval(cfg.Interval)
+		if err != nil {
+			return time.Time{}, false, err
+		}
+		if lastRun.IsZero() || now.Sub(lastRun) >= interval {
+			return now.Add(interval), true, nil
+		}
+		return lastRun.Add(interval), false, nil
+	}
+
+	switch strategy {
+	case "daily":
+		scheduled, err := scheduleAtTime(now, cfg.Time)
+		if err != nil {
+			return time.Time{}, false, err
+		}
+		if now.Before(scheduled) {
+			return scheduled, false, nil
+		}
+		if !lastRun.IsZero() && sameDay(lastRun, now) {
+			return scheduled.Add(24 * time.Hour), false, nil
+		}
+		return scheduled.Add(24 * time.Hour), true, nil
+	case "weekly":
+		targetWeekday, ok := resolveWeekday(cfg.Weekday, cfg.Day)
+		if !ok {
+			return time.Time{}, false, fmt.Errorf("weekday is required")
+		}
+		scheduled, err := scheduleAtWeekday(now, targetWeekday, cfg.Time)
+		if err != nil {
+			return time.Time{}, false, err
+		}
+		if now.Before(scheduled) {
+			return scheduled, false, nil
+		}
+		if !lastRun.IsZero() && sameWeek(lastRun, now) {
+			return scheduled.Add(7 * 24 * time.Hour), false, nil
+		}
+		return scheduled.Add(7 * 24 * time.Hour), true, nil
+	case "custom":
+		if cfg.Cron == "" && cfg.Interval == "" {
+			return time.Time{}, false, fmt.Errorf("cron or interval is required for custom strategy")
+		}
+		if cfg.Cron == "" {
+			return time.Time{}, false, fmt.Errorf("cron is required for custom strategy")
+		}
+		next, due, err := cronNext(cfg.Cron, now)
+		return next, due, err
+	default:
+		return time.Time{}, false, fmt.Errorf("unknown strategy: %s", strategy)
+	}
+}
+
+func cronNext(expr string, now time.Time) (time.Time, bool, error) {
+	sched, err := cron.ParseStandard(expr)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	windowStart := now.Add(-time.Minute)
+	next := sched.Next(windowStart)
+	if !next.After(now) {
+		return sched.Next(now), true, nil
+	}
+	return next, false, nil
+}
+
+func scheduleAtTime(now time.Time, value string) (time.Time, error) {
+	hour, minute, err := parseHourMinute(value, now)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return time.Date(now.Year(), now.Month(), now.Day(), hour, minute, 0, 0, now.Location()), nil
+}
+
+func scheduleAtWeekday(now time.Time, weekday time.Weekday, value string) (time.Time, error) {
+	hour, minute, err := parseHourMinute(value, now)
+	if err != nil {
+		return time.Time{}, err
+	}
+	diff := int(weekday - now.Weekday())
+	if diff < 0 {
+		diff += 7
+	}
+	target := now.AddDate(0, 0, diff)
+	return time.Date(target.Year(), target.Month(), target.Day(), hour, minute, 0, 0, now.Location()), nil
+}
+
+func parseHourMinute(value string, now time.Time) (int, int, error) {
+	if strings.TrimSpace(value) == "" {
+		return 0, 0, nil
+	}
+	parts := strings.Split(value, ":")
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("invalid time format")
+	}
+	hour, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid hour")
+	}
+	minute, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid minute")
+	}
+	return hour, minute, nil
+}
+
+func resolveWeekday(value string, day int) (time.Weekday, bool) {
+	value = strings.TrimSpace(strings.ToLower(value))
+	switch value {
+	case "mon", "monday":
+		return time.Monday, true
+	case "tue", "tues", "tuesday":
+		return time.Tuesday, true
+	case "wed", "wednesday":
+		return time.Wednesday, true
+	case "thu", "thurs", "thursday":
+		return time.Thursday, true
+	case "fri", "friday":
+		return time.Friday, true
+	case "sat", "saturday":
+		return time.Saturday, true
+	case "sun", "sunday":
+		return time.Sunday, true
+	}
+	if day >= 1 && day <= 7 {
+		return time.Weekday(day % 7), true
+	}
+	return time.Weekday(0), false
+}
+
+func enqueueScheduleDomains(
+	ctx context.Context,
+	genQueue GenQueueStore,
+	sched sqlstore.Schedule,
+	cfg scheduleConfig,
+	domains []sqlstore.Domain,
+	queueItems []sqlstore.QueueItem,
+	now time.Time,
+) (int, error) {
+	queuedDomains := map[string]bool{}
+	queuedForSchedule := 0
+	for _, item := range queueItems {
+		if item.Status != "pending" && item.Status != "queued" {
+			continue
+		}
+		queuedDomains[item.DomainID] = true
+		if item.ScheduleID.Valid && item.ScheduleID.String == sched.ID {
+			queuedForSchedule++
+		}
+	}
+
+	limit := cfg.Limit
+	if limit <= 0 {
+		limit = len(domains)
+	}
+	remaining := limit - queuedForSchedule
+	if remaining <= 0 {
+		return 0, nil
+	}
+
+	count := 0
+	for _, d := range domains {
+		if count >= remaining {
+			break
+		}
+		if queuedDomains[d.ID] {
+			continue
+		}
+		item := sqlstore.QueueItem{
+			ID:           uuid.NewString(),
+			DomainID:     d.ID,
+			ScheduleID:   sql.NullString{String: sched.ID, Valid: true},
+			Priority:     0,
+			ScheduledFor: now,
+			Status:       "pending",
+		}
+		if err := genQueue.Enqueue(ctx, item); err != nil {
+			return count, err
+		}
+		count++
+	}
+	return count, nil
+}
+
+func shouldAllowManualTrigger(strategy string, cfg scheduleConfig, now time.Time, lastRun time.Time) (bool, error) {
+	strategy = strings.ToLower(strings.TrimSpace(strategy))
+	if strategy == "" {
+		return true, nil
+	}
+	if lastRun.IsZero() {
+		return true, nil
+	}
+	switch strategy {
+	case "immediate":
+		return false, nil
+	case "daily":
+		return !sameDay(lastRun, now), nil
+	case "weekly":
+		return !sameWeek(lastRun, now), nil
+	case "custom":
+		if cfg.Interval != "" {
+			interval, err := parseInterval(cfg.Interval)
+			if err != nil {
+				return false, err
+			}
+			return now.Sub(lastRun) >= interval, nil
+		}
+		if cfg.Cron != "" {
+			return cronAllowsManual(cfg.Cron, now, lastRun)
+		}
+		return true, nil
+	default:
+		return true, nil
+	}
+}
+
+func cronAllowsManual(expr string, now time.Time, lastRun time.Time) (bool, error) {
+	if lastRun.IsZero() {
+		return true, nil
+	}
+	sched, err := cron.ParseStandard(expr)
+	if err != nil {
+		return false, err
+	}
+	next := sched.Next(lastRun)
+	return !now.Before(next), nil
+}
+
+func lastScheduledAt(items []sqlstore.QueueItem, scheduleID string) time.Time {
+	var last time.Time
+	for _, item := range items {
+		if !item.ScheduleID.Valid || item.ScheduleID.String != scheduleID {
+			continue
+		}
+		if item.ScheduledFor.After(last) {
+			last = item.ScheduledFor
+		}
+	}
+	return last
+}
+
+func sameDay(a, b time.Time) bool {
+	ay, am, ad := a.Date()
+	by, bm, bd := b.Date()
+	return ay == by && am == bm && ad == bd
+}
+
+func sameWeek(a, b time.Time) bool {
+	ay, aw := a.ISOWeek()
+	by, bw := b.ISOWeek()
+	return ay == by && aw == bw
+}
+
+func parseInterval(value string) (time.Duration, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, fmt.Errorf("interval is empty")
+	}
+	if strings.HasSuffix(value, "d") {
+		n, err := strconv.Atoi(strings.TrimSuffix(value, "d"))
+		if err != nil {
+			return 0, err
+		}
+		return time.Duration(n) * 24 * time.Hour, nil
+	}
+	if strings.HasSuffix(value, "w") {
+		n, err := strconv.Atoi(strings.TrimSuffix(value, "w"))
+		if err != nil {
+			return 0, err
+		}
+		return time.Duration(n) * 7 * 24 * time.Hour, nil
+	}
+	return time.ParseDuration(value)
+}
+
+func filterLinkDomains(domains []sqlstore.Domain) []sqlstore.Domain {
+	res := make([]sqlstore.Domain, 0, len(domains))
+	for _, d := range domains {
+		if !isDomainPublished(d) {
+			continue
+		}
+		anchor := strings.TrimSpace(d.LinkAnchorText.String)
+		target := strings.TrimSpace(d.LinkAcceptorURL.String)
+		if !d.LinkAnchorText.Valid || !d.LinkAcceptorURL.Valid || anchor == "" || target == "" {
+			continue
+		}
+		res = append(res, d)
+	}
+	return res
+}
+
+func isDomainPublished(d sqlstore.Domain) bool {
+	if d.PublishedAt.Valid {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(d.Status), "published")
+}
+
+func listActiveLinkTasksByProject(ctx context.Context, linkTaskStore LinkTaskStore, projectID string) ([]sqlstore.LinkTask, error) {
+	activeStatuses := []string{"pending", "searching", "found"}
+	var res []sqlstore.LinkTask
+	for _, status := range activeStatuses {
+		status := status
+		filters := sqlstore.LinkTaskFilters{Status: &status}
+		list, err := linkTaskStore.ListByProject(ctx, projectID, filters)
+		if err != nil {
+			return nil, err
+		}
+		res = append(res, list...)
+	}
+	return res, nil
+}
+
+func toQueueItemDTO(item sqlstore.QueueItem) queueItemDTO {
+	return queueItemDTO{
+		ID:           item.ID,
+		DomainID:     item.DomainID,
+		ScheduleID:   nullableStringPtr(item.ScheduleID),
+		Priority:     item.Priority,
+		ScheduledFor: item.ScheduledFor,
+		Status:       item.Status,
+		ErrorMessage: nullableStringPtr(item.ErrorMessage),
+		CreatedAt:    item.CreatedAt,
+		ProcessedAt:  nullableTimePtr(item.ProcessedAt),
+	}
+}
+
+func toLinkTaskDTO(task sqlstore.LinkTask) linkTaskDTO {
+	return linkTaskDTO{
+		ID:               task.ID,
+		DomainID:         task.DomainID,
+		AnchorText:       task.AnchorText,
+		TargetURL:        task.TargetURL,
+		ScheduledFor:     task.ScheduledFor,
+		Status:           task.Status,
+		FoundLocation:    nullableStringPtr(task.FoundLocation),
+		GeneratedContent: nullableStringPtr(task.GeneratedContent),
+		ErrorMessage:     nullableStringPtr(task.ErrorMessage),
+		LogLines:         task.LogLines,
+		Attempts:         task.Attempts,
+		CreatedBy:        task.CreatedBy,
+		CreatedAt:        task.CreatedAt,
+		CompletedAt:      nullableTimePtr(task.CompletedAt),
 	}
 }
 

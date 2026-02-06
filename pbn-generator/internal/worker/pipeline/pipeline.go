@@ -234,6 +234,7 @@ func (p *Pipeline) saveArtifacts(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal artifacts: %w", err)
 	}
+	artifactsJSON = sanitizeJSONBytes(artifactsJSON)
 
 	// Обновляем только artifacts, не трогая другие поля
 	gen, err := p.state.GenerationStore.Get(ctx, p.state.GenerationID)
@@ -244,6 +245,7 @@ func (p *Pipeline) saveArtifacts(ctx context.Context) error {
 	var logsJSON []byte
 	if p.state.Logs != nil && *p.state.Logs != nil {
 		logsJSON, _ = json.Marshal(*p.state.Logs)
+		logsJSON = sanitizeJSONBytes(logsJSON)
 	}
 
 	// Преобразуем sql.NullString в *string

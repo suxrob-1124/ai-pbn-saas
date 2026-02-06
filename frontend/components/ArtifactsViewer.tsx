@@ -613,6 +613,12 @@ export function LogsViewer({ logs }: { logs?: any }) {
   // Всегда показываем блок логов, даже если они пустые (для завершенных генераций)
   const [levelFilter, setLevelFilter] = useState<"all" | "error" | "warn" | "info" | "success">("all");
   const [viewMode, setViewMode] = useState<"formatted" | "raw">("formatted");
+  const LEVEL_LABELS: Record<string, string> = {
+    error: "ОШИБКА",
+    warn: "ПРЕДУПР",
+    info: "ИНФО",
+    success: "УСПЕХ"
+  };
 
   const items = useMemo(() => {
     if (!logs) return [];
@@ -686,10 +692,10 @@ export function LogsViewer({ logs }: { logs?: any }) {
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <div className="flex items-center gap-1">
             <FilterBadge label="Все" active={levelFilter === "all"} onClick={() => setLevelFilter("all")} />
-            <FilterBadge label="Error" active={levelFilter === "error"} onClick={() => setLevelFilter("error")} tone="error" />
-            <FilterBadge label="Warn" active={levelFilter === "warn"} onClick={() => setLevelFilter("warn")} tone="warn" />
-            <FilterBadge label="Info" active={levelFilter === "info"} onClick={() => setLevelFilter("info")} tone="info" />
-            <FilterBadge label="Success" active={levelFilter === "success"} onClick={() => setLevelFilter("success")} tone="success" />
+            <FilterBadge label="Ошибка" active={levelFilter === "error"} onClick={() => setLevelFilter("error")} tone="error" />
+            <FilterBadge label="Предупреждения" active={levelFilter === "warn"} onClick={() => setLevelFilter("warn")} tone="warn" />
+            <FilterBadge label="Инфо" active={levelFilter === "info"} onClick={() => setLevelFilter("info")} tone="info" />
+            <FilterBadge label="Успех" active={levelFilter === "success"} onClick={() => setLevelFilter("success")} tone="success" />
           </div>
           <div className="flex items-center gap-1">
             <button
@@ -700,7 +706,7 @@ export function LogsViewer({ logs }: { logs?: any }) {
                   : "border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-200"
               }`}
             >
-              Формат
+              Форматированный
             </button>
             <button
               onClick={() => setViewMode("raw")}
@@ -710,7 +716,7 @@ export function LogsViewer({ logs }: { logs?: any }) {
                   : "border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-200"
               }`}
             >
-              Сырой
+              Сырый
             </button>
           </div>
         </div>
@@ -735,7 +741,7 @@ export function LogsViewer({ logs }: { logs?: any }) {
                 )}
                 {line.level && (
                   <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${levelClass(line.level)}`}>
-                    {line.level}
+                    {LEVEL_LABELS[line.level] || line.level}
                   </span>
                 )}
                 {line.step && (

@@ -86,7 +86,7 @@ export default function MePage() {
     setEmailError(null);
     try {
       await post("/api/email/change/request", { newEmail });
-      setEmailStatus("Письмо для смены email отправлено");
+      setEmailStatus("Письмо для смены почты отправлено");
     } catch (err: any) {
       setEmailError(err?.message || "Не удалось отправить письмо");
     } finally {
@@ -143,7 +143,7 @@ export default function MePage() {
         <div className="text-slate-500 dark:text-slate-400">Загрузка...</div>
       ) : me ? (
         <div className="space-y-4">
-          <div className="text-slate-800 dark:text-slate-300">Email: {me.email}</div>
+          <div className="text-slate-800 dark:text-slate-300">Почта: {me.email}</div>
 
           <div className="rounded-lg border border-slate-200 dark:border-slate-800 p-4 space-y-3">
             <div className="text-sm font-semibold">Основные данные</div>
@@ -179,9 +179,9 @@ export default function MePage() {
           </div>
 
           <div className="rounded-lg border border-slate-200 dark:border-slate-800 p-4 space-y-3">
-            <div className="text-sm font-semibold">Смена email</div>
+            <div className="text-sm font-semibold">Смена почты</div>
             <div className="space-y-1">
-              <label className="text-xs text-slate-500 dark:text-slate-400">Новый email</label>
+              <label className="text-xs text-slate-500 dark:text-slate-400">Новая почта</label>
               <input
                 className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
                 type="email"
@@ -200,7 +200,7 @@ export default function MePage() {
               {emailSending ? "Отправляем..." : "Отправить подтверждение"}
             </button>
             <div className="text-xs text-slate-500 dark:text-slate-400">
-              После перехода по ссылке из письма email обновится, а сессия будет перевыпущена автоматически.
+              После перехода по ссылке из письма почта обновится, а сессия будет перевыпущена автоматически.
             </div>
           </div>
 

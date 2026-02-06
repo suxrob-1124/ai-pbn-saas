@@ -22,20 +22,27 @@ type Project struct {
 }
 
 type Domain struct {
-	ID                string
-	ProjectID         string
-	ServerID          sql.NullString
-	URL               string
-	MainKeyword       string
-	TargetCountry     string
-	TargetLanguage    string
-	ExcludeDomains    sql.NullString
-	SpecificBlacklist []byte
-	Status            string
-	LastGenerationID  sql.NullString
-	PublishedAt       sql.NullTime
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	ID                 string
+	ProjectID          string
+	ServerID           sql.NullString
+	URL                string
+	MainKeyword        string
+	TargetCountry      string
+	TargetLanguage     string
+	ExcludeDomains     sql.NullString
+	SpecificBlacklist  []byte
+	Status             string
+	LastGenerationID   sql.NullString
+	PublishedAt        sql.NullTime
+	LinkAnchorText     sql.NullString
+	LinkAcceptorURL    sql.NullString
+	LinkStatus         sql.NullString
+	LinkUpdatedAt      sql.NullTime
+	LinkLastTaskID     sql.NullString
+	LinkFilePath       sql.NullString
+	LinkAnchorSnapshot sql.NullString
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 type Generation struct {
@@ -189,7 +196,7 @@ func (s *DomainStore) Create(ctx context.Context, d Domain) error {
 }
 
 func (s *DomainStore) ListByProject(ctx context.Context, projectID string) ([]Domain, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, published_at, created_at, updated_at FROM domains WHERE project_id=$1 ORDER BY updated_at DESC`, projectID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, published_at, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, created_at, updated_at FROM domains WHERE project_id=$1 ORDER BY updated_at DESC`, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +205,7 @@ func (s *DomainStore) ListByProject(ctx context.Context, projectID string) ([]Do
 	for rows.Next() {
 		var d Domain
 		var sb sql.NullString
-		if err := rows.Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.PublishedAt, &d.CreatedAt, &d.UpdatedAt); err != nil {
+		if err := rows.Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.PublishedAt, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.CreatedAt, &d.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if sb.Valid {
@@ -212,8 +219,8 @@ func (s *DomainStore) ListByProject(ctx context.Context, projectID string) ([]Do
 func (s *DomainStore) Get(ctx context.Context, id string) (Domain, error) {
 	var d Domain
 	var sb sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, published_at, created_at, updated_at FROM domains WHERE id=$1`, id).
-		Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.PublishedAt, &d.CreatedAt, &d.UpdatedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, published_at, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, created_at, updated_at FROM domains WHERE id=$1`, id).
+		Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.PublishedAt, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.CreatedAt, &d.UpdatedAt)
 	if err != nil {
 		return Domain{}, err
 	}
@@ -258,6 +265,39 @@ func (s *DomainStore) SetLastGeneration(ctx context.Context, id, genID string) e
 func (s *DomainStore) UpdateExtras(ctx context.Context, id, country, language string, exclude, server sql.NullString) (bool, error) {
 	res, err := s.db.ExecContext(ctx, `UPDATE domains SET target_country=$1, target_language=$2, exclude_domains=$3, server_id=$4, updated_at=NOW() WHERE id=$5`,
 		country, language, nullableString(exclude), nullableString(server), id)
+	if err != nil {
+		return false, err
+	}
+	rows, _ := res.RowsAffected()
+	return rows > 0, nil
+}
+
+func (s *DomainStore) UpdateLinkState(ctx context.Context, id string, status string, lastTaskID string, filePath string, anchorSnapshot string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE domains
+		SET link_status=$1,
+		    link_last_task_id=$2,
+		    link_file_path=$3,
+		    link_anchor_snapshot=$4,
+		    link_updated_at=NOW(),
+		    updated_at=NOW()
+		WHERE id=$5`,
+		status,
+		nullableString(nullString(&lastTaskID)),
+		nullableString(nullString(&filePath)),
+		nullableString(nullString(&anchorSnapshot)),
+		id,
+	)
+	return err
+}
+
+func (s *DomainStore) UpdateLinkSettings(ctx context.Context, id string, anchorText, acceptorURL sql.NullString) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE domains
+		SET link_anchor_text=$1,
+		    link_acceptor_url=$2,
+		    link_updated_at=NOW(),
+		    updated_at=NOW()
+		WHERE id=$3`,
+		nullableString(anchorText), nullableString(acceptorURL), id)
 	if err != nil {
 		return false, err
 	}

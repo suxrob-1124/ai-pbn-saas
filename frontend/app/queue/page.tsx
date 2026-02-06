@@ -9,6 +9,7 @@ import { FiClock, FiPlay, FiCheck, FiAlertTriangle, FiRefreshCw, FiPause, FiX } 
 type Generation = {
   id: string;
   domain_id: string;
+  domain_url?: string;
   status: string;
   progress: number;
   created_at?: string;
@@ -113,9 +114,13 @@ export default function QueuePage() {
                 <tr key={g.id}>
                   <td className="py-3 pr-4 font-mono text-xs">{g.id.slice(0, 8)}</td>
                   <td className="py-3 pr-4">
-                    <Link href={`/domains/${g.domain_id}`} className="text-indigo-600 hover:underline">
-                      {g.domain_id.slice(0, 12)}…
-                    </Link>
+                    {g.domain_url ? (
+                      <Link href={`/domains/${g.domain_id}`} className="text-indigo-600 hover:underline">
+                        {g.domain_url}
+                      </Link>
+                    ) : (
+                      <span className="text-slate-500 dark:text-slate-400">—</span>
+                    )}
                   </td>
                   <td className="py-3 pr-4">
                     <StatusBadge status={g.status} />

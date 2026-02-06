@@ -45,6 +45,81 @@ func TestMigrationStatementsIncludeFileStorage(t *testing.T) {
 	expectContains(t, stmts, "ALTER TABLE domains ADD COLUMN IF NOT EXISTS total_size_bytes BIGINT DEFAULT 0;")
 }
 
+func TestMigrationStatementsIncludeGenerationSchedules(t *testing.T) {
+	t.Parallel()
+
+	stmts := migrationStatements()
+	expectContains(t, stmts, "CREATE TABLE IF NOT EXISTS generation_schedules")
+	expectContains(t, stmts, "CREATE INDEX IF NOT EXISTS idx_gen_schedules_project ON generation_schedules(project_id);")
+	expectContains(t, stmts, "CREATE INDEX IF NOT EXISTS idx_gen_schedules_active ON generation_schedules(is_active);")
+}
+
+func TestMigrationStatementsIncludeScheduleMetadata(t *testing.T) {
+	t.Parallel()
+
+	stmts := migrationStatements()
+	expectContains(t, stmts, "ALTER TABLE generation_schedules ADD COLUMN IF NOT EXISTS last_run_at TIMESTAMPTZ;")
+	expectContains(t, stmts, "ALTER TABLE generation_schedules ADD COLUMN IF NOT EXISTS next_run_at TIMESTAMPTZ;")
+	expectContains(t, stmts, "ALTER TABLE generation_schedules ADD COLUMN IF NOT EXISTS timezone TEXT;")
+}
+
+func TestMigrationStatementsIncludeGenerationQueue(t *testing.T) {
+	t.Parallel()
+
+	stmts := migrationStatements()
+	expectContains(t, stmts, "CREATE TABLE IF NOT EXISTS generation_queue")
+	expectContains(t, stmts, "CREATE INDEX IF NOT EXISTS idx_gen_queue_scheduled ON generation_queue(scheduled_for, status);")
+	expectContains(t, stmts, "CREATE INDEX IF NOT EXISTS idx_gen_queue_domain ON generation_queue(domain_id);")
+	expectContains(t, stmts, "CREATE INDEX IF NOT EXISTS idx_gen_queue_status ON generation_queue(status);")
+}
+
+func TestMigrationStatementsIncludeLinkTasks(t *testing.T) {
+	t.Parallel()
+
+	stmts := migrationStatements()
+	expectContains(t, stmts, "CREATE TABLE IF NOT EXISTS link_tasks")
+	expectContains(t, stmts, "CREATE INDEX IF NOT EXISTS idx_link_tasks_domain ON link_tasks(domain_id);")
+	expectContains(t, stmts, "CREATE INDEX IF NOT EXISTS idx_link_tasks_status ON link_tasks(status);")
+	expectContains(t, stmts, "CREATE INDEX IF NOT EXISTS idx_link_tasks_scheduled ON link_tasks(scheduled_for, status);")
+}
+
+func TestMigrationStatementsIncludeLinkSchedules(t *testing.T) {
+	t.Parallel()
+
+	stmts := migrationStatements()
+	expectContains(t, stmts, "CREATE TABLE IF NOT EXISTS link_schedules")
+}
+
+func TestMigrationStatementsIncludeLinkSchedulesMetadata(t *testing.T) {
+	t.Parallel()
+
+	stmts := migrationStatements()
+	expectContains(t, stmts, "ALTER TABLE link_schedules ADD COLUMN IF NOT EXISTS last_run_at TIMESTAMPTZ;")
+	expectContains(t, stmts, "ALTER TABLE link_schedules ADD COLUMN IF NOT EXISTS next_run_at TIMESTAMPTZ;")
+	expectContains(t, stmts, "ALTER TABLE link_schedules ADD COLUMN IF NOT EXISTS timezone TEXT;")
+}
+
+func TestMigrationStatementsIncludeScheduleUniq(t *testing.T) {
+	t.Parallel()
+
+	stmts := migrationStatements()
+	expectContains(t, stmts, "CREATE UNIQUE INDEX IF NOT EXISTS uniq_gen_schedules_project ON generation_schedules(project_id);")
+	expectContains(t, stmts, "CREATE UNIQUE INDEX IF NOT EXISTS uniq_link_schedules_project ON link_schedules(project_id);")
+}
+
+func TestMigrationStatementsIncludeDomainLinkFields(t *testing.T) {
+	t.Parallel()
+
+	stmts := migrationStatements()
+	expectContains(t, stmts, "ALTER TABLE domains ADD COLUMN IF NOT EXISTS link_anchor_text TEXT;")
+	expectContains(t, stmts, "ALTER TABLE domains ADD COLUMN IF NOT EXISTS link_acceptor_url TEXT;")
+	expectContains(t, stmts, "ALTER TABLE domains ADD COLUMN IF NOT EXISTS link_status TEXT;")
+	expectContains(t, stmts, "ALTER TABLE domains ADD COLUMN IF NOT EXISTS link_updated_at TIMESTAMPTZ;")
+	expectContains(t, stmts, "ALTER TABLE domains ADD COLUMN IF NOT EXISTS link_last_task_id TEXT;")
+	expectContains(t, stmts, "ALTER TABLE domains ADD COLUMN IF NOT EXISTS link_file_path TEXT;")
+	expectContains(t, stmts, "ALTER TABLE domains ADD COLUMN IF NOT EXISTS link_anchor_snapshot TEXT;")
+}
+
 func expectContains(t *testing.T, stmts []string, needle string) {
 	t.Helper()
 	for _, stmt := range stmts {

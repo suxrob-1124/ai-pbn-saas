@@ -37,13 +37,13 @@ export const PROMPT_VARIABLES = [
   },
   {
     name: "image_style_id",
-    description: "ID стиля изображений (1-4): 1=Claymorphism, 2=Инфографика, 3=Фотореализм, 4=Flat design",
+    description: "ID стиля изображений (1-4): 1=Клейморфизм, 2=Инфографика, 3=Фотореализм, 4=Плоский дизайн",
     example: "{{ image_style_id }}",
     usage: "Используется в промпте technical_spec для выбора визуального стиля",
   },
   {
     name: "header_element_id",
-    description: "ID элемента шапки (1-4): 1=Нет, 2=Поиск, 3=CTA, 4=Контакты",
+    description: "ID элемента шапки (1-4): 1=Нет, 2=Поиск, 3=CTA (призыв к действию), 4=Контакты",
     example: "{{ header_element_id }}",
     usage: "Используется в промпте technical_spec для выбора элемента в шапке сайта",
   },
@@ -101,7 +101,7 @@ export function PromptVariablesHelp() {
         </div>
         <div className="p-6 space-y-4">
           <div className="text-sm text-slate-600 dark:text-slate-400 mb-4">
-            Используйте переменные в формате <code className="px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 rounded text-xs">{"{{ variable_name }}"}</code> в тексте промпта. 
+            Используйте переменные в формате <code className="px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 rounded text-xs">{"{{ имя_переменной }}"}</code> в тексте промпта. 
             Они будут автоматически заменены на соответствующие данные во время генерации.
           </div>
           {PROMPT_VARIABLES.map((variable) => (
@@ -150,4 +150,3 @@ HTML контент:
     </div>
   );
 }
-

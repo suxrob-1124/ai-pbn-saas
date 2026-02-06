@@ -56,7 +56,7 @@ func TestE2E_RegisterVerifyReset(t *testing.T) {
 		Logger:             nil,
 	})
 	logger := zap.NewNop().Sugar()
-	server := New(cfg, svc, logger, newStubProjectStore(), nil, newStubDomainStore(), newStubGenerationStore(), newStubPromptStore(), nil, nil, newStubEnqueuer())
+	server := New(cfg, svc, logger, newStubProjectStore(), nil, newStubDomainStore(), newStubGenerationStore(), newStubPromptStore(), newStubScheduleStore(), newStubLinkScheduleStore(), nil, nil, nil, newStubLinkTaskStore(), newStubGenQueueStore(), newStubEnqueuer())
 	handler := server.Handler()
 
 	client := &http.Client{}
@@ -162,7 +162,7 @@ func TestE2E_RefreshLogoutChangeEmail(t *testing.T) {
 		Logger:             nil,
 	})
 	logger := zap.NewNop().Sugar()
-	server := New(cfg, svc, logger, newStubProjectStore(), nil, newStubDomainStore(), newStubGenerationStore(), newStubPromptStore(), nil, nil, newStubEnqueuer())
+	server := New(cfg, svc, logger, newStubProjectStore(), nil, newStubDomainStore(), newStubGenerationStore(), newStubPromptStore(), newStubScheduleStore(), newStubLinkScheduleStore(), nil, nil, nil, newStubLinkTaskStore(), newStubGenQueueStore(), newStubEnqueuer())
 	handler := server.Handler()
 	client := &http.Client{}
 	jar, _ := cookiejar.New(nil)

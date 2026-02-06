@@ -51,7 +51,7 @@
 
 ### Sprint 2: Schedulers
 
-- [ ] **Миграция 004: Create generation_schedules table**
+- [x] **Миграция 004: Create generation_schedules table**
   ```sql
   CREATE TABLE IF NOT EXISTS generation_schedules (
     id TEXT PRIMARY KEY,
@@ -69,7 +69,7 @@
   CREATE INDEX idx_gen_schedules_active ON generation_schedules(is_active);
   ```
 
-- [ ] **Миграция 005: Create generation_queue table**
+- [x] **Миграция 005: Create generation_queue table**
   ```sql
   CREATE TABLE IF NOT EXISTS generation_queue (
     id TEXT PRIMARY KEY,
@@ -87,7 +87,7 @@
   CREATE INDEX idx_gen_queue_status ON generation_queue(status);
   ```
 
-- [ ] **Миграция 006: Create link_tasks table**
+- [x] **Миграция 006: Create link_tasks table**
   ```sql
   CREATE TABLE IF NOT EXISTS link_tasks (
     id TEXT PRIMARY KEY,
@@ -109,7 +109,7 @@
   CREATE INDEX idx_link_tasks_scheduled ON link_tasks(scheduled_for, status);
   ```
 
-- [ ] **Миграция 007: Create link_schedules table**
+- [x] **Миграция 007: Create link_schedules table**
   ```sql
   CREATE TABLE IF NOT EXISTS link_schedules (
     id TEXT PRIMARY KEY,
@@ -258,7 +258,7 @@
 
 #### Generation Scheduler
 
-- [ ] **Создать Store для schedules**
+- [x] **Создать Store для schedules**
   - Файл: `internal/store/sqlstore/schedules.go`
   - Интерфейс `ScheduleStore`:
     - `Create(ctx, schedule) error`
@@ -268,7 +268,7 @@
     - `Delete(ctx, scheduleID) error`
     - `ListActive(ctx) ([]Schedule, error)`
 
-- [ ] **Создать Store для generation_queue**
+- [x] **Создать Store для generation_queue**
   - Файл: `internal/store/sqlstore/gen_queue.go`
   - Интерфейс `GenQueueStore`:
     - `Enqueue(ctx, queueItem) error`
@@ -276,18 +276,18 @@
     - `MarkProcessed(ctx, itemID, status, error) error`
     - `ListByDomain(ctx, domainID) ([]QueueItem, error)`
 
-- [ ] **API для Generation Schedules**
+- [x] **API для Generation Schedules**
   - `POST /api/projects/:id/schedules` - создать
   - `GET /api/projects/:id/schedules` - список
   - `PATCH /api/projects/:id/schedules/:scheduleId` - обновить
   - `DELETE /api/projects/:id/schedules/:scheduleId` - удалить
   - `POST /api/projects/:id/schedules/:scheduleId/trigger` - запуск вручную
 
-- [ ] **API для Queue**
+- [x] **API для Queue**
   - `GET /api/projects/:id/queue` - просмотр очереди
   - `DELETE /api/queue/:itemId` - удалить из очереди
 
-- [ ] **Scheduler Worker**
+- [x] **Scheduler Worker**
   - Файл: `cmd/scheduler/main.go` или расширить `cmd/worker/`
   - Регистрация Cron задач через Asynq:
     - Каждую минуту проверять `generation_queue`
@@ -302,7 +302,7 @@
 
 #### Link Building
 
-- [ ] **Создать модуль linkbuilder**
+- [x] **Создать модуль linkbuilder**
   - Файл: `internal/linkbuilder/linkbuilder.go`
   - Интерфейс:
     - `ProcessTask(ctx, taskID) error`
@@ -310,7 +310,7 @@
     - `InsertLink(htmlContent, position, anchorText, targetURL) string`
     - `GenerateContent(ctx, anchorText, targetURL, context) (string, error)`
 
-- [ ] **Создать Store для link_tasks**
+- [x] **Создать Store для link_tasks**
   - Файл: `internal/store/sqlstore/link_tasks.go`
   - Интерфейс `LinkTaskStore`:
     - `Create(ctx, task) error`
@@ -320,7 +320,7 @@
     - `Update(ctx, taskID, updates) error`
     - `Delete(ctx, taskID) error`
 
-- [ ] **API для Link Tasks**
+- [x] **API для Link Tasks**
   - `POST /api/domains/:id/links` - создать задачу
   - `POST /api/domains/:id/links/import` - CSV импорт
   - `GET /api/domains/:id/links` - список задач домена
@@ -329,7 +329,7 @@
   - `DELETE /api/links/:id` - удалить
   - `POST /api/links/:id/retry` - повторить задачу
 
-- [ ] **Link Building Worker**
+- [x] **Link Building Worker**
   - Файл: `internal/worker/link_worker.go`
   - Asynq task: `tasks.ProcessLinkTask`
   - Логика:
@@ -349,7 +349,7 @@
        - Статус: `generated`
     7. Если ошибка: статус `failed`, сохранить error_message
 
-- [ ] **Scheduler для Link Tasks**
+- [x] **Scheduler для Link Tasks**
   - Cron задача: каждую минуту
   - Берет tasks где `scheduled_for <= NOW()` и `status = 'pending'`
   - Ставит в Asynq очередь: `tasks.ProcessLinkTask`
@@ -438,6 +438,203 @@
     - `saveFile(domainId, path, content)`
     - `getFileHistory(fileId)`
 
+### Sprint 2: Scheduler & Link Building UI
+
+- [x] **API клиенты: Schedules/Queue/Link Tasks**
+  - Файлы: `lib/schedulesApi.ts`, `lib/queueApi.ts`, `lib/linkTasksApi.ts`
+  - Методы: CRUD Schedules, Queue list/remove, Link Tasks CRUD/import/retry
+
+- [x] **Типы DTO для Scheduler/Link Tasks**
+  - Файлы: `types/schedules.ts`, `types/queue.ts`, `types/linkTasks.ts` (или общий `types/api.ts`)
+
+- [x] **Навигация/вкладки**
+  - Проект: вкладки `Schedules` и `Queue`
+  - Домен: вкладка `Links`
+
+- [x] **UI состояния для Scheduler/Links**
+  - Loading/empty/error/permission denied
+  - Toast уведомления для create/update/delete/trigger/retry
+
+#### Scheduler UI
+
+- [x] **Вкладка Schedules на странице проекта**
+  - Файл: `app/projects/[id]/page.tsx` - добавить вкладку
+  - Компоненты:
+    - `ScheduleList` - таблица расписаний
+    - `ScheduleForm` - форма создания/редактирования
+    - `ScheduleTrigger` - кнопка запуска вручную
+
+- [x] **Компонент: ScheduleForm**
+  - Файл: `components/ScheduleForm.tsx`
+  - Поля:
+    - Name (text input)
+    - Strategy (select: immediate, daily, weekly, custom)
+    - Config (условно показываем разные поля):
+      - daily: limit (number), start time (time picker)
+      - weekly: limit (number), day (select), time (time picker)
+      - custom: cron expression (text with hint)
+    - Active (checkbox)
+  - Валидация:
+    - Проверка cron выражения (библиотека cron-parser)
+    - Limit > 0
+
+- [x] **Компонент: ScheduleList**
+  - Файл: `components/ScheduleList.tsx`
+  - Таблица:
+    - Название, стратегия, статус (active/inactive)
+    - Кнопки: Edit, Delete, Trigger Now
+  - Модалка подтверждения удаления
+
+- [x] **Страница: /projects/[id]/queue**
+  - Файл: `app/projects/[id]/queue/page.tsx`
+  - Таблица generation_queue:
+    - Домен, время запуска, статус, приоритет
+    - Фильтры: по статусу, по дате
+    - Кнопка "Remove from Queue"
+
+#### Link Building UI
+
+- [x] **Вкладка Links на странице домена**
+  - Файл: `app/domains/[id]/page.tsx` - добавить вкладку
+  - Компоненты:
+    - `LinkTaskList` - таблица задач
+    - `LinkTaskForm` - форма добавления
+    - `CSVImport` - drag & drop CSV
+
+- [ ] **Логи ссылок на странице домена**
+  - Вкладка «Логи ссылок» с детальными шагами
+  - Diff‑вставка (до/после) на основе `found_location`
+  - Кнопка «Открыть файл» и «Открыть в редакторе» (когда появится file‑editor маршрут)
+  - Показ логов воркера (если API начнёт отдавать)
+
+- [x] **Компонент: LinkTaskForm**
+  - Файл: `components/LinkTaskForm.tsx`
+  - Поля:
+    - Anchor Text (text input)
+    - Target URL (URL input с валидацией)
+    - Scheduled For (datetime picker)
+  - Кнопки: Save, Save & Add Another
+
+- [x] **Компонент: LinkTaskList**
+  - Файл: `components/LinkTaskList.tsx`
+  - Таблица:
+    - Анкор, URL, статус, время
+    - Цветовые индикаторы статуса:
+      - pending: серый
+      - searching: синий
+      - inserted: зеленый
+      - generated: желтый
+      - failed: красный
+  - Фильтры: по статусу
+  - Кнопки для каждого task: Retry, Edit, Delete
+  - Массовые действия: Bulk Retry, Bulk Delete
+
+- [x] **Компонент: CSVImport**
+  - Файл: `components/CSVImport.tsx`
+  - Drag & drop зона
+  - Парсинг CSV:
+    - Формат: `anchor_text,target_url,scheduled_for`
+    - Валидация каждой строки
+  - Preview перед импортом
+  - Кнопка "Import All"
+
+### Sprint 3: Index Monitoring UI
+
+- [ ] **API клиент для Index Checks**
+  - Файл: `lib/indexChecksApi.ts`
+  - Методы:
+    - `listByDomain(domainId, filters)` → `GET /api/domains/:id/index-checks`
+    - `runManual(domainId)` → `POST /api/domains/:id/index-checks`
+    - `listAdmin(filters)` → `GET /api/admin/index-checks`
+    - `listFailed(filters)` → `GET /api/admin/index-checks/failed`
+  - Фильтры (query params):
+    - `status`, `isIndexed`, `from`, `to`, `limit`, `offset`
+    - `domainId` (только для admin списка)
+
+- [ ] **Типы DTO для Index Checks**
+  - Файл: `types/indexChecks.ts` (или общий `types/api.ts`)
+  - `IndexCheckStatus`: `pending | checking | success | failed_investigation`
+  - `IndexCheck`:
+    - `id`, `domainId`, `domainName?`, `checkDate`
+    - `status`, `isIndexed`, `attempts`
+    - `lastAttemptAt`, `nextRetryAt`, `errorMessage?`
+    - `completedAt`, `createdAt`
+  - `IndexChecksFilters`, `IndexChecksResponse`
+
+- [ ] **Навигация Monitoring**
+  - Добавить пункт в меню: `Monitoring → Indexing`
+  - Права: admin-only для глобального списка
+  - Ссылки в домене: "Index checks" → фильтр по домену
+
+- [ ] **UI состояния для Index Monitoring**
+  - Loading/empty/error/permission denied
+  - Skeleton для таблицы и статистики
+
+#### Index Monitoring Dashboard
+
+- [ ] **Страница: /monitoring/indexing**
+  - Файл: `app/monitoring/indexing/page.tsx`
+  - URL query синхронизация:
+    - `status`, `from`, `to`, `domainId`, `isIndexed`
+  - Компоненты:
+    - `IndexFiltersBar` - панель фильтров
+    - `IndexCalendar` - календарь с индикаторами
+    - `IndexTable` - таблица проверок
+    - `IndexStats` - статистика и графики
+    - `FailedChecksAlert` - алерты
+
+- [ ] **Компонент: IndexFiltersBar**
+  - Файл: `components/IndexFiltersBar.tsx`
+  - Поля:
+    - Статус (multi-select)
+    - Диапазон дат
+    - Домен (search/select, только для admin)
+    - Флаг `isIndexed` (all/true/false)
+  - Кнопки: `Apply`, `Reset`, `Refresh`
+
+- [ ] **Компонент: IndexCalendar**
+  - Файл: `components/IndexCalendar.tsx`
+  - Библиотека: react-calendar или кастомный
+  - День = ячейка с индикатором:
+    - Зеленый: indexed = true
+    - Красный: indexed = false
+    - Желтый: checking/pending
+    - Серый: failed_investigation
+  - Tooltip при hover: детали проверки
+  - Click по дню → фильтр таблицы по дате
+
+- [ ] **Компонент: IndexTable**
+  - Файл: `components/IndexTable.tsx`
+  - Таблица:
+    - Домен, дата, статус, attempts, isIndexed, lastAttemptAt, nextRetryAt
+    - Error message (tooltip/expand)
+  - Фильтры:
+    - По домену (select/autocomplete)
+    - По статусу (multi-select)
+    - По дате (date range picker)
+  - Пагинация
+  - Сортировка по колонкам
+  - Row actions:
+    - `Run now` (POST manual)
+    - `Open domain` (ссылка на домен)
+
+- [ ] **Компонент: IndexStats**
+  - Файл: `components/IndexStats.tsx`
+  - Метрики:
+    - Процент индексации за последние 30 дней
+    - Среднее количество попыток до успеха
+    - Количество failed_investigation за неделю
+  - Графики (библиотека recharts):
+    - Line chart: процент индексации по дням
+    - Bar chart: количество проверок в день
+  - Переключатель периода: 7d / 30d / 90d
+
+- [ ] **Компонент: FailedChecksAlert**
+  - Файл: `components/FailedChecksAlert.tsx`
+  - Alert banner вверху страницы
+  - Показывать количество failed_investigation
+  - Кнопка "View Details" → фильтр таблицы
+
 ### Sprint 4: UI Integration
 
 #### File Editor Page
@@ -476,127 +673,7 @@
 
 #### Scheduler UI
 
-- [ ] **Вкладка Schedules на странице проекта**
-  - Файл: `app/projects/[id]/page.tsx` - добавить вкладку
-  - Компоненты:
-    - `ScheduleList` - таблица расписаний
-    - `ScheduleForm` - форма создания/редактирования
-    - `ScheduleTrigger` - кнопка запуска вручную
-
-- [ ] **Компонент: ScheduleForm**
-  - Файл: `components/ScheduleForm.tsx`
-  - Поля:
-    - Name (text input)
-    - Strategy (select: immediate, daily, weekly, custom)
-    - Config (условно показываем разные поля):
-      - daily: limit (number), start time (time picker)
-      - weekly: limit (number), day (select), time (time picker)
-      - custom: cron expression (text with hint)
-    - Active (checkbox)
-  - Валидация:
-    - Проверка cron выражения (библиотека cron-parser)
-    - Limit > 0
-
-- [ ] **Компонент: ScheduleList**
-  - Файл: `components/ScheduleList.tsx`
-  - Таблица:
-    - Название, стратегия, статус (active/inactive)
-    - Кнопки: Edit, Delete, Trigger Now
-  - Модалка подтверждения удаления
-
-- [ ] **Страница: /projects/[id]/queue**
-  - Файл: `app/projects/[id]/queue/page.tsx`
-  - Таблица generation_queue:
-    - Домен, время запуска, статус, приоритет
-    - Фильтры: по статусу, по дате
-    - Кнопка "Remove from Queue"
-
 #### Link Building UI
-
-- [ ] **Вкладка Links на странице домена**
-  - Файл: `app/domains/[id]/page.tsx` - добавить вкладку
-  - Компоненты:
-    - `LinkTaskList` - таблица задач
-    - `LinkTaskForm` - форма добавления
-    - `CSVImport` - drag & drop CSV
-
-- [ ] **Компонент: LinkTaskForm**
-  - Файл: `components/LinkTaskForm.tsx`
-  - Поля:
-    - Anchor Text (text input)
-    - Target URL (URL input с валидацией)
-    - Scheduled For (datetime picker)
-  - Кнопки: Save, Save & Add Another
-
-- [ ] **Компонент: LinkTaskList**
-  - Файл: `components/LinkTaskList.tsx`
-  - Таблица:
-    - Анкор, URL, статус, время
-    - Цветовые индикаторы статуса:
-      - pending: серый
-      - searching: синий
-      - inserted: зеленый
-      - generated: желтый
-      - failed: красный
-  - Фильтры: по статусу
-  - Кнопки для каждого task: Retry, Edit, Delete
-  - Массовые действия: Bulk Retry, Bulk Delete
-
-- [ ] **Компонент: CSVImport**
-  - Файл: `components/CSVImport.tsx`
-  - Drag & drop зона
-  - Парсинг CSV:
-    - Формат: `anchor_text,target_url,scheduled_for`
-    - Валидация каждой строки
-  - Preview перед импортом
-  - Кнопка "Import All"
-
-#### Index Monitoring Dashboard
-
-- [ ] **Страница: /monitoring/indexing**
-  - Файл: `app/monitoring/indexing/page.tsx`
-  - Компоненты:
-    - `IndexCalendar` - календарь с индикаторами
-    - `IndexTable` - таблица проверок
-    - `IndexStats` - статистика и графики
-    - `FailedChecksAlert` - алерты
-
-- [ ] **Компонент: IndexCalendar**
-  - Файл: `components/IndexCalendar.tsx`
-  - Библиотека: react-calendar или кастомный
-  - День = ячейка с индикатором:
-    - Зеленый: indexed = true
-    - Красный: indexed = false
-    - Желтый: checking/pending
-    - Серый: failed_investigation
-  - Tooltip при hover: детали проверки
-
-- [ ] **Компонент: IndexTable**
-  - Файл: `components/IndexTable.tsx`
-  - Таблица:
-    - Домен, дата, статус, попытки, результат, время последней попытки
-  - Фильтры:
-    - По домену (select/autocomplete)
-    - По статусу (multi-select)
-    - По дате (date range picker)
-  - Пагинация
-  - Сортировка по колонкам
-
-- [ ] **Компонент: IndexStats**
-  - Файл: `components/IndexStats.tsx`
-  - Метрики:
-    - Процент индексации за последние 30 дней
-    - Среднее количество попыток до успеха
-    - Количество failed_investigation за неделю
-  - Графики (библиотека recharts):
-    - Line chart: процент индексации по дням
-    - Bar chart: количество проверок в день
-
-- [ ] **Компонент: FailedChecksAlert**
-  - Файл: `components/FailedChecksAlert.tsx`
-  - Alert banner вверху страницы
-  - Показывать количество failed_investigation
-  - Кнопка "View Details" → фильтр таблицы
 
 #### Server Folder Browser (Admin)
 
@@ -634,16 +711,16 @@
 
 ### Sprint 2: Scheduler Tests
 
-- [ ] **Unit тесты для Scheduler Store**
+- [x] **Unit тесты для Scheduler Store**
   - CRUD операции
   - Получение активных расписаний
 
-- [ ] **Unit тесты для Link Builder**
+- [x] **Unit тесты для Link Builder**
   - Поиск анкора в HTML
   - Вставка ссылки
   - LLM генерация (mock)
 
-- [ ] **Integration тесты для Scheduler Worker**
+- [x] **Integration тесты для Scheduler Worker**
   - Постановка задач в очередь по времени
   - Обработка разных стратегий
 

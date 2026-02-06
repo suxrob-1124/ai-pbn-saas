@@ -287,7 +287,7 @@ export default function AdminPage() {
           <table className="min-w-full text-sm">
             <thead>
               <tr className="text-left text-xs uppercase text-slate-500 dark:text-slate-400">
-                <th className="py-2">Email</th>
+                <th className="py-2">Почта</th>
                 <th className="py-2">Роль</th>
                 <th className="py-2">Подтверждён</th>
                 <th className="py-2">Статус</th>
@@ -304,12 +304,12 @@ export default function AdminPage() {
                   <td className="py-2">
                     {user.email === me?.email ? (
                       <span className="text-sm text-slate-600 dark:text-slate-400">
-                        {user.role === "admin" ? "Admin" : "Manager"}
+                        {user.role === "admin" ? "Админ" : "Менеджер"}
                         <span className="ml-2 text-xs text-slate-400">(вы)</span>
                       </span>
                     ) : user.role === "admin" ? (
                       <span className="text-sm text-slate-600 dark:text-slate-400">
-                        Admin
+                        Админ
                         <span className="ml-2 text-xs text-slate-400">(нельзя изменить)</span>
                       </span>
                     ) : (
@@ -318,15 +318,15 @@ export default function AdminPage() {
                       value={user.role}
                       onChange={(e) => handleRoleChange(user.email, e.target.value)}
                     >
-                      <option value="manager">Manager</option>
-                      <option value="admin">Admin</option>
+                      <option value="manager">Менеджер</option>
+                      <option value="admin">Админ</option>
                     </select>
                     )}
                   </td>
                   <td className="py-2">
                     {user.verified ? (
                       <span className="inline-flex items-center gap-1 text-emerald-600 text-xs">
-                        <FiCheckCircle /> email ок
+                        <FiCheckCircle /> почта подтверждена
                       </span>
                     ) : (
                       <span className="inline-flex items-center gap-1 text-slate-500 text-xs">
@@ -341,7 +341,7 @@ export default function AdminPage() {
                       </span>
                     ) : (
                       <span className="inline-flex items-center gap-1 text-amber-500 text-xs">
-                        <FiXCircle /> pending
+                        <FiXCircle /> ожидает
                       </span>
                     )}
                   </td>
@@ -507,7 +507,7 @@ export default function AdminPage() {
             <div className="text-sm font-semibold">Добавить правило</div>
             <input
               className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-              placeholder="code (unique)"
+              placeholder="код (уникальный)"
               value={newRule.code}
               onChange={(e) => setNewRule((r) => ({ ...r, code: e.target.value }))}
             />
@@ -524,15 +524,15 @@ export default function AdminPage() {
               onChange={(e) => setNewRule((r) => ({ ...r, description: e.target.value }))}
             />
             <div className="space-y-1">
-              <label className="text-xs text-slate-600 dark:text-slate-400">Severity</label>
+              <label className="text-xs text-slate-600 dark:text-slate-400">Критичность</label>
               <select
                 className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
                 value={newRule.severity}
                 onChange={(e) => setNewRule((r) => ({ ...r, severity: e.target.value }))}
               >
-                <option value="warn">warn</option>
-                <option value="error">error</option>
-                <option value="info">info</option>
+                <option value="warn">предупреждение</option>
+                <option value="error">ошибка</option>
+                <option value="info">инфо</option>
               </select>
             </div>
             <label className="inline-flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
@@ -828,15 +828,15 @@ function AuditRuleCard({
       />
       <div className="grid grid-cols-2 gap-2">
         <div className="space-y-1">
-          <label className="text-xs text-slate-600 dark:text-slate-400">Severity</label>
+          <label className="text-xs text-slate-600 dark:text-slate-400">Критичность</label>
           <select
             className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
             value={severity}
             onChange={(e) => setSeverity(e.target.value)}
           >
-            <option value="warn">warn</option>
-            <option value="error">error</option>
-            <option value="info">info</option>
+            <option value="warn">предупреждение</option>
+            <option value="error">ошибка</option>
+            <option value="info">инфо</option>
           </select>
         </div>
         <label className="inline-flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300 mt-6">
