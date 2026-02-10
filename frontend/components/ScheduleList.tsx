@@ -18,6 +18,7 @@ type ScheduleListProps = {
   error?: string | null;
   permissionDenied?: boolean;
   title?: string;
+  timezone?: string;
   onRefresh: () => void;
   onTrigger: (schedule: ScheduleDTO) => void;
   onToggle: (schedule: ScheduleDTO) => void;
@@ -31,6 +32,7 @@ export function ScheduleList({
   error,
   permissionDenied,
   title,
+  timezone,
   onRefresh,
   onTrigger,
   onToggle,
@@ -38,6 +40,24 @@ export function ScheduleList({
   onDelete
 }: ScheduleListProps) {
   const [pendingDelete, setPendingDelete] = useState<ScheduleDTO | null>(null);
+  const tz = (timezone || "").trim();
+  const formatDateTime = (value?: string) => {
+    if (!value) return "—";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "—";
+    if (tz) {
+      try {
+        return new Intl.DateTimeFormat("ru-RU", {
+          dateStyle: "short",
+          timeStyle: "medium",
+          timeZone: tz
+        }).format(date);
+      } catch {
+        // fallback to local
+      }
+    }
+    return date.toLocaleString();
+  };
 
   const handleConfirmDelete = () => {
     if (!pendingDelete) return;
@@ -93,11 +113,17 @@ export function ScheduleList({
                   <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">
                     {(() => {
                       const nextRun = sched.nextRunAt || (sched as { next_run_at?: string }).next_run_at;
-                      return nextRun ? new Date(nextRun).toLocaleString() : "—";
+                      return formatDateTime(nextRun);
                     })()}
                   </td>
                   <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">
-                    {new Date(sched.updatedAt).toLocaleString()}
+                    {(() => {
+                      const updated =
+                        (sched as { updatedAt?: string }).updatedAt ||
+                        (sched as { updated_at?: string }).updated_at ||
+                        sched.createdAt;
+                      return formatDateTime(updated);
+                    })()}
                   </td>
                   <td className="py-3 pr-4 text-right space-x-2">
                     <ScheduleTrigger onClick={() => onTrigger(sched)} disabled={loading} />

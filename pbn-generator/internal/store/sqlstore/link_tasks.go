@@ -16,6 +16,7 @@ type LinkTask struct {
 	AnchorText       string
 	TargetURL        string
 	ScheduledFor     time.Time
+	Action           string
 	Status           string
 	FoundLocation    sql.NullString
 	GeneratedContent sql.NullString
@@ -39,6 +40,7 @@ type LinkTaskFilters struct {
 type LinkTaskUpdates struct {
 	AnchorText       *string
 	TargetURL        *string
+	Action           *string
 	Status           *string
 	FoundLocation    *sql.NullString
 	GeneratedContent *sql.NullString
@@ -78,13 +80,14 @@ func (s *LinkTaskSQLStore) Create(ctx context.Context, task LinkTask) error {
 		return fmt.Errorf("failed to encode link task logs: %w", err)
 	}
 	_, err = s.db.ExecContext(ctx, `INSERT INTO link_tasks(
-			id, domain_id, anchor_text, target_url, scheduled_for, status, found_location, generated_content, error_message, attempts, created_by, created_at, completed_at, log_lines
-		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),$12,$13)`,
+			id, domain_id, anchor_text, target_url, scheduled_for, action, status, found_location, generated_content, error_message, attempts, created_by, created_at, completed_at, log_lines
+		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW(),$13,$14)`,
 		task.ID,
 		task.DomainID,
 		task.AnchorText,
 		task.TargetURL,
 		task.ScheduledFor,
+		normalizeLinkTaskAction(task.Action),
 		task.Status,
 		nullableString(task.FoundLocation),
 		nullableString(task.GeneratedContent),
@@ -104,7 +107,7 @@ func (s *LinkTaskSQLStore) Create(ctx context.Context, task LinkTask) error {
 func (s *LinkTaskSQLStore) Get(ctx context.Context, taskID string) (*LinkTask, error) {
 	var task LinkTask
 	var logLinesRaw []byte
-	if err := s.db.QueryRowContext(ctx, `SELECT id, domain_id, anchor_text, target_url, scheduled_for, status, found_location, generated_content, error_message, attempts, created_by, created_at, completed_at, log_lines
+	if err := s.db.QueryRowContext(ctx, `SELECT id, domain_id, anchor_text, target_url, scheduled_for, action, status, found_location, generated_content, error_message, attempts, created_by, created_at, completed_at, log_lines
 		FROM link_tasks WHERE id=$1`, taskID).
 		Scan(
 			&task.ID,
@@ -112,6 +115,7 @@ func (s *LinkTaskSQLStore) Get(ctx context.Context, taskID string) (*LinkTask, e
 			&task.AnchorText,
 			&task.TargetURL,
 			&task.ScheduledFor,
+			&task.Action,
 			&task.Status,
 			&task.FoundLocation,
 			&task.GeneratedContent,
@@ -169,7 +173,7 @@ func (s *LinkTaskSQLStore) ListAll(ctx context.Context, filters LinkTaskFilters)
 
 // ListPending возвращает ожидающие задачи.
 func (s *LinkTaskSQLStore) ListPending(ctx context.Context, limit int) ([]LinkTask, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, domain_id, anchor_text, target_url, scheduled_for, status, found_location, generated_content, error_message, attempts, created_by, created_at, completed_at, log_lines
+	rows, err := s.db.QueryContext(ctx, `SELECT id, domain_id, anchor_text, target_url, scheduled_for, action, status, found_location, generated_content, error_message, attempts, created_by, created_at, completed_at, log_lines
 		FROM link_tasks
 		WHERE status='pending' AND scheduled_for <= NOW()
 		ORDER BY scheduled_for ASC, created_at ASC
@@ -189,6 +193,7 @@ func (s *LinkTaskSQLStore) ListPending(ctx context.Context, limit int) ([]LinkTa
 			&task.AnchorText,
 			&task.TargetURL,
 			&task.ScheduledFor,
+			&task.Action,
 			&task.Status,
 			&task.FoundLocation,
 			&task.GeneratedContent,
@@ -204,6 +209,7 @@ func (s *LinkTaskSQLStore) ListPending(ctx context.Context, limit int) ([]LinkTa
 		if err := decodeLogLines(logLinesRaw, &task.LogLines); err != nil {
 			return nil, err
 		}
+		task.Action = normalizeLinkTaskAction(task.Action)
 		res = append(res, task)
 	}
 	return res, rows.Err()
@@ -228,6 +234,11 @@ func (s *LinkTaskSQLStore) Update(ctx context.Context, taskID string, updates Li
 	if updates.TargetURL != nil {
 		setClauses = append(setClauses, fmt.Sprintf("target_url=$%d", idx))
 		args = append(args, *updates.TargetURL)
+		idx++
+	}
+	if updates.Action != nil {
+		setClauses = append(setClauses, fmt.Sprintf("action=$%d", idx))
+		args = append(args, normalizeLinkTaskAction(*updates.Action))
 		idx++
 	}
 	if updates.FoundLocation != nil {
@@ -293,6 +304,12 @@ func buildLinkTaskQuery(table string, baseClause string, baseArgs []interface{},
 	clauses := []string{}
 	args := []interface{}{}
 	idx := 1
+	colPrefix := ""
+	selectPrefix := ""
+	if strings.Contains(table, "link_tasks lt") {
+		colPrefix = "lt."
+		selectPrefix = "lt."
+	}
 
 	if baseClause != "" {
 		clauses = append(clauses, baseClause)
@@ -300,27 +317,44 @@ func buildLinkTaskQuery(table string, baseClause string, baseArgs []interface{},
 		idx += len(baseArgs)
 	}
 	if filters.Status != nil {
-		clauses = append(clauses, fmt.Sprintf("status=$%d", idx))
+		clauses = append(clauses, fmt.Sprintf("%sstatus=$%d", colPrefix, idx))
 		args = append(args, *filters.Status)
 		idx++
 	}
 	if filters.ScheduledAfter != nil {
-		clauses = append(clauses, fmt.Sprintf("scheduled_for >= $%d", idx))
+		clauses = append(clauses, fmt.Sprintf("%sscheduled_for >= $%d", colPrefix, idx))
 		args = append(args, *filters.ScheduledAfter)
 		idx++
 	}
 	if filters.ScheduledBefore != nil {
-		clauses = append(clauses, fmt.Sprintf("scheduled_for <= $%d", idx))
+		clauses = append(clauses, fmt.Sprintf("%sscheduled_for <= $%d", colPrefix, idx))
 		args = append(args, *filters.ScheduledBefore)
 		idx++
 	}
 
-	query := fmt.Sprintf(`SELECT id, domain_id, anchor_text, target_url, scheduled_for, status, found_location, generated_content, error_message, attempts, created_by, created_at, completed_at, log_lines
-		FROM %s`, table)
+	query := fmt.Sprintf(`SELECT %sid, %sdomain_id, %sanchor_text, %starget_url, %sscheduled_for, %saction, %sstatus, %sfound_location, %sgenerated_content, %serror_message, %sattempts, %screated_by, %screated_at, %scompleted_at, %slog_lines
+		FROM %s`,
+		selectPrefix,
+		selectPrefix,
+		selectPrefix,
+		selectPrefix,
+		selectPrefix,
+		selectPrefix,
+		selectPrefix,
+		selectPrefix,
+		selectPrefix,
+		selectPrefix,
+		selectPrefix,
+		selectPrefix,
+		selectPrefix,
+		selectPrefix,
+		selectPrefix,
+		table,
+	)
 	if len(clauses) > 0 {
 		query += " WHERE " + strings.Join(clauses, " AND ")
 	}
-	query += " ORDER BY scheduled_for ASC, created_at ASC"
+	query += fmt.Sprintf(" ORDER BY %sscheduled_for ASC, %screated_at ASC", selectPrefix, selectPrefix)
 	if filters.Limit > 0 {
 		query += fmt.Sprintf(" LIMIT $%d", idx)
 		args = append(args, filters.Limit)
@@ -340,6 +374,7 @@ func scanLinkTasks(rows *sql.Rows) ([]LinkTask, error) {
 			&task.AnchorText,
 			&task.TargetURL,
 			&task.ScheduledFor,
+			&task.Action,
 			&task.Status,
 			&task.FoundLocation,
 			&task.GeneratedContent,
@@ -355,9 +390,18 @@ func scanLinkTasks(rows *sql.Rows) ([]LinkTask, error) {
 		if err := decodeLogLines(logLinesRaw, &task.LogLines); err != nil {
 			return nil, err
 		}
+		task.Action = normalizeLinkTaskAction(task.Action)
 		res = append(res, task)
 	}
 	return res, rows.Err()
+}
+
+func normalizeLinkTaskAction(action string) string {
+	action = strings.TrimSpace(strings.ToLower(action))
+	if action == "" {
+		return "insert"
+	}
+	return action
 }
 
 func marshalLogLines(lines []string) ([]byte, error) {

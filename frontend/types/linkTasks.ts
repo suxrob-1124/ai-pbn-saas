@@ -4,6 +4,7 @@ export type LinkTaskDTO = {
   anchor_text: string;
   target_url: string;
   scheduled_for: string;
+  action?: string;
   status: string;
   found_location?: string;
   generated_content?: string;

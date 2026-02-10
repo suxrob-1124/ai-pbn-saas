@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -118,25 +121,44 @@ func fetchSerp(ctx context.Context, keyword, country, lang string, limit int) ([
 	params.Set("device", "MOBILE")
 	params.Set("real_time", "true")
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"?"+params.Encode(), nil)
-	if err != nil {
-		return nil, nil, err
-	}
-	req.Header.Set("accept", "application/json")
-
-	client := &http.Client{Timeout: 180 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		return nil, nil, fmt.Errorf("serp status %d", resp.StatusCode)
-	}
-
+	timeout := serpTimeout()
+	retries := serpRetries()
 	var raw map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
-		return nil, nil, err
+	var lastErr error
+	for attempt := 0; attempt <= retries; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"?"+params.Encode(), nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		req.Header.Set("accept", "application/json")
+
+		client := &http.Client{Timeout: timeout}
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err
+			if isTimeoutErr(err) && attempt < retries {
+				backoff := time.Duration(2*(attempt+1)) * time.Second
+				select {
+				case <-time.After(backoff):
+					continue
+				case <-ctx.Done():
+					return nil, nil, ctx.Err()
+				}
+			}
+			return nil, nil, err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode >= 400 {
+			return nil, nil, fmt.Errorf("serp status %d", resp.StatusCode)
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+			return nil, nil, err
+		}
+		lastErr = nil
+		break
+	}
+	if lastErr != nil {
+		return nil, nil, lastErr
 	}
 
 	items := []SerpItem{}
@@ -162,6 +184,41 @@ func fetchSerp(ctx context.Context, keyword, country, lang string, limit int) ([
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].Position < items[j].Position })
 	return items, raw, nil
+}
+
+func serpTimeout() time.Duration {
+	if v := strings.TrimSpace(os.Getenv("SERP_TIMEOUT_SECONDS")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 30 {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return 180 * time.Second
+}
+
+func serpRetries() int {
+	if v := strings.TrimSpace(os.Getenv("SERP_RETRIES")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			if n > 3 {
+				return 3
+			}
+			return n
+		}
+	}
+	return 1
+}
+
+func isTimeoutErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	return strings.Contains(err.Error(), "Client.Timeout exceeded")
 }
 
 func crawlPages(ctx context.Context, items []SerpItem, lang, keyword string, excludes map[string]struct{}, limit, workers int, logf func(string)) []PageRow {

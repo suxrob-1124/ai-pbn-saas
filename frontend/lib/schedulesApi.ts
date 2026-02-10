@@ -53,6 +53,9 @@ const buildSchedulePayload = (input: ScheduleCreateInput) => {
   if (typeof input.isActive === "boolean") {
     payload.isActive = input.isActive;
   }
+  if (input.timezone && input.timezone.trim()) {
+    payload.timezone = input.timezone.trim();
+  }
   return payload;
 };
 
@@ -81,6 +84,13 @@ const buildScheduleUpdates = (updates: ScheduleUpdateInput) => {
   }
   if (typeof updates.isActive === "boolean") {
     payload.isActive = updates.isActive;
+  }
+  if (updates.timezone !== undefined) {
+    const trimmed = updates.timezone.trim();
+    if (!trimmed) {
+      throw new Error("timezone cannot be empty");
+    }
+    payload.timezone = trimmed;
   }
   if (Object.keys(payload).length === 0) {
     throw new Error("no updates provided");

@@ -1,0 +1,2095 @@
+openapi: 3.0.3
+info:
+  title: Site Gen AI API
+  version: "1.0"
+  description: |
+    API для управления проектами, доменами, расписаниями, очередью генерации и ссылками.
+    Все временные поля возвращаются в UTC. Отображение на клиенте выполняется
+    с учётом таймзоны проекта.
+servers:
+  - url: http://localhost:8080
+security:
+  - cookieAuth: []
+tags:
+  - name: Auth
+    description: Аутентификация и профиль
+  - name: Dashboard
+    description: Сводка по проектам и метрики
+  - name: Projects
+    description: Управление проектами
+  - name: Members
+    description: Участники проекта
+  - name: Domains
+    description: Управление доменами
+  - name: Schedules
+    description: Расписания генерации
+  - name: Link Schedules
+    description: Расписания ссылок
+  - name: Queue
+    description: Очередь генерации
+  - name: Generations
+    description: Запуски генерации
+  - name: Links
+    description: Задачи по ссылкам
+  - name: Files
+    description: Файлы домена
+  - name: Admin
+    description: Административные операции
+paths:
+  /api/register:
+    post:
+      tags: [Auth]
+      summary: Регистрация пользователя
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: Создано
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegisterResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/Error"
+  /api/login:
+    post:
+      tags: [Auth]
+      summary: Вход
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: OK
+          headers:
+            Set-Cookie:
+              description: access_token и refresh_token
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "429":
+          description: Слишком много попыток
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LockoutResponse"
+  /api/logout:
+    post:
+      tags: [Auth]
+      summary: Выход из текущей сессии
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+  /api/logout-all:
+    post:
+      tags: [Auth]
+      summary: Выход из всех сессий
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                keepCurrent:
+                  type: boolean
+      responses:
+        "200":
+          description: OK
+  /api/refresh:
+    post:
+      tags: [Auth]
+      summary: Обновить токены по refresh cookie
+      security: []
+      responses:
+        "200":
+          description: OK
+        "401":
+          $ref: "#/components/responses/Error"
+  /api/me:
+    get:
+      tags: [Auth]
+      summary: Текущий пользователь
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserMe"
+        "401":
+          $ref: "#/components/responses/Error"
+  /api/dashboard:
+    get:
+      tags: [Dashboard]
+      summary: Сводка и метрики
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Dashboard"
+  /api/projects:
+    get:
+      tags: [Projects]
+      summary: Список проектов
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Project"
+    post:
+      tags: [Projects]
+      summary: Создать проект
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProjectInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "400":
+          $ref: "#/components/responses/Error"
+  /api/projects/{projectId}:
+    get:
+      tags: [Projects]
+      summary: Проект по ID
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "404":
+          $ref: "#/components/responses/Error"
+    put:
+      tags: [Projects]
+      summary: Обновить проект
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProjectUpdate"
+      responses:
+        "201":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "400":
+          $ref: "#/components/responses/Error"
+    delete:
+      tags: [Projects]
+      summary: Удалить проект
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: OK
+  /api/projects/{projectId}/summary:
+    get:
+      tags: [Projects]
+      summary: Сводка проекта
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectSummary"
+  /api/projects/{projectId}/domains:
+    get:
+      tags: [Domains]
+      summary: Домены проекта
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Domain"
+    post:
+      tags: [Domains]
+      summary: Добавить домен
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DomainInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Domain"
+  /api/projects/{projectId}/domains/import:
+    post:
+      tags: [Domains]
+      summary: Импорт доменов списком
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DomainImportRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  created:
+                    type: integer
+  /api/projects/{projectId}/members:
+    get:
+      tags: [Members]
+      summary: Список участников проекта
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProjectMember"
+    post:
+      tags: [Members]
+      summary: Добавить участника
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProjectMemberInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+  /api/projects/{projectId}/members/{email}:
+    patch:
+      tags: [Members]
+      summary: Изменить роль участника
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - $ref: "#/components/parameters/MemberEmail"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProjectMemberUpdate"
+      responses:
+        "200":
+          description: OK
+    delete:
+      tags: [Members]
+      summary: Удалить участника
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - $ref: "#/components/parameters/MemberEmail"
+      responses:
+        "200":
+          description: OK
+  /api/projects/{projectId}/schedules:
+    get:
+      tags: [Schedules]
+      summary: Список расписаний генерации
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Schedule"
+    post:
+      tags: [Schedules]
+      summary: Создать расписание генерации
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScheduleInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Schedule"
+        "409":
+          $ref: "#/components/responses/Error"
+  /api/projects/{projectId}/schedules/{scheduleId}:
+    get:
+      tags: [Schedules]
+      summary: Расписание по ID
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - $ref: "#/components/parameters/ScheduleId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Schedule"
+    patch:
+      tags: [Schedules]
+      summary: Обновить расписание
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - $ref: "#/components/parameters/ScheduleId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScheduleUpdate"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Schedule"
+    delete:
+      tags: [Schedules]
+      summary: Удалить расписание
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - $ref: "#/components/parameters/ScheduleId"
+      responses:
+        "200":
+          description: OK
+  /api/projects/{projectId}/schedules/{scheduleId}/trigger:
+    post:
+      tags: [Schedules]
+      summary: Ручной запуск генерации по расписанию
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - $ref: "#/components/parameters/ScheduleId"
+      responses:
+        "202":
+          description: Запуск поставлен в очередь
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduleTriggerResult"
+  /api/projects/{projectId}/link-schedule:
+    get:
+      tags: [Link Schedules]
+      summary: Расписание ссылок
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/LinkSchedule"
+                  - type: "null"
+    put:
+      tags: [Link Schedules]
+      summary: Upsert расписания ссылок
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LinkScheduleInput"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinkSchedule"
+    delete:
+      tags: [Link Schedules]
+      summary: Удалить расписание ссылок
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: OK
+  /api/projects/{projectId}/link-schedule/trigger:
+    post:
+      tags: [Link Schedules]
+      summary: Ручной запуск задач ссылок
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "202":
+          description: Запуск поставлен в очередь
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinkScheduleTriggerResult"
+  /api/projects/{projectId}/queue:
+    get:
+      tags: [Queue]
+      summary: Очередь проекта
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/QueueItem"
+  /api/projects/{projectId}/queue/cleanup:
+    post:
+      tags: [Queue]
+      summary: Очистить устаревшие элементы очереди
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueueCleanupResult"
+  /api/domains/{domainId}:
+    get:
+      tags: [Domains]
+      summary: Домен по ID
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Domain"
+    patch:
+      tags: [Domains]
+      summary: Обновить домен
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DomainUpdate"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Domain"
+    delete:
+      tags: [Domains]
+      summary: Удалить домен
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+      responses:
+        "200":
+          description: OK
+  /api/domains/{domainId}/generate:
+    post:
+      tags: [Generations]
+      summary: Запуск генерации домена
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenerateRequest"
+      responses:
+        "202":
+          description: Принято
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GenerateAccepted"
+        "409":
+          $ref: "#/components/responses/Error"
+  /api/domains/{domainId}/generations:
+    get:
+      tags: [Generations]
+      summary: Список генераций домена
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Generation"
+  /api/domains/{domainId}/summary:
+    get:
+      tags: [Domains]
+      summary: Сводка домена
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+        - in: query
+          name: gen_limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+        - in: query
+          name: link_limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DomainSummary"
+  /api/domains/{domainId}/links:
+    get:
+      tags: [Links]
+      summary: Список link tasks домена
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+        - $ref: "#/components/parameters/LinkTaskFilters"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/LinkTask"
+    post:
+      tags: [Links]
+      summary: Создать link task домена
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LinkTaskCreate"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinkTask"
+  /api/domains/{domainId}/links/import:
+    post:
+      tags: [Links]
+      summary: Импорт link tasks CSV/JSON
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LinkTaskImportRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  created:
+                    type: integer
+  /api/domains/{domainId}/link/run:
+    post:
+      tags: [Links]
+      summary: Запуск link task домена (insert)
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+      responses:
+        "200":
+          description: Updated existing task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinkTask"
+        "201":
+          description: Created new task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinkTask"
+  /api/domains/{domainId}/link/remove:
+    post:
+      tags: [Links]
+      summary: Запуск link task домена (remove)
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+      responses:
+        "200":
+          description: Updated existing task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinkTask"
+        "201":
+          description: Created new task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinkTask"
+  /api/domains/{domainId}/files:
+    get:
+      tags: [Files]
+      summary: Список файлов домена
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/File"
+  /api/domains/{domainId}/files/{filePath}:
+    get:
+      tags: [Files]
+      summary: Получить файл домена
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+        - $ref: "#/components/parameters/FilePath"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileContent"
+    put:
+      tags: [Files]
+      summary: Обновить файл домена
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+        - $ref: "#/components/parameters/FilePath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FileUpdate"
+      responses:
+        "200":
+          description: OK
+    delete:
+      tags: [Files]
+      summary: Удалить файл домена
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+        - $ref: "#/components/parameters/FilePath"
+      responses:
+        "200":
+          description: OK
+  /api/domains/{domainId}/files/{fileId}/history:
+    get:
+      tags: [Files]
+      summary: История изменений файла
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+        - $ref: "#/components/parameters/FileId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FileEdit"
+  /api/generations:
+    get:
+      tags: [Generations]
+      summary: Список генераций
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Generation"
+  /api/generations/{generationId}:
+    get:
+      tags: [Generations]
+      summary: Генерация по ID
+      parameters:
+        - $ref: "#/components/parameters/GenerationId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Generation"
+    patch:
+      tags: [Generations]
+      summary: Действие с генерацией (pause/resume/cancel)
+      parameters:
+        - $ref: "#/components/parameters/GenerationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenerationAction"
+      responses:
+        "200":
+          description: OK
+    delete:
+      tags: [Generations]
+      summary: Удалить генерацию
+      parameters:
+        - $ref: "#/components/parameters/GenerationId"
+      responses:
+        "200":
+          description: OK
+  /api/links:
+    get:
+      tags: [Links]
+      summary: Список link tasks (с фильтрами)
+      parameters:
+        - $ref: "#/components/parameters/LinkTaskFilters"
+        - in: query
+          name: domain_id
+          schema:
+            type: string
+        - in: query
+          name: project_id
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/LinkTask"
+  /api/links/{linkId}:
+    patch:
+      tags: [Links]
+      summary: Обновить link task
+      parameters:
+        - $ref: "#/components/parameters/LinkId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LinkTaskPatch"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinkTask"
+    delete:
+      tags: [Links]
+      summary: Удалить link task
+      parameters:
+        - $ref: "#/components/parameters/LinkId"
+      responses:
+        "200":
+          description: OK
+  /api/links/{linkId}/retry:
+    post:
+      tags: [Links]
+      summary: Повторить link task
+      parameters:
+        - $ref: "#/components/parameters/LinkId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinkTask"
+  /api/queue/{itemId}:
+    delete:
+      tags: [Queue]
+      summary: Удалить элемент очереди
+      parameters:
+        - $ref: "#/components/parameters/QueueItemId"
+      responses:
+        "200":
+          description: OK
+  /api/admin/users:
+    get:
+      tags: [Admin]
+      summary: Список пользователей
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AdminUser"
+  /api/admin/users/{email}:
+    get:
+      tags: [Admin]
+      summary: Пользователь по email
+      parameters:
+        - $ref: "#/components/parameters/UserEmail"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUser"
+    patch:
+      tags: [Admin]
+      summary: Обновить роль/подтверждение пользователя
+      parameters:
+        - $ref: "#/components/parameters/UserEmail"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminUserUpdate"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUser"
+  /api/admin/users/{email}/projects:
+    get:
+      tags: [Admin]
+      summary: Проекты пользователя
+      parameters:
+        - $ref: "#/components/parameters/UserEmail"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Project"
+  /api/admin/users/{email}/password:
+    post:
+      tags: [Admin]
+      summary: Сбросить пароль пользователя
+      parameters:
+        - $ref: "#/components/parameters/UserEmail"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminPasswordReset"
+      responses:
+        "200":
+          description: OK
+  /api/admin/prompts:
+    get:
+      tags: [Admin]
+      summary: Список системных промптов
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AdminPrompt"
+    post:
+      tags: [Admin]
+      summary: Создать системный промпт
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminPromptInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminPrompt"
+  /api/admin/prompts/{promptId}:
+    get:
+      tags: [Admin]
+      summary: Промпт по ID
+      parameters:
+        - $ref: "#/components/parameters/PromptId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminPrompt"
+    patch:
+      tags: [Admin]
+      summary: Обновить промпт
+      parameters:
+        - $ref: "#/components/parameters/PromptId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminPromptUpdate"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminPrompt"
+    delete:
+      tags: [Admin]
+      summary: Удалить промпт
+      parameters:
+        - $ref: "#/components/parameters/PromptId"
+      responses:
+        "200":
+          description: OK
+  /api/admin/audit-rules:
+    get:
+      tags: [Admin]
+      summary: Список правил аудита
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AdminAuditRule"
+    post:
+      tags: [Admin]
+      summary: Создать правило аудита
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminAuditRuleInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAuditRule"
+  /api/admin/audit-rules/{code}:
+    get:
+      tags: [Admin]
+      summary: Правило аудита по коду
+      parameters:
+        - $ref: "#/components/parameters/AuditCode"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAuditRule"
+    patch:
+      tags: [Admin]
+      summary: Обновить правило аудита
+      parameters:
+        - $ref: "#/components/parameters/AuditCode"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminAuditRuleUpdate"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAuditRule"
+    delete:
+      tags: [Admin]
+      summary: Удалить правило аудита
+      parameters:
+        - $ref: "#/components/parameters/AuditCode"
+      responses:
+        "200":
+          description: OK
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: access_token
+  parameters:
+    ProjectId:
+      in: path
+      name: projectId
+      required: true
+      schema:
+        type: string
+    DomainId:
+      in: path
+      name: domainId
+      required: true
+      schema:
+        type: string
+    ScheduleId:
+      in: path
+      name: scheduleId
+      required: true
+      schema:
+        type: string
+    GenerationId:
+      in: path
+      name: generationId
+      required: true
+      schema:
+        type: string
+    LinkId:
+      in: path
+      name: linkId
+      required: true
+      schema:
+        type: string
+    QueueItemId:
+      in: path
+      name: itemId
+      required: true
+      schema:
+        type: string
+    FilePath:
+      in: path
+      name: filePath
+      required: true
+      schema:
+        type: string
+      description: Путь внутри домена (может содержать `/`)
+    FileId:
+      in: path
+      name: fileId
+      required: true
+      schema:
+        type: string
+    MemberEmail:
+      in: path
+      name: email
+      required: true
+      schema:
+        type: string
+    UserEmail:
+      in: path
+      name: email
+      required: true
+      schema:
+        type: string
+    PromptId:
+      in: path
+      name: promptId
+      required: true
+      schema:
+        type: string
+    AuditCode:
+      in: path
+      name: code
+      required: true
+      schema:
+        type: string
+    LinkTaskFilters:
+      in: query
+      name: status
+      schema:
+        type: string
+      description: |
+        Доп. фильтры передаются как query:
+        status, scheduled_from/scheduledFrom, scheduled_to/scheduledTo, limit.
+  responses:
+    Error:
+      description: Ошибка
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required: [error]
+    LockoutResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        retryIn:
+          type: integer
+      required: [error, retryIn]
+    LoginRequest:
+      type: object
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+        captchaId:
+          type: string
+        captchaAnswer:
+          type: string
+        captchaToken:
+          type: string
+      required: [email, password]
+    LoginResponse:
+      type: object
+      properties:
+        email:
+          type: string
+      required: [email]
+    RegisterRequest:
+      type: object
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+        captchaId:
+          type: string
+        captchaAnswer:
+          type: string
+        captchaToken:
+          type: string
+      required: [email, password]
+    RegisterResponse:
+      type: object
+      properties:
+        email:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+      required: [email, createdAt]
+    UserMe:
+      type: object
+      properties:
+        email:
+          type: string
+        name:
+          type: string
+          nullable: true
+        avatarUrl:
+          type: string
+          nullable: true
+        role:
+          type: string
+        isApproved:
+          type: boolean
+        verified:
+          type: boolean
+        apiKeyUpdatedAt:
+          type: string
+          format: date-time
+          nullable: true
+        hasApiKey:
+          type: boolean
+        apiKeyPrefix:
+          type: string
+      required: [email, role, isApproved, verified, hasApiKey]
+    Project:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+        target_country:
+          type: string
+        target_language:
+          type: string
+        timezone:
+          type: string
+          nullable: true
+        default_server_id:
+          type: string
+          nullable: true
+        global_blacklist:
+          type: object
+          nullable: true
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        ownerHasApiKey:
+          type: boolean
+          nullable: true
+      required: [id, name, status, created_at, updated_at]
+    ProjectInput:
+      type: object
+      properties:
+        name:
+          type: string
+        country:
+          type: string
+        language:
+          type: string
+        status:
+          type: string
+        timezone:
+          type: string
+      required: [name]
+    ProjectUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        country:
+          type: string
+        language:
+          type: string
+        status:
+          type: string
+        timezone:
+          type: string
+      required: [name]
+    ProjectSummary:
+      type: object
+      properties:
+        project:
+          $ref: "#/components/schemas/Project"
+        domains:
+          type: array
+          items:
+            $ref: "#/components/schemas/Domain"
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProjectMember"
+    ProjectMember:
+      type: object
+      properties:
+        email:
+          type: string
+        role:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+      required: [email, role]
+    ProjectMemberInput:
+      type: object
+      properties:
+        email:
+          type: string
+        role:
+          type: string
+      required: [email]
+    ProjectMemberUpdate:
+      type: object
+      properties:
+        role:
+          type: string
+      required: [role]
+    Domain:
+      type: object
+      properties:
+        id:
+          type: string
+        project_id:
+          type: string
+        server_id:
+          type: string
+          nullable: true
+        url:
+          type: string
+        main_keyword:
+          type: string
+          nullable: true
+        target_country:
+          type: string
+          nullable: true
+        target_language:
+          type: string
+          nullable: true
+        exclude_domains:
+          type: string
+          nullable: true
+        status:
+          type: string
+        last_generation_id:
+          type: string
+          nullable: true
+        published_at:
+          type: string
+          format: date-time
+          nullable: true
+        link_anchor_text:
+          type: string
+          nullable: true
+        link_acceptor_url:
+          type: string
+          nullable: true
+        link_status:
+          type: string
+          nullable: true
+        link_updated_at:
+          type: string
+          format: date-time
+          nullable: true
+        link_last_task_id:
+          type: string
+          nullable: true
+        link_file_path:
+          type: string
+          nullable: true
+        link_anchor_snapshot:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required: [id, project_id, url, status, created_at, updated_at]
+    DomainInput:
+      type: object
+      properties:
+        url:
+          type: string
+        keyword:
+          type: string
+        serverId:
+          type: string
+      required: [url]
+    DomainImportRequest:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              url:
+                type: string
+              keyword:
+                type: string
+        text:
+          type: string
+          description: "Format: url,keyword (per line)"
+    DomainUpdate:
+      type: object
+      properties:
+        keyword:
+          type: string
+        status:
+          type: string
+        country:
+          type: string
+        language:
+          type: string
+        exclude_domains:
+          type: string
+        server_id:
+          type: string
+        link_anchor_text:
+          type: string
+        link_acceptor_url:
+          type: string
+    Schedule:
+      type: object
+      properties:
+        id:
+          type: string
+        project_id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        strategy:
+          type: string
+        config:
+          type: object
+          additionalProperties: true
+        isActive:
+          type: boolean
+        createdBy:
+          type: string
+        last_run_at:
+          type: string
+          format: date-time
+          nullable: true
+        next_run_at:
+          type: string
+          format: date-time
+          nullable: true
+        timezone:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required: [id, project_id, name, strategy, config, isActive, createdBy]
+    ScheduleInput:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        strategy:
+          type: string
+        config:
+          $ref: "#/components/schemas/ScheduleConfig"
+        isActive:
+          type: boolean
+        timezone:
+          type: string
+      required: [name, strategy, config]
+    ScheduleUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        strategy:
+          type: string
+        config:
+          $ref: "#/components/schemas/ScheduleConfig"
+        isActive:
+          type: boolean
+        timezone:
+          type: string
+    ScheduleConfig:
+      type: object
+      description: Конфигурация расписания
+      properties:
+        limit:
+          type: integer
+          minimum: 1
+        cron:
+          type: string
+        time:
+          type: string
+          description: HH:mm
+        weekday:
+          type: string
+          description: mon..sun
+        day:
+          type: integer
+          minimum: 1
+          maximum: 31
+        interval:
+          type: string
+          description: Например, 1d
+        delay_minutes:
+          type: integer
+          minimum: 0
+          description: Задержка перед линкбилдингом после публикации (минуты), default 60
+      additionalProperties: true
+    LinkSchedule:
+      type: object
+      properties:
+        id:
+          type: string
+        project_id:
+          type: string
+        name:
+          type: string
+        config:
+          type: object
+          additionalProperties: true
+        isActive:
+          type: boolean
+        createdBy:
+          type: string
+        last_run_at:
+          type: string
+          format: date-time
+          nullable: true
+        next_run_at:
+          type: string
+          format: date-time
+          nullable: true
+        timezone:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required: [id, project_id, name, config, isActive, createdBy]
+    LinkScheduleInput:
+      type: object
+      properties:
+        name:
+          type: string
+        config:
+          $ref: "#/components/schemas/ScheduleConfig"
+        isActive:
+          type: boolean
+        timezone:
+          type: string
+      required: [name, config]
+    QueueItem:
+      type: object
+      properties:
+        id:
+          type: string
+        domain_id:
+          type: string
+        domain_url:
+          type: string
+          nullable: true
+        schedule_id:
+          type: string
+          nullable: true
+        priority:
+          type: integer
+        scheduled_for:
+          type: string
+          format: date-time
+        status:
+          type: string
+        error_message:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        processed_at:
+          type: string
+          format: date-time
+          nullable: true
+      required: [id, domain_id, scheduled_for, status, created_at]
+    Generation:
+      type: object
+      properties:
+        id:
+          type: string
+        domain_id:
+          type: string
+        domain_url:
+          type: string
+          nullable: true
+        status:
+          type: string
+        progress:
+          type: integer
+        error:
+          type: string
+          nullable: true
+        prompt_id:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        logs:
+          type: object
+          nullable: true
+        artifacts:
+          type: object
+          nullable: true
+      required: [id, domain_id, status, progress, created_at, updated_at]
+    LinkTask:
+      type: object
+      properties:
+        id:
+          type: string
+        domain_id:
+          type: string
+        anchor_text:
+          type: string
+        target_url:
+          type: string
+        scheduled_for:
+          type: string
+          format: date-time
+        action:
+          type: string
+          description: insert | remove
+        status:
+          type: string
+        found_location:
+          type: string
+          nullable: true
+        generated_content:
+          type: string
+          nullable: true
+        error_message:
+          type: string
+          nullable: true
+        log_lines:
+          type: array
+          items:
+            type: string
+        attempts:
+          type: integer
+        created_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+      required: [id, domain_id, anchor_text, target_url, scheduled_for, status, attempts, created_by, created_at]
+    LinkTaskCreate:
+      type: object
+      properties:
+        anchor_text:
+          type: string
+        target_url:
+          type: string
+        scheduled_for:
+          type: string
+          format: date-time
+        scheduledFor:
+          type: string
+          format: date-time
+      required: [anchor_text, target_url]
+    LinkTaskImportRequest:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/LinkTaskImportItem"
+        text:
+          type: string
+      description: items или текстовый CSV (anchor_text,target_url,scheduled_for)
+    LinkTaskImportItem:
+      type: object
+      properties:
+        anchor_text:
+          type: string
+        target_url:
+          type: string
+        scheduled_for:
+          type: string
+          format: date-time
+        scheduledFor:
+          type: string
+          format: date-time
+    LinkTaskPatch:
+      type: object
+      properties:
+        scheduled_for:
+          type: string
+          format: date-time
+        scheduledFor:
+          type: string
+          format: date-time
+    Dashboard:
+      type: object
+      properties:
+        projects:
+          type: array
+          items:
+            $ref: "#/components/schemas/Project"
+        stats:
+          $ref: "#/components/schemas/DashboardStats"
+        recent_errors:
+          type: array
+          items:
+            $ref: "#/components/schemas/Generation"
+    DashboardStats:
+      type: object
+      properties:
+        pending:
+          type: integer
+        processing:
+          type: integer
+        error:
+          type: integer
+        avg_minutes:
+          type: integer
+          nullable: true
+        avg_sample:
+          type: integer
+      required: [pending, processing, error, avg_sample]
+    File:
+      type: object
+      properties:
+        id:
+          type: string
+        path:
+          type: string
+        size:
+          type: integer
+        mimeType:
+          type: string
+        updatedAt:
+          type: string
+          format: date-time
+      required: [id, path, size, mimeType, updatedAt]
+    FileContent:
+      type: object
+      properties:
+        content:
+          type: string
+        mimeType:
+          type: string
+      required: [content, mimeType]
+    FileUpdate:
+      type: object
+      properties:
+        content:
+          type: string
+        mimeType:
+          type: string
+      required: [content, mimeType]
+    FileEdit:
+      type: object
+      properties:
+        id:
+          type: string
+        editedBy:
+          type: string
+        editType:
+          type: string
+        description:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+      required: [id, editedBy, editType, createdAt]
+    DomainSummary:
+      type: object
+      properties:
+        domain:
+          $ref: "#/components/schemas/Domain"
+        project_name:
+          type: string
+        generations:
+          type: array
+          items:
+            $ref: "#/components/schemas/Generation"
+        link_tasks:
+          type: array
+          items:
+            $ref: "#/components/schemas/LinkTask"
+    ScheduleTriggerResult:
+      type: object
+      properties:
+        status:
+          type: string
+        enqueued:
+          type: integer
+    LinkScheduleTriggerResult:
+      type: object
+      properties:
+        status:
+          type: string
+        created:
+          type: integer
+        updated:
+          type: integer
+        eligible:
+          type: integer
+    QueueCleanupResult:
+      type: object
+      properties:
+        removed:
+          type: integer
+    GenerateRequest:
+      type: object
+      properties:
+        force_step:
+          type: string
+    GenerateAccepted:
+      type: object
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+    GenerationAction:
+      type: object
+      properties:
+        action:
+          type: string
+          enum: [pause, resume, cancel]
+      required: [action]
+    AdminUser:
+      type: object
+      properties:
+        email:
+          type: string
+        name:
+          type: string
+          nullable: true
+        role:
+          type: string
+        isApproved:
+          type: boolean
+        verified:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        apiKeyUpdatedAt:
+          type: string
+          format: date-time
+          nullable: true
+      required: [email, role, isApproved, verified, createdAt]
+    AdminUserUpdate:
+      type: object
+      properties:
+        role:
+          type: string
+        isApproved:
+          type: boolean
+    AdminPasswordReset:
+      type: object
+      properties:
+        newPassword:
+          type: string
+      required: [newPassword]
+    AdminPrompt:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        body:
+          type: string
+        stage:
+          type: string
+          nullable: true
+        model:
+          type: string
+          nullable: true
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required: [id, name, body, isActive, createdAt, updatedAt]
+    AdminPromptInput:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        body:
+          type: string
+        stage:
+          type: string
+        model:
+          type: string
+        isActive:
+          type: boolean
+      required: [name, body]
+    AdminPromptUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        body:
+          type: string
+        stage:
+          type: string
+        model:
+          type: string
+        isActive:
+          type: boolean
+    AdminAuditRule:
+      type: object
+      properties:
+        code:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+          nullable: true
+        severity:
+          type: string
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required: [code, title, severity, isActive, createdAt, updatedAt]
+    AdminAuditRuleInput:
+      type: object
+      properties:
+        code:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        severity:
+          type: string
+        isActive:
+          type: boolean
+      required: [code, title]
+    AdminAuditRuleUpdate:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        severity:
+          type: string
+        isActive:
+          type: boolean

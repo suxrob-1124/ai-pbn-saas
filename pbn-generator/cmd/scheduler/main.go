@@ -109,6 +109,8 @@ type GenerationStore interface {
 	ListByDomain(ctx context.Context, domainID string) ([]sqlstore.Generation, error)
 	Create(ctx context.Context, g sqlstore.Generation) error
 	UpdateStatus(ctx context.Context, id, status string, progress int, errText *string) error
+	ListRetryDue(ctx context.Context, now time.Time, limit int) ([]sqlstore.Generation, error)
+	PrepareRetry(ctx context.Context, id string) error
 }
 
 type ProjectStore interface {
@@ -134,6 +136,9 @@ func runSchedulerTick(
 		return err
 	}
 	if err := processPendingQueue(ctx, scheduleStore, genQueueStore, domainStore, genStore, projectStore, taskClient, logger); err != nil {
+		return err
+	}
+	if err := processRetryableGenerations(ctx, genStore, taskClient, logger); err != nil {
 		return err
 	}
 	if err := processPendingLinkTasks(ctx, linkTaskStore, taskClient, logger); err != nil {
@@ -207,7 +212,37 @@ func applySchedulesAt(ctx context.Context, scheduleStore ScheduleStore, genQueue
 			continue
 		}
 
-		enqueued, err := enqueueScheduleDomains(ctx, genQueueStore, sched, cfg, domains, queueItems, now)
+		domainByID := map[string]sqlstore.Domain{}
+		for _, d := range domains {
+			domainByID[d.ID] = d
+		}
+		eligibleDomains := filterGenerationDomains(domains)
+		eligibleQueueItems := make([]sqlstore.QueueItem, 0, len(queueItems))
+		for _, item := range queueItems {
+			if item.Status != "pending" && item.Status != "queued" {
+				continue
+			}
+			domain, ok := domainByID[item.DomainID]
+			if !ok {
+				msg := "domain not found"
+				_ = genQueueStore.MarkProcessed(ctx, item.ID, "completed", &msg)
+				continue
+			}
+			if !isDomainWaiting(domain) {
+				msg := fmt.Sprintf("domain status %s is not eligible for generation", strings.TrimSpace(domain.Status))
+				_ = genQueueStore.MarkProcessed(ctx, item.ID, "completed", &msg)
+				continue
+			}
+			eligibleQueueItems = append(eligibleQueueItems, item)
+		}
+		queuedForSchedule := 0
+		for _, item := range eligibleQueueItems {
+			if item.ScheduleID.Valid && item.ScheduleID.String == sched.ID {
+				queuedForSchedule++
+			}
+		}
+
+		enqueued, err := enqueueScheduleDomains(ctx, genQueueStore, sched, cfg, eligibleDomains, eligibleQueueItems, now)
 		if err != nil {
 			logger.Warnf("failed to enqueue schedule %s: %v", sched.ID, err)
 			continue
@@ -217,8 +252,16 @@ func applySchedulesAt(ctx context.Context, scheduleStore ScheduleStore, genQueue
 		if err := scheduleStore.Update(ctx, sched.ID, updates); err != nil && logger != nil {
 			logger.Warnf("failed to update schedule run times %s: %v", sched.ID, err)
 		}
-		if enqueued > 0 {
-			logger.Infof("schedule %s enqueued %d domains", sched.ID, enqueued)
+		if logger != nil {
+			logger.Infof(
+				"schedule %s run=%v eligible=%d queued_for_schedule=%d enqueued=%d next_run_local=%s",
+				sched.ID,
+				shouldRun,
+				len(eligibleDomains),
+				queuedForSchedule,
+				enqueued,
+				nextRunLocal.Format(time.RFC3339),
+			)
 		}
 	}
 
@@ -230,14 +273,22 @@ func enqueueScheduleDomains(
 	genQueueStore GenQueueStore,
 	sched sqlstore.Schedule,
 	cfg scheduleConfig,
-	domains []sqlstore.Domain,
+	eligibleDomains []sqlstore.Domain,
 	queueItems []sqlstore.QueueItem,
 	now time.Time,
 ) (int, error) {
+	eligibleIDs := map[string]bool{}
+	for _, d := range eligibleDomains {
+		eligibleIDs[d.ID] = true
+	}
+
 	queuedDomains := map[string]bool{}
 	queuedForSchedule := 0
 	for _, item := range queueItems {
 		if item.Status != "pending" && item.Status != "queued" {
+			continue
+		}
+		if !eligibleIDs[item.DomainID] {
 			continue
 		}
 		queuedDomains[item.DomainID] = true
@@ -248,7 +299,7 @@ func enqueueScheduleDomains(
 
 	limit := cfg.Limit
 	if limit <= 0 {
-		limit = len(domains)
+		limit = len(eligibleDomains)
 	}
 	remaining := limit - queuedForSchedule
 	if remaining <= 0 {
@@ -256,7 +307,7 @@ func enqueueScheduleDomains(
 	}
 
 	count := 0
-	for _, d := range domains {
+	for _, d := range eligibleDomains {
 		if count >= remaining {
 			break
 		}
@@ -289,6 +340,7 @@ func processPendingQueue(
 	taskClient tasks.Enqueuer,
 	logger *zap.SugaredLogger,
 ) error {
+	now := time.Now().UTC()
 	for {
 		items, err := genQueueStore.GetPending(ctx, schedulerBatchSize)
 		if err != nil {
@@ -299,7 +351,7 @@ func processPendingQueue(
 		}
 
 		for _, item := range items {
-			if err := processQueueItem(ctx, scheduleStore, genQueueStore, domainStore, genStore, projectStore, taskClient, item, logger); err != nil {
+			if err := processQueueItem(ctx, scheduleStore, genQueueStore, domainStore, genStore, projectStore, taskClient, item, logger, now); err != nil {
 				logger.Warnf("queue item %s failed: %v", item.ID, err)
 			}
 		}
@@ -316,11 +368,17 @@ func processQueueItem(
 	taskClient tasks.Enqueuer,
 	item sqlstore.QueueItem,
 	logger *zap.SugaredLogger,
+	now time.Time,
 ) error {
 	domain, err := domainStore.Get(ctx, item.DomainID)
 	if err != nil {
 		_ = genQueueStore.MarkProcessed(ctx, item.ID, "failed", strPtr("domain not found"))
 		return fmt.Errorf("domain not found")
+	}
+	if !isDomainWaiting(domain) {
+		msg := fmt.Sprintf("domain status %s is not eligible for generation", strings.TrimSpace(domain.Status))
+		_ = genQueueStore.MarkProcessed(ctx, item.ID, "completed", &msg)
+		return nil
 	}
 
 	if strings.TrimSpace(domain.MainKeyword) == "" {
@@ -332,6 +390,13 @@ func processQueueItem(
 	if err == nil && len(gens) > 0 {
 		last := gens[0]
 		if isGenerationActive(last.Status) {
+			msg := fmt.Sprintf("generation already %s", strings.TrimSpace(last.Status))
+			_ = genQueueStore.MarkProcessed(ctx, item.ID, "completed", &msg)
+			return nil
+		}
+		if last.Status == "error" && last.Retryable {
+			msg := "retry scheduled for previous generation"
+			_ = genQueueStore.MarkProcessed(ctx, item.ID, "completed", &msg)
 			return nil
 		}
 	}
@@ -375,10 +440,59 @@ func processQueueItem(
 		return fmt.Errorf("enqueue: %w", err)
 	}
 
-	if err := genQueueStore.MarkProcessed(ctx, item.ID, "queued", nil); err != nil {
-		logger.Warnf("failed to mark queue item queued: %v", err)
+	msg := "generation enqueued"
+	if err := genQueueStore.MarkProcessed(ctx, item.ID, "completed", &msg); err != nil {
+		logger.Warnf("failed to mark queue item completed: %v", err)
 	}
 	return nil
+}
+
+func filterGenerationDomains(domains []sqlstore.Domain) []sqlstore.Domain {
+	res := make([]sqlstore.Domain, 0, len(domains))
+	for _, d := range domains {
+		if !isDomainWaiting(d) {
+			continue
+		}
+		res = append(res, d)
+	}
+	return res
+}
+
+func isDomainWaiting(d sqlstore.Domain) bool {
+	return strings.EqualFold(strings.TrimSpace(d.Status), "waiting")
+}
+
+func processRetryableGenerations(
+	ctx context.Context,
+	genStore GenerationStore,
+	taskClient tasks.Enqueuer,
+	logger *zap.SugaredLogger,
+) error {
+	now := time.Now().UTC()
+	for {
+		gens, err := genStore.ListRetryDue(ctx, now, schedulerBatchSize)
+		if err != nil {
+			return fmt.Errorf("list retryable generations: %w", err)
+		}
+		if len(gens) == 0 {
+			return nil
+		}
+		for _, gen := range gens {
+			if err := genStore.PrepareRetry(ctx, gen.ID); err != nil {
+				if logger != nil {
+					logger.Warnf("failed to prepare retry for %s: %v", gen.ID, err)
+				}
+				continue
+			}
+			task := tasks.NewGenerateTask(gen.ID, gen.DomainID, "")
+			if _, err := taskClient.Enqueue(ctx, task); err != nil {
+				if logger != nil {
+					logger.Warnf("failed to enqueue retry for %s: %v", gen.ID, err)
+				}
+				continue
+			}
+		}
+	}
 }
 
 type LinkTaskStore interface {
@@ -440,6 +554,14 @@ func applyLinkSchedulesAt(
 		if sched.LastRunAt.Valid {
 			lastRunLocal = sched.LastRunAt.Time.In(loc)
 		}
+		scheduleRunLocal, err := scheduleRunAtToday(localNow, cfg)
+		if err != nil {
+			if logger != nil {
+				logger.Warnf("invalid link schedule time %s: %v", sched.ID, err)
+			}
+			continue
+		}
+		scheduleRunUTC := scheduleRunLocal.In(time.UTC)
 		nextRunLocal, shouldRun, err := computeLinkScheduleNextRun(cfg, localNow, lastRunLocal)
 		if err != nil {
 			if logger != nil {
@@ -456,9 +578,6 @@ func applyLinkSchedulesAt(
 				logger.Warnf("failed to update link next_run_at for %s: %v", sched.ID, err)
 			}
 		}
-		if !shouldRun {
-			continue
-		}
 		domains, err := domainStore.ListByProject(ctx, sched.ProjectID)
 		if err != nil {
 			if logger != nil {
@@ -467,8 +586,16 @@ func applyLinkSchedulesAt(
 			continue
 		}
 
-		eligible := filterLinkDomains(domains)
-		if len(eligible) == 0 {
+		eligible := filterLinkDomains(domains, now, scheduleRunUTC)
+		needsRelink := filterNeedsRelink(eligible)
+		if !shouldRun && len(needsRelink) == 0 {
+			continue
+		}
+		runDomains := eligible
+		if !shouldRun {
+			runDomains = needsRelink
+		}
+		if len(runDomains) == 0 {
 			continue
 		}
 
@@ -480,18 +607,34 @@ func applyLinkSchedulesAt(
 			continue
 		}
 
+		eligibleByID := map[string]bool{}
+		for _, d := range eligible {
+			eligibleByID[d.ID] = true
+		}
+
 		activeByDomain := map[string]sqlstore.LinkTask{}
 		for _, task := range activeTasks {
+			if !eligibleByID[task.DomainID] {
+				status := "failed"
+				msg := sql.NullString{String: "domain not eligible for link schedule", Valid: true}
+				completed := sql.NullTime{Time: now, Valid: true}
+				_ = linkTaskStore.Update(ctx, task.ID, sqlstore.LinkTaskUpdates{
+					Status:       &status,
+					ErrorMessage: &msg,
+					CompletedAt:  &completed,
+				})
+				continue
+			}
 			activeByDomain[task.DomainID] = task
 		}
 
 		limit := cfg.Limit
 		if limit <= 0 {
-			limit = len(eligible)
+			limit = len(runDomains)
 		}
 
 		activeEligible := 0
-		for _, d := range eligible {
+		for _, d := range runDomains {
 			if _, ok := activeByDomain[d.ID]; ok {
 				activeEligible++
 			}
@@ -501,7 +644,9 @@ func applyLinkSchedulesAt(
 			remaining = 0
 		}
 
-		for _, d := range eligible {
+		updatedTasks := 0
+		createdTasks := 0
+		for _, d := range runDomains {
 			anchor := strings.TrimSpace(d.LinkAnchorText.String)
 			target := strings.TrimSpace(d.LinkAcceptorURL.String)
 			if task, ok := activeByDomain[d.ID]; ok {
@@ -523,6 +668,7 @@ func applyLinkSchedulesAt(
 				if err := linkTaskStore.Update(ctx, task.ID, updates); err != nil && logger != nil {
 					logger.Warnf("failed to update link task %s: %v", task.ID, err)
 				}
+				updatedTasks++
 				continue
 			}
 
@@ -540,6 +686,7 @@ func applyLinkSchedulesAt(
 				AnchorText:   anchor,
 				TargetURL:    target,
 				ScheduledFor: now,
+				Action:       "insert",
 				Status:       "pending",
 				Attempts:     0,
 				CreatedBy:    createdBy,
@@ -552,12 +699,28 @@ func applyLinkSchedulesAt(
 				continue
 			}
 			remaining--
+			createdTasks++
 		}
 
-		lastRunUTC := sql.NullTime{Time: now, Valid: true}
-		updates := sqlstore.LinkScheduleUpdates{LastRunAt: &lastRunUTC, NextRunAt: &nextRunUTC}
-		if err := linkScheduleStore.Update(ctx, sched.ID, updates); err != nil && logger != nil {
-			logger.Warnf("failed to update link schedule run times %s: %v", sched.ID, err)
+		if shouldRun {
+			lastRunUTC := sql.NullTime{Time: now, Valid: true}
+			updates := sqlstore.LinkScheduleUpdates{LastRunAt: &lastRunUTC, NextRunAt: &nextRunUTC}
+			if err := linkScheduleStore.Update(ctx, sched.ID, updates); err != nil && logger != nil {
+				logger.Warnf("failed to update link schedule run times %s: %v", sched.ID, err)
+			}
+		}
+		if logger != nil {
+			logger.Infof(
+				"link schedule %s run=%v eligible=%d needs_relink=%d active=%d updated=%d created=%d next_run_local=%s",
+				sched.ID,
+				shouldRun,
+				len(eligible),
+				len(needsRelink),
+				len(activeByDomain),
+				updatedTasks,
+				createdTasks,
+				nextRunLocal.Format(time.RFC3339),
+			)
 		}
 	}
 
@@ -574,10 +737,36 @@ func computeLinkScheduleNextRun(cfg scheduleConfig, now time.Time, lastRun time.
 	return computeScheduleNextRun(strategy, cfg, now, lastRun)
 }
 
-func filterLinkDomains(domains []sqlstore.Domain) []sqlstore.Domain {
+func scheduleRunAtToday(now time.Time, cfg scheduleConfig) (time.Time, error) {
+	return scheduleAtTime(now, cfg.Time)
+}
+
+func effectiveLinkReadyAt(domain sqlstore.Domain, scheduleRunAt time.Time) time.Time {
+	effective := scheduleRunAt
+	if effective.IsZero() && domain.LinkReadyAt.Valid {
+		return domain.LinkReadyAt.Time
+	}
+	if domain.LinkReadyAt.Valid && domain.LinkReadyAt.Time.After(effective) {
+		return domain.LinkReadyAt.Time
+	}
+	return effective
+}
+
+func isLinkStatusEligible(domain sqlstore.Domain) bool {
+	if !domain.LinkStatus.Valid {
+		return false
+	}
+	status := strings.ToLower(strings.TrimSpace(domain.LinkStatus.String))
+	return status == "needs_relink" || status == "pending"
+}
+
+func filterLinkDomains(domains []sqlstore.Domain, now time.Time, scheduleRunAt time.Time) []sqlstore.Domain {
 	res := make([]sqlstore.Domain, 0, len(domains))
 	for _, d := range domains {
 		if !isDomainPublished(d) {
+			continue
+		}
+		if !isLinkStatusEligible(d) {
 			continue
 		}
 		anchor := strings.TrimSpace(d.LinkAnchorText.String)
@@ -585,7 +774,24 @@ func filterLinkDomains(domains []sqlstore.Domain) []sqlstore.Domain {
 		if !d.LinkAnchorText.Valid || !d.LinkAcceptorURL.Valid || anchor == "" || target == "" {
 			continue
 		}
+		effective := effectiveLinkReadyAt(d, scheduleRunAt)
+		if !effective.IsZero() && effective.After(now) {
+			continue
+		}
 		res = append(res, d)
+	}
+	return res
+}
+
+func filterNeedsRelink(domains []sqlstore.Domain) []sqlstore.Domain {
+	res := make([]sqlstore.Domain, 0, len(domains))
+	for _, d := range domains {
+		if !d.LinkStatus.Valid {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(d.LinkStatus.String), "needs_relink") {
+			res = append(res, d)
+		}
 	}
 	return res
 }
@@ -598,7 +804,7 @@ func isDomainPublished(d sqlstore.Domain) bool {
 }
 
 func listActiveLinkTasksByProject(ctx context.Context, linkTaskStore LinkTaskStore, projectID string) ([]sqlstore.LinkTask, error) {
-	activeStatuses := []string{"pending", "searching", "found"}
+	activeStatuses := []string{"pending", "searching", "found", "removing"}
 	var res []sqlstore.LinkTask
 	for _, status := range activeStatuses {
 		status := status
@@ -640,6 +846,9 @@ func processPendingLinkTasks(ctx context.Context, linkTaskStore LinkTaskStore, t
 			continue
 		}
 		status := "searching"
+		if strings.EqualFold(strings.TrimSpace(item.Action), "remove") {
+			status = "removing"
+		}
 		clearErr := sql.NullString{}
 		if err := linkTaskStore.Update(ctx, item.ID, sqlstore.LinkTaskUpdates{
 			Status:       &status,
@@ -675,23 +884,25 @@ func lastScheduledAt(items []sqlstore.QueueItem, scheduleID string) time.Time {
 }
 
 type scheduleConfig struct {
-	Limit    int
-	Cron     string
-	Time     string
-	Weekday  string
-	Day      int
-	Interval string
+	Limit        int
+	Cron         string
+	Time         string
+	Weekday      string
+	Day          int
+	Interval     string
+	DelayMinutes int
 }
 
 func parseScheduleConfig(raw json.RawMessage) (scheduleConfig, error) {
 	if len(raw) == 0 {
-		return scheduleConfig{}, nil
+		return scheduleConfig{DelayMinutes: 60}, nil
 	}
 	var data map[string]any
 	if err := json.Unmarshal(raw, &data); err != nil {
 		return scheduleConfig{}, err
 	}
 	cfg := scheduleConfig{}
+	delaySet := false
 	if v, ok := data["limit"].(float64); ok {
 		cfg.Limit = int(v)
 	}
@@ -708,12 +919,39 @@ func parseScheduleConfig(raw json.RawMessage) (scheduleConfig, error) {
 		cfg.Day = int(v)
 	}
 	if v, ok := data["day"].(string); ok {
-		if parsed, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+		trimmed := strings.TrimSpace(v)
+		if parsed, err := strconv.Atoi(trimmed); err == nil {
 			cfg.Day = parsed
+		} else if trimmed != "" {
+			cfg.Weekday = strings.ToLower(trimmed)
 		}
 	}
 	if v, ok := data["interval"].(string); ok {
 		cfg.Interval = strings.TrimSpace(v)
+	}
+	if rawDelay, ok := data["delay_minutes"]; ok {
+		delaySet = true
+		switch value := rawDelay.(type) {
+		case float64:
+			cfg.DelayMinutes = int(value)
+		case string:
+			trimmed := strings.TrimSpace(value)
+			if trimmed != "" {
+				parsed, err := strconv.Atoi(trimmed)
+				if err != nil {
+					return scheduleConfig{}, fmt.Errorf("invalid delay_minutes")
+				}
+				cfg.DelayMinutes = parsed
+			}
+		default:
+			return scheduleConfig{}, fmt.Errorf("invalid delay_minutes")
+		}
+		if cfg.DelayMinutes < 0 {
+			return scheduleConfig{}, fmt.Errorf("invalid delay_minutes")
+		}
+	}
+	if !delaySet {
+		cfg.DelayMinutes = 60
 	}
 	return cfg, nil
 }

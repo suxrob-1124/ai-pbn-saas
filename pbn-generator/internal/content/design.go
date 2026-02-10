@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
+	"strings"
 )
 
 // DesignSystem представляет полную дизайн-систему сайта
@@ -67,9 +68,22 @@ func ParseDesignSystem(jsonStr string) (*DesignSystem, error) {
 	cleaned := jsonStr
 	cleaned = removeJSONMarkdown(cleaned)
 
-	var ds DesignSystem
-	if err := json.Unmarshal([]byte(cleaned), &ds); err != nil {
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(cleaned), &raw); err != nil {
 		return nil, err
+	}
+
+	ds := &DesignSystem{
+		StyleName:        stringValue(raw["style_name"]),
+		Layout:           stringValue(raw["layout"]),
+		ColorPalette:     raw["color_palette"],
+		FontPalette:      normalizeMap(raw["font_palette"]),
+		ElementStyle:     normalizeMap(raw["element_style"]),
+		ImageStylePrompt: stringValue(raw["image_style_prompt"]),
+		LogoConcept:      stringValue(raw["logo_concept"]),
+		Title:            stringValue(raw["title"]),
+		Canonical:        stringValue(raw["canonical"]),
+		DesignSeed:       stringValue(raw["design_seed"]),
 	}
 
 	// Генерируем PFX если есть design_seed
@@ -77,7 +91,7 @@ func ParseDesignSystem(jsonStr string) (*DesignSystem, error) {
 		ds.PFX = GeneratePFX(ds.DesignSeed)
 	}
 
-	return &ds, nil
+	return ds, nil
 }
 
 // removeJSONMarkdown удаляет markdown блоки ```json ... ``` из строки
@@ -122,3 +136,31 @@ func (ds *DesignSystem) ToJSON() ([]byte, error) {
 	return json.Marshal(ds)
 }
 
+func stringValue(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
+}
+
+func normalizeMap(v any) map[string]any {
+	switch t := v.(type) {
+	case map[string]any:
+		return t
+	case string:
+		if strings.TrimSpace(t) == "" {
+			return nil
+		}
+		if strings.HasPrefix(strings.TrimSpace(t), "{") {
+			var m map[string]any
+			if err := json.Unmarshal([]byte(t), &m); err == nil {
+				return m
+			}
+		}
+		return map[string]any{"raw": t}
+	case nil:
+		return nil
+	default:
+		return map[string]any{"raw": t}
+	}
+}

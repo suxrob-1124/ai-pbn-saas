@@ -12,6 +12,8 @@ type ScheduleFormProps = {
   error?: string | null;
   title?: string;
   submitLabel?: string;
+  timezone?: string;
+  timezoneLabel?: string;
   onCancel?: () => void;
   onChange: (value: ScheduleFormValue) => void;
   onSubmit: (config: Record<string, unknown>) => void;
@@ -23,6 +25,8 @@ export function ScheduleForm({
   error,
   title,
   submitLabel,
+  timezone,
+  timezoneLabel,
   onCancel,
   onChange,
   onSubmit
@@ -42,8 +46,23 @@ export function ScheduleForm({
   const offsetSign = offsetMinutes >= 0 ? "+" : "-";
   const offsetAbs = Math.abs(offsetMinutes);
   const offset = `${offsetSign}${pad(Math.floor(offsetAbs / 60))}:${pad(offsetAbs % 60)}`;
-  const timeZoneName = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  const timeHint = `Сейчас: ${localTime} (${timeZoneName}, UTC${offset}), UTC: ${utcTime}`;
+  const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const tz = (timezone || "").trim() || browserZone;
+  const tzLabel = (timezoneLabel || "").trim() || tz;
+  const formatTimeForZone = (value: Date, zone: string) => {
+    try {
+      return new Intl.DateTimeFormat("ru-RU", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+        timeZone: zone
+      }).format(value);
+    } catch {
+      return value.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", hour12: false });
+    }
+  };
+  const tzTime = formatTimeForZone(now, tz);
+  const timeHint = `Сейчас: ${tzTime} (${tzLabel}), локальное: ${localTime} (UTC${offset}), UTC: ${utcTime}`;
 
   const handleSubmit = () => {
     const result = buildScheduleConfig(value);
@@ -104,7 +123,7 @@ export function ScheduleForm({
               onChange={(e) => onChange({ ...value, dailyTime: e.target.value })}
             />
             <div className="text-xs text-slate-500 dark:text-slate-400 md:col-span-2">
-              {timeHint}. Время расписания интерпретируется как UTC.
+              {timeHint}. Время расписания интерпретируется как {tzLabel}.
             </div>
           </>
         )}
@@ -138,7 +157,7 @@ export function ScheduleForm({
               onChange={(e) => onChange({ ...value, weeklyTime: e.target.value })}
             />
             <div className="text-xs text-slate-500 dark:text-slate-400 md:col-span-2">
-              {timeHint}. Время расписания интерпретируется как UTC.
+              {timeHint}. Время расписания интерпретируется как {tzLabel}.
             </div>
           </>
         )}

@@ -71,11 +71,11 @@ func TestProjectLinkScheduleUpsertGetDelete(t *testing.T) {
 	}
 	lsStore := s.linkSchedules.(*stubLinkScheduleStore)
 	sched, err := lsStore.GetByProject(context.Background(), project.ID)
-	if err != nil {
-		t.Fatalf("expected schedule to remain, got error: %v", err)
+	if err == nil {
+		t.Fatalf("expected schedule to be deleted, got %+v", sched)
 	}
-	if sched.IsActive {
-		t.Fatalf("expected schedule disabled")
+	if err != nil && err != sql.ErrNoRows {
+		t.Fatalf("expected sql.ErrNoRows, got: %v", err)
 	}
 }
 
@@ -103,6 +103,7 @@ func TestProjectLinkScheduleTriggerCreatesTasks(t *testing.T) {
 			ProjectID:       project.ID,
 			URL:             "a.example.com",
 			Status:          "published",
+			LinkStatus:      sql.NullString{String: "pending", Valid: true},
 			LinkAnchorText:  sql.NullString{String: "Anchor A", Valid: true},
 			LinkAcceptorURL: sql.NullString{String: "https://acceptor/a", Valid: true},
 			CreatedAt:       time.Now().UTC(),
@@ -113,6 +114,7 @@ func TestProjectLinkScheduleTriggerCreatesTasks(t *testing.T) {
 			ProjectID:       project.ID,
 			URL:             "b.example.com",
 			Status:          "published",
+			LinkStatus:      sql.NullString{String: "pending", Valid: true},
 			LinkAnchorText:  sql.NullString{String: "Anchor B", Valid: true},
 			LinkAcceptorURL: sql.NullString{String: "https://acceptor/b", Valid: true},
 			CreatedAt:       time.Now().UTC(),
@@ -132,6 +134,7 @@ func TestProjectLinkScheduleTriggerCreatesTasks(t *testing.T) {
 		IsActive:  true,
 		CreatedBy: "owner@example.com",
 		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
 	})
 	if err != nil {
 		t.Fatalf("seed link schedule: %v", err)

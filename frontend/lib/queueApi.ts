@@ -23,6 +23,14 @@ export async function listQueue(projectId: string): Promise<QueueItemDTO[]> {
   return authFetch<QueueItemDTO[]>(`/api/projects/${encoded}/queue`);
 }
 
+/** Очистить устаревшие элементы очереди. */
+export async function cleanupQueue(projectId: string): Promise<{ removed: number }> {
+  const encoded = encodeProjectId(projectId);
+  return authFetch<{ removed: number }>(`/api/projects/${encoded}/queue/cleanup`, {
+    method: "POST"
+  });
+}
+
 /** Удалить элемент из очереди. */
 export async function deleteQueueItem(itemId: string): Promise<{ status: string }> {
   const encoded = encodeQueueItemId(itemId);

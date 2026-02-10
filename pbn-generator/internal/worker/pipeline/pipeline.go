@@ -41,11 +41,12 @@ type PipelineState struct {
 	ForceStep    string // Если установлен, принудительно выполнить этот шаг и все последующие
 
 	// Stores
-	DomainStore     *sqlstore.DomainStore
-	GenerationStore *sqlstore.GenerationStore
-	PromptStore     *sqlstore.PromptStore
-	ProjectStore    *sqlstore.ProjectStore
-	AuditStore      *sqlstore.AuditStore
+	DomainStore       *sqlstore.DomainStore
+	GenerationStore   *sqlstore.GenerationStore
+	PromptStore       *sqlstore.PromptStore
+	ProjectStore      *sqlstore.ProjectStore
+	LinkScheduleStore *sqlstore.LinkScheduleStore
+	AuditStore        *sqlstore.AuditStore
 
 	// Services
 	LLMClient     LLMClient
@@ -297,6 +298,7 @@ func (p *Pipeline) saveCheckpoint(ctx context.Context, stepName string, progress
 	if err != nil {
 		return fmt.Errorf("failed to marshal checkpoint: %w", err)
 	}
+	cpData = sanitizeJSONBytes(cpData)
 
 	return p.state.GenerationStore.SaveCheckpoint(ctx, p.state.GenerationID, cpData)
 }

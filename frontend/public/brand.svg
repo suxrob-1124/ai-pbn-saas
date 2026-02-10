@@ -1,0 +1,20 @@
+<svg width="240" height="56" viewBox="0 0 240 56" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="sgai-gradient" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#38BDF8"/>
+      <stop offset="1" stop-color="#A78BFA"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(4 6)">
+    <path d="M22 2L38 12V32L22 42L6 32V12L22 2Z" stroke="url(#sgai-gradient)" stroke-width="2.5" />
+    <path d="M22 9L31 14V24L22 29L13 24V14L22 9Z" stroke="url(#sgai-gradient)" stroke-width="2" opacity="0.8" />
+    <path d="M6 12L0 9" stroke="url(#sgai-gradient)" stroke-width="2" stroke-linecap="round"/>
+    <path d="M6 32L0 35" stroke="url(#sgai-gradient)" stroke-width="2" stroke-linecap="round"/>
+    <path d="M38 12L44 9" stroke="url(#sgai-gradient)" stroke-width="2" stroke-linecap="round"/>
+    <path d="M38 32L44 35" stroke="url(#sgai-gradient)" stroke-width="2" stroke-linecap="round"/>
+  </g>
+  <g transform="translate(64 12)" fill="none">
+    <text x="0" y="24" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="700" fill="#0F172A">SiteGen</text>
+    <text x="86" y="24" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="700" fill="#6366F1">AI</text>
+  </g>
+</svg>

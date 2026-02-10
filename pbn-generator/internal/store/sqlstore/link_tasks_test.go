@@ -27,6 +27,7 @@ func TestLinkTaskStoreCreate(t *testing.T) {
 		AnchorText:   "anchor",
 		TargetURL:    "https://example.com",
 		ScheduledFor: time.Date(2026, 2, 4, 10, 0, 0, 0, time.UTC),
+		Action:       "insert",
 		Status:       "pending",
 		Attempts:     0,
 		CreatedBy:    "admin@example.com",
@@ -40,6 +41,7 @@ func TestLinkTaskStoreCreate(t *testing.T) {
 				item.AnchorText,
 				item.TargetURL,
 				item.ScheduledFor,
+				item.Action,
 				item.Status,
 				nil,
 				nil,
@@ -68,6 +70,7 @@ func TestLinkTaskStoreCreate(t *testing.T) {
 				item.AnchorText,
 				item.TargetURL,
 				item.ScheduledFor,
+				item.Action,
 				item.Status,
 				nil,
 				nil,
@@ -107,6 +110,7 @@ func TestLinkTaskStoreGet(t *testing.T) {
 		"anchor_text",
 		"target_url",
 		"scheduled_for",
+		"action",
 		"status",
 		"found_location",
 		"generated_content",
@@ -122,6 +126,7 @@ func TestLinkTaskStoreGet(t *testing.T) {
 		"anchor",
 		"https://example.com",
 		scheduled,
+		"insert",
 		"pending",
 		sql.NullString{},
 		sql.NullString{},
@@ -134,7 +139,7 @@ func TestLinkTaskStoreGet(t *testing.T) {
 	)
 
 	t.Run("success", func(t *testing.T) {
-		mock.ExpectQuery(regexp.QuoteMeta("SELECT id, domain_id, anchor_text, target_url, scheduled_for, status, found_location, generated_content, error_message, attempts, created_by, created_at, completed_at, log_lines FROM link_tasks WHERE id=$1")).
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT id, domain_id, anchor_text, target_url, scheduled_for, action, status, found_location, generated_content, error_message, attempts, created_by, created_at, completed_at, log_lines FROM link_tasks WHERE id=$1")).
 			WithArgs("task-1").
 			WillReturnRows(rows)
 
@@ -152,7 +157,7 @@ func TestLinkTaskStoreGet(t *testing.T) {
 	})
 
 	t.Run("db error", func(t *testing.T) {
-		mock.ExpectQuery(regexp.QuoteMeta("SELECT id, domain_id, anchor_text, target_url, scheduled_for, status, found_location, generated_content, error_message, attempts, created_by, created_at, completed_at, log_lines FROM link_tasks WHERE id=$1")).
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT id, domain_id, anchor_text, target_url, scheduled_for, action, status, found_location, generated_content, error_message, attempts, created_by, created_at, completed_at, log_lines FROM link_tasks WHERE id=$1")).
 			WithArgs("task-2").
 			WillReturnError(errors.New("boom"))
 
@@ -184,6 +189,7 @@ func TestLinkTaskStoreListByDomain(t *testing.T) {
 		"anchor_text",
 		"target_url",
 		"scheduled_for",
+		"action",
 		"status",
 		"found_location",
 		"generated_content",
@@ -199,6 +205,7 @@ func TestLinkTaskStoreListByDomain(t *testing.T) {
 		"anchor",
 		"https://example.com",
 		scheduled,
+		"insert",
 		"pending",
 		sql.NullString{},
 		sql.NullString{},
@@ -230,6 +237,89 @@ func TestLinkTaskStoreListByDomain(t *testing.T) {
 	}
 }
 
+func TestLinkTaskStoreListByProject(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to create sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	store := NewLinkTaskStore(db)
+	ctx := context.Background()
+
+	scheduled := time.Date(2026, 2, 4, 10, 0, 0, 0, time.UTC)
+	created := scheduled.Add(-time.Minute)
+	rows := sqlmock.NewRows([]string{
+		"id",
+		"domain_id",
+		"anchor_text",
+		"target_url",
+		"scheduled_for",
+		"action",
+		"status",
+		"found_location",
+		"generated_content",
+		"error_message",
+		"attempts",
+		"created_by",
+		"created_at",
+		"completed_at",
+		"log_lines",
+	}).AddRow(
+		"task-1",
+		"domain-1",
+		"anchor",
+		"https://example.com",
+		scheduled,
+		"insert",
+		"pending",
+		sql.NullString{},
+		sql.NullString{},
+		sql.NullString{},
+		0,
+		"admin@example.com",
+		created,
+		sql.NullTime{},
+		nil,
+	)
+
+	status := "pending"
+	filters := LinkTaskFilters{Status: &status, Limit: 5}
+	expected := `(?s)SELECT lt.id, lt.domain_id, lt.anchor_text, lt.target_url, lt.scheduled_for, lt.action, lt.status, lt.found_location, lt.generated_content, lt.error_message, lt.attempts, lt.created_by, lt.created_at, lt.completed_at, lt.log_lines\s+FROM link_tasks lt JOIN domains d ON d.id = lt.domain_id\s+WHERE d.project_id=\$1 AND lt.status=\$2\s+ORDER BY lt.scheduled_for ASC, lt.created_at ASC\s+LIMIT \$3`
+
+	t.Run("success", func(t *testing.T) {
+		mock.ExpectQuery(expected).
+			WithArgs("project-1", status, 5).
+			WillReturnRows(rows)
+
+		list, err := store.ListByProject(ctx, "project-1", filters)
+		if err != nil {
+			t.Fatalf("list failed: %v", err)
+		}
+		if len(list) != 1 {
+			t.Fatalf("expected 1 item, got %d", len(list))
+		}
+
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unmet expectations: %v", err)
+		}
+	})
+
+	t.Run("db error", func(t *testing.T) {
+		mock.ExpectQuery(expected).
+			WithArgs("project-2", status, 5).
+			WillReturnError(errors.New("boom"))
+
+		if _, err := store.ListByProject(ctx, "project-2", filters); err == nil {
+			t.Fatalf("expected error")
+		}
+
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unmet expectations: %v", err)
+		}
+	})
+}
+
 func TestLinkTaskStoreListPending(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -248,6 +338,7 @@ func TestLinkTaskStoreListPending(t *testing.T) {
 		"anchor_text",
 		"target_url",
 		"scheduled_for",
+		"action",
 		"status",
 		"found_location",
 		"generated_content",
@@ -263,6 +354,7 @@ func TestLinkTaskStoreListPending(t *testing.T) {
 		"anchor",
 		"https://example.com",
 		scheduled,
+		"insert",
 		"pending",
 		sql.NullString{},
 		sql.NullString{},
@@ -274,7 +366,7 @@ func TestLinkTaskStoreListPending(t *testing.T) {
 		nil,
 	)
 
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, domain_id, anchor_text, target_url, scheduled_for, status, found_location, generated_content, error_message, attempts, created_by, created_at, completed_at, log_lines FROM link_tasks")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, domain_id, anchor_text, target_url, scheduled_for, action, status, found_location, generated_content, error_message, attempts, created_by, created_at, completed_at, log_lines FROM link_tasks")).
 		WithArgs(5).
 		WillReturnRows(rows)
 

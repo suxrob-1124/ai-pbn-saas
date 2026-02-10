@@ -121,12 +121,14 @@ func migrationStatements() []string {
 			name TEXT NOT NULL,
 			target_country TEXT,
 			target_language TEXT,
+			timezone TEXT,
 			global_blacklist JSONB,
 			default_server_id TEXT REFERENCES servers(id),
 			status TEXT NOT NULL DEFAULT 'draft',
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		);`,
+		`ALTER TABLE projects ADD COLUMN IF NOT EXISTS timezone TEXT;`,
 		`CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_email);`,
 		`CREATE TABLE IF NOT EXISTS domains (
 			id TEXT PRIMARY KEY,
@@ -157,6 +159,7 @@ func migrationStatements() []string {
 		`ALTER TABLE domains ADD COLUMN IF NOT EXISTS link_last_task_id TEXT;`,
 		`ALTER TABLE domains ADD COLUMN IF NOT EXISTS link_file_path TEXT;`,
 		`ALTER TABLE domains ADD COLUMN IF NOT EXISTS link_anchor_snapshot TEXT;`,
+		`ALTER TABLE domains ADD COLUMN IF NOT EXISTS link_ready_at TIMESTAMPTZ;`,
 		`CREATE TABLE IF NOT EXISTS site_files (
 			id TEXT PRIMARY KEY,
 			domain_id TEXT NOT NULL REFERENCES domains(id) ON DELETE CASCADE,
@@ -224,6 +227,10 @@ func migrationStatements() []string {
 		);`,
 		`ALTER TABLE generations ADD COLUMN IF NOT EXISTS requested_by TEXT;`,
 		`ALTER TABLE generations ADD COLUMN IF NOT EXISTS checkpoint_data JSONB;`,
+		`ALTER TABLE generations ADD COLUMN IF NOT EXISTS attempts INT NOT NULL DEFAULT 0;`,
+		`ALTER TABLE generations ADD COLUMN IF NOT EXISTS retryable BOOLEAN NOT NULL DEFAULT FALSE;`,
+		`ALTER TABLE generations ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMPTZ;`,
+		`ALTER TABLE generations ADD COLUMN IF NOT EXISTS last_error_at TIMESTAMPTZ;`,
 		`CREATE INDEX IF NOT EXISTS idx_generations_domain ON generations(domain_id);`,
 		`CREATE TABLE IF NOT EXISTS generation_schedules (
 		  id TEXT PRIMARY KEY,
@@ -263,6 +270,7 @@ func migrationStatements() []string {
 			anchor_text TEXT NOT NULL,
 			target_url TEXT NOT NULL,
 			scheduled_for TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			action TEXT NOT NULL DEFAULT 'insert',
 			status TEXT NOT NULL DEFAULT 'pending',
 			found_location TEXT,
 			generated_content TEXT,
@@ -272,6 +280,7 @@ func migrationStatements() []string {
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			completed_at TIMESTAMPTZ
 		);`,
+		`ALTER TABLE link_tasks ADD COLUMN IF NOT EXISTS action TEXT NOT NULL DEFAULT 'insert';`,
 		`ALTER TABLE link_tasks ADD COLUMN IF NOT EXISTS log_lines JSONB;`,
 		`CREATE INDEX IF NOT EXISTS idx_link_tasks_domain ON link_tasks(domain_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_link_tasks_status ON link_tasks(status);`,
@@ -283,11 +292,13 @@ func migrationStatements() []string {
 		  config JSONB NOT NULL,
 		  is_active BOOLEAN NOT NULL DEFAULT TRUE,
 		  created_by TEXT NOT NULL REFERENCES users(email),
-		  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		);`,
 		`ALTER TABLE link_schedules ADD COLUMN IF NOT EXISTS last_run_at TIMESTAMPTZ;`,
 		`ALTER TABLE link_schedules ADD COLUMN IF NOT EXISTS next_run_at TIMESTAMPTZ;`,
 		`ALTER TABLE link_schedules ADD COLUMN IF NOT EXISTS timezone TEXT;`,
+		`ALTER TABLE link_schedules ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS uniq_link_schedules_project ON link_schedules(project_id);`,
 		`CREATE TABLE IF NOT EXISTS audit_rules (
 			code TEXT PRIMARY KEY,

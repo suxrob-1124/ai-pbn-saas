@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { authFetch, refreshTokens } from "./http";
+import { apiBase, authFetch, refreshTokens } from "./http";
 
 export type Me = {
   email: string;
@@ -15,6 +15,39 @@ export type Me = {
   hasApiKey?: boolean;
   apiKeyPrefix?: string;
 };
+
+export function useOptionalMe() {
+  const [me, setMe] = useState<Me | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    const load = async () => {
+      setLoading(true);
+      try {
+        await refreshTokens().catch(() => {});
+        const res = await fetch(`${apiBase()}/api/me`, { credentials: "include" });
+        if (!mounted) return;
+        if (!res.ok) {
+          setMe(null);
+          return;
+        }
+        const data = (await res.json()) as Me;
+        setMe(data);
+      } catch {
+        if (mounted) setMe(null);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+    load();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  return { me, loading, isAuthed: Boolean(me) };
+}
 
 export function useAuthGuard() {
   const router = useRouter();

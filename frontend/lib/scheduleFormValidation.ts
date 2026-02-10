@@ -57,7 +57,7 @@ export const buildScheduleConfig = (value: ScheduleFormValue): ScheduleValidatio
       if (!validateTime(value.weeklyTime)) {
         return { ok: false, error: "Некорректное время для еженедельного расписания" };
       }
-      return { ok: true, config: { limit, day, time: value.weeklyTime } };
+      return { ok: true, config: { limit, weekday: day, time: value.weeklyTime } };
     }
     case "custom": {
       const cron = value.customCron.trim();

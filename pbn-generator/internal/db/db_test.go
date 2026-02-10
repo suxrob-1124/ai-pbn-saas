@@ -73,11 +73,22 @@ func TestMigrationStatementsIncludeGenerationQueue(t *testing.T) {
 	expectContains(t, stmts, "CREATE INDEX IF NOT EXISTS idx_gen_queue_status ON generation_queue(status);")
 }
 
+func TestMigrationStatementsIncludeGenerationRetry(t *testing.T) {
+	t.Parallel()
+
+	stmts := migrationStatements()
+	expectContains(t, stmts, "ALTER TABLE generations ADD COLUMN IF NOT EXISTS attempts INT NOT NULL DEFAULT 0;")
+	expectContains(t, stmts, "ALTER TABLE generations ADD COLUMN IF NOT EXISTS retryable BOOLEAN NOT NULL DEFAULT FALSE;")
+	expectContains(t, stmts, "ALTER TABLE generations ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMPTZ;")
+	expectContains(t, stmts, "ALTER TABLE generations ADD COLUMN IF NOT EXISTS last_error_at TIMESTAMPTZ;")
+}
+
 func TestMigrationStatementsIncludeLinkTasks(t *testing.T) {
 	t.Parallel()
 
 	stmts := migrationStatements()
 	expectContains(t, stmts, "CREATE TABLE IF NOT EXISTS link_tasks")
+	expectContains(t, stmts, "ALTER TABLE link_tasks ADD COLUMN IF NOT EXISTS action TEXT NOT NULL DEFAULT 'insert';")
 	expectContains(t, stmts, "CREATE INDEX IF NOT EXISTS idx_link_tasks_domain ON link_tasks(domain_id);")
 	expectContains(t, stmts, "CREATE INDEX IF NOT EXISTS idx_link_tasks_status ON link_tasks(status);")
 	expectContains(t, stmts, "CREATE INDEX IF NOT EXISTS idx_link_tasks_scheduled ON link_tasks(scheduled_for, status);")
@@ -97,6 +108,7 @@ func TestMigrationStatementsIncludeLinkSchedulesMetadata(t *testing.T) {
 	expectContains(t, stmts, "ALTER TABLE link_schedules ADD COLUMN IF NOT EXISTS last_run_at TIMESTAMPTZ;")
 	expectContains(t, stmts, "ALTER TABLE link_schedules ADD COLUMN IF NOT EXISTS next_run_at TIMESTAMPTZ;")
 	expectContains(t, stmts, "ALTER TABLE link_schedules ADD COLUMN IF NOT EXISTS timezone TEXT;")
+	expectContains(t, stmts, "ALTER TABLE link_schedules ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();")
 }
 
 func TestMigrationStatementsIncludeScheduleUniq(t *testing.T) {
@@ -118,6 +130,14 @@ func TestMigrationStatementsIncludeDomainLinkFields(t *testing.T) {
 	expectContains(t, stmts, "ALTER TABLE domains ADD COLUMN IF NOT EXISTS link_last_task_id TEXT;")
 	expectContains(t, stmts, "ALTER TABLE domains ADD COLUMN IF NOT EXISTS link_file_path TEXT;")
 	expectContains(t, stmts, "ALTER TABLE domains ADD COLUMN IF NOT EXISTS link_anchor_snapshot TEXT;")
+	expectContains(t, stmts, "ALTER TABLE domains ADD COLUMN IF NOT EXISTS link_ready_at TIMESTAMPTZ;")
+}
+
+func TestMigrationStatementsIncludeProjectTimezone(t *testing.T) {
+	t.Parallel()
+
+	stmts := migrationStatements()
+	expectContains(t, stmts, "ALTER TABLE projects ADD COLUMN IF NOT EXISTS timezone TEXT;")
 }
 
 func expectContains(t *testing.T, stmts []string, needle string) {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"obzornik-pbn-generator/internal/crypto/secretbox"
 	"obzornik-pbn-generator/internal/llm"
 	"obzornik-pbn-generator/internal/publisher"
+	"obzornik-pbn-generator/internal/retry"
 	"obzornik-pbn-generator/internal/store/sqlstore"
 	"obzornik-pbn-generator/internal/tasks"
 	"obzornik-pbn-generator/internal/worker/pipeline"
@@ -29,6 +31,7 @@ func processGeneration(
 	genStore *sqlstore.GenerationStore,
 	promptStore *sqlstore.PromptStore,
 	projectStore *sqlstore.ProjectStore,
+	linkScheduleStore *sqlstore.LinkScheduleStore,
 	userStore *sqlstore.UserStore,
 	apiKeyUsageStore *sqlstore.APIKeyUsageStore,
 	siteFileStore *sqlstore.SiteFileSQLStore,
@@ -103,6 +106,17 @@ func processGeneration(
 		return fmt.Errorf("domain not found: %w", err)
 	}
 	appendLog("start for domain " + domain.URL)
+
+	// Если домен уже публиковался и есть link-настройки, помечаем, что нужна повторная вставка ссылок.
+	if domain.LinkAnchorText.Valid && domain.LinkAcceptorURL.Valid {
+		anchor := strings.TrimSpace(domain.LinkAnchorText.String)
+		target := strings.TrimSpace(domain.LinkAcceptorURL.String)
+		if anchor != "" && target != "" {
+			if err := domainStore.UpdateLinkStatus(ctx, domain.ID, "needs_relink"); err != nil && sugar != nil {
+				sugar.Warnf("failed to mark needs_relink for domain %s: %v", domain.ID, err)
+			}
+		}
+	}
 
 	project, err := projectStore.GetByID(ctx, domain.ProjectID)
 	if err != nil {
@@ -227,25 +241,26 @@ func processGeneration(
 	}
 
 	state := &pipeline.PipelineState{
-		GenerationID:    payload.GenerationID,
-		DomainID:        payload.DomainID,
-		ForceStep:       payload.ForceStep,
-		DomainStore:     domainStore,
-		GenerationStore: genStore,
-		PromptStore:     promptStore,
-		ProjectStore:    projectStore,
-		AuditStore:      auditStore,
-		LLMClient:       pipeline.NewLLMClient(llmClient),
-		PromptManager:   pipeline.NewPromptManager(promptManager),
-		Analyzer:        pipeline.NewAnalyzer(),
-		Publisher:       publisher.NewLocalPublisher("server", domainStore, siteFileStore),
-		DefaultModel:    cfg.GeminiDefaultModel,
-		Domain:          &domain,
-		Project:         &project,
-		Artifacts:       existingArtifacts,
-		AppendLog:       appendLog,
-		Logs:            &logs,
-		Context:         make(map[string]any),
+		GenerationID:      payload.GenerationID,
+		DomainID:          payload.DomainID,
+		ForceStep:         payload.ForceStep,
+		DomainStore:       domainStore,
+		GenerationStore:   genStore,
+		PromptStore:       promptStore,
+		ProjectStore:      projectStore,
+		LinkScheduleStore: linkScheduleStore,
+		AuditStore:        auditStore,
+		LLMClient:         pipeline.NewLLMClient(llmClient),
+		PromptManager:     pipeline.NewPromptManager(promptManager),
+		Analyzer:          pipeline.NewAnalyzer(),
+		Publisher:         publisher.NewLocalPublisher("server", domainStore, siteFileStore),
+		DefaultModel:      cfg.GeminiDefaultModel,
+		Domain:            &domain,
+		Project:           &project,
+		Artifacts:         existingArtifacts,
+		AppendLog:         appendLog,
+		Logs:              &logs,
+		Context:           make(map[string]any),
 	}
 
 	// Создаем шаги pipeline
@@ -299,7 +314,6 @@ func processGeneration(
 
 		errMsg := err.Error()
 		appendLog(fmt.Sprintf("Pipeline failed: %s", errMsg))
-		logBytes, _ := json.Marshal(logs)
 		gen, _ := genStore.Get(ctx, payload.GenerationID)
 		progress := gen.Progress
 		if progress <= 0 {
@@ -311,7 +325,22 @@ func processGeneration(
 				artifacts = artBytes
 			}
 		}
+		attempts := gen.Attempts + 1
+		retryable := isRetryableGenerationError(errMsg)
+		nextRetryAt := sql.NullTime{}
+		lastErrorAt := sql.NullTime{Time: time.Now(), Valid: true}
+		if retryable {
+			if next, rerr := retry.NextRetryAt(attempts, gen.CreatedAt, time.Now()); rerr == nil {
+				nextRetryAt = sql.NullTime{Time: next, Valid: true}
+				appendLog(fmt.Sprintf("retry scheduled at %s (attempt %d/%d)", next.UTC().Format(time.RFC3339), attempts, retry.MaxRetries))
+			} else {
+				retryable = false
+				appendLog(fmt.Sprintf("retry exhausted: %v", rerr))
+			}
+		}
+		logBytes, _ := json.Marshal(logs)
 		_ = genStore.UpdateFull(ctx, payload.GenerationID, "error", progress, &errMsg, logBytes, artifacts, &now, pipeline.PtrTime(time.Now()), nil)
+		_ = genStore.UpdateRetry(ctx, payload.GenerationID, attempts, retryable, nextRetryAt, lastErrorAt)
 		_ = domainStore.UpdateStatus(ctx, payload.DomainID, "waiting")
 		return err
 	}
@@ -333,7 +362,25 @@ func processGeneration(
 
 	// Финальное обновление статуса
 	_ = genStore.UpdateFull(ctx, payload.GenerationID, "success", 100, nil, logBytes, finalArtifacts, &now, &fin, nil)
+	_ = genStore.UpdateRetry(ctx, payload.GenerationID, gen.Attempts, false, sql.NullTime{}, sql.NullTime{})
 	_ = domainStore.UpdateStatus(ctx, payload.DomainID, "published")
 
 	return nil
+}
+
+func isRetryableGenerationError(errMsg string) bool {
+	if errMsg == "" {
+		return false
+	}
+	msg := strings.ToLower(errMsg)
+	if strings.Contains(msg, "context deadline exceeded") {
+		return true
+	}
+	if strings.Contains(msg, "client.timeout") {
+		return true
+	}
+	if strings.Contains(msg, "timeout") && strings.Contains(msg, "awaiting headers") {
+		return true
+	}
+	return false
 }

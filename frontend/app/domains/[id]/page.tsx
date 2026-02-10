@@ -3,9 +3,10 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { authFetch, patch, del } from "../../../lib/http";
+import { authFetch, authFetchCached, patch, del } from "../../../lib/http";
+import { showToast } from "../../../lib/toastStore";
 import { useAuthGuard } from "../../../lib/useAuth";
-import { FiClock, FiPlay, FiCheck, FiAlertTriangle, FiRefreshCw, FiTrash2, FiPause, FiX } from "react-icons/fi";
+import { FiClock, FiPlay, FiCheck, FiAlertTriangle, FiRefreshCw, FiTrash2, FiPause, FiX, FiInfo } from "react-icons/fi";
 import { ArtifactsViewer, LogsViewer } from "../../../components/ArtifactsViewer";
 import PipelineSteps from "../../../components/PipelineSteps";
 import { computeDisplayProgress } from "../../../lib/pipelineProgress";
@@ -25,6 +26,7 @@ type Domain = {
   updated_at?: string;
   link_anchor_text?: string;
   link_acceptor_url?: string;
+  link_status?: string;
 };
 
 type Generation = {
@@ -43,6 +45,7 @@ type LinkTask = {
   anchor_text: string;
   target_url: string;
   scheduled_for: string;
+  action?: string;
   status: string;
   found_location?: string;
   generated_content?: string;
@@ -52,6 +55,13 @@ type LinkTask = {
   created_by: string;
   created_at: string;
   completed_at?: string;
+};
+
+type DomainSummary = {
+  domain: Domain;
+  project_name: string;
+  generations: Generation[];
+  link_tasks: LinkTask[];
 };
 
 export default function DomainPage() {
@@ -78,14 +88,20 @@ export default function DomainPage() {
   const [linkNotice, setLinkNotice] = useState<string | null>(null);
   const [linkTab, setLinkTab] = useState<"summary" | "logs">("summary");
   const [linkDiffs, setLinkDiffs] = useState<Record<string, { filePath: string; line: number; before: string; after: string }>>({});
+  const [showAllLinkTasks, setShowAllLinkTasks] = useState(false);
 
-  const load = async () => {
+  const load = async (force = false) => {
     if (!id) return;
     setLoading(true);
     setError(null);
     try {
-      const d = await authFetch<Domain>(`/api/domains/${id}`);
+      const summary = await authFetchCached<DomainSummary>(`/api/domains/${id}/summary?gen_limit=10&link_limit=20`, undefined, {
+        ttlMs: 15000,
+        bypassCache: force
+      });
+      const d = summary?.domain || null;
       setDomain(d);
+      setProjectName(summary?.project_name || "");
       setKw(d?.main_keyword || "");
       setCountry(d?.target_country || "");
       setLanguage(d?.target_language || "");
@@ -93,29 +109,12 @@ export default function DomainPage() {
       setServer(d?.server_id || "");
       setLinkAnchor(d?.link_anchor_text || "");
       setLinkAcceptor(d?.link_acceptor_url || "");
-      if (d?.project_id) {
-        try {
-          const p = await authFetch<any>(`/api/projects/${d.project_id}`);
-          setProjectName(p?.name || "");
-        } catch {
-          /* ignore */
-        }
-      }
-      try {
-        const list = await authFetch<Generation[]>(`/api/domains/${id}/generations`);
-        setGens(Array.isArray(list) ? list : []);
-      } catch {
-        setGens([]);
-      }
-      try {
-        const tasks = await authFetch<LinkTask[]>(`/api/domains/${id}/links`);
-        const list = Array.isArray(tasks) ? tasks : [];
-        list.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-        setLinkTasks(list);
-      } catch (err: any) {
-        setLinkTasks([]);
-        setLinkTasksError(err?.message || "Не удалось загрузить задачи ссылок");
-      }
+      const list = Array.isArray(summary?.generations) ? summary.generations : [];
+      setGens(list);
+      const tasks = Array.isArray(summary?.link_tasks) ? summary.link_tasks : [];
+      tasks.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      setLinkTasks(tasks);
+      setLinkTasksError(null);
     } catch (err: any) {
       setError(err?.message || "Не удалось загрузить домен");
     } finally {
@@ -136,7 +135,7 @@ export default function DomainPage() {
         link_anchor_text: linkAnchor,
         link_acceptor_url: linkAcceptor
       });
-      await load();
+      await load(true);
     } catch (err: any) {
       setError(err?.message || "Не удалось сохранить");
     } finally {
@@ -150,15 +149,67 @@ export default function DomainPage() {
     setLinkNotice(null);
     if (!linkAnchor.trim() || !linkAcceptor.trim()) {
       setLinkTasksError("Заполните анкор и акцептор");
+      showToast({
+        type: "error",
+        title: "Ссылка не настроена",
+        message: "Заполните анкор и акцептор перед запуском."
+      });
       return;
     }
     setLinkTasksLoading(true);
     try {
       await authFetch(`/api/domains/${id}/link/run`, { method: "POST" });
       setLinkNotice("Запуск добавления ссылки инициирован");
-      await load();
+      showToast({
+        type: "success",
+        title: "Добавление ссылки запущено",
+        message: domain?.url || undefined
+      });
+      await load(true);
     } catch (err: any) {
-      setLinkTasksError(err?.message || "Не удалось запустить добавление ссылки");
+      const msg = err?.message || "Не удалось запустить добавление ссылки";
+      setLinkTasksError(msg);
+      showToast({
+        type: "error",
+        title: "Ошибка запуска",
+        message: msg
+      });
+    } finally {
+      setLinkTasksLoading(false);
+    }
+  };
+
+  const removeLinkTask = async () => {
+    if (!id) return;
+    if (!canRemoveLink) {
+      showToast({
+        type: "error",
+        title: "Удалять нечего",
+        message: "Ссылка на сайте не найдена."
+      });
+      return;
+    }
+    if (!confirm("Удалить ссылку с сайта?")) return;
+    setLinkTasksError(null);
+    setLinkNotice(null);
+    setLinkTasksLoading(true);
+    try {
+      await authFetch(`/api/domains/${id}/link/remove`, { method: "POST" });
+      setLinkNotice("Запуск удаления ссылки инициирован");
+      showToast({
+        type: "success",
+        title: "Удаление ссылки запущено",
+        message: domain?.url || undefined
+      });
+      await load(true);
+    } catch (err: any) {
+      const msg = err?.message || "Не удалось запустить удаление ссылки";
+      setLinkTasksError(msg);
+      showToast({
+        type: "error",
+        title: "Ошибка удаления",
+        message: msg
+      });
     } finally {
       setLinkTasksLoading(false);
     }
@@ -210,7 +261,7 @@ export default function DomainPage() {
         headers,
         body: payload ? JSON.stringify(payload) : undefined
       });
-      await load();
+      await load(true);
     } catch (err: any) {
       const msg = err?.message || "Не удалось запустить генерацию";
       setError(msg);
@@ -245,7 +296,7 @@ export default function DomainPage() {
     setError(null);
     try {
       await del(`/api/generations/${genId}`);
-      await load();
+      await load(true);
     } catch (err: any) {
       setError(err?.message || "Не удалось удалить запуск");
     } finally {
@@ -259,7 +310,7 @@ export default function DomainPage() {
     setError(null);
     try {
       await patch(`/api/generations/${genId}`, { action: "pause" });
-      await load();
+      await load(true);
     } catch (err: any) {
       setError(err?.message || "Не удалось приостановить задачу");
     } finally {
@@ -272,7 +323,7 @@ export default function DomainPage() {
     setError(null);
     try {
       await patch(`/api/generations/${genId}`, { action: "resume" });
-      await load();
+      await load(true);
     } catch (err: any) {
       setError(err?.message || "Не удалось возобновить задачу");
     } finally {
@@ -286,7 +337,7 @@ export default function DomainPage() {
     setError(null);
     try {
       await patch(`/api/generations/${genId}`, { action: "cancel" });
-      await load();
+      await load(true);
     } catch (err: any) {
       setError(err?.message || "Не удалось отменить задачу");
     } finally {
@@ -301,6 +352,16 @@ export default function DomainPage() {
   const mainButtonText = !latestGen ? "Запустить генерацию" : isRegenerate ? "Перегенерировать всё" : "Продолжить генерацию";
   const mainButtonIcon = isRegenerate ? <FiRefreshCw /> : <FiPlay />;
   const mainButtonDisabled = loading || Boolean(latestGen && activeStatusesList.includes(latestGen.status));
+  const visibleLinkTasks = showAllLinkTasks ? linkTasks : linkTasks.slice(0, 2);
+  const normalizedLinkStatus = (domain?.link_status || "").toLowerCase();
+  const hasActiveLink = ["inserted", "generated"].includes(normalizedLinkStatus);
+  const hasLinkInTasks =
+    !normalizedLinkStatus &&
+    linkTasks.some((task) => (task.action || "insert") !== "remove" && ["inserted", "generated"].includes(task.status));
+  const removingInFlight =
+    normalizedLinkStatus === "removing" ||
+    linkTasks.some((task) => (task.action || "") === "remove" && ["pending", "searching", "removing"].includes(task.status));
+  const canRemoveLink = (hasActiveLink || hasLinkInTasks) && !removingInFlight;
 
   useEffect(() => {
     load();
@@ -454,7 +515,7 @@ export default function DomainPage() {
               </>
             )}
             <button
-              onClick={load}
+              onClick={() => load(true)}
               disabled={loading}
               className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
             >
@@ -605,6 +666,19 @@ export default function DomainPage() {
             >
               <FiPlay /> Запустить добавление
             </button>
+            {canRemoveLink ? (
+              <button
+                onClick={removeLinkTask}
+                disabled={linkTasksLoading}
+                className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
+              >
+                <FiTrash2 /> Удалить ссылку
+              </button>
+            ) : (
+              <span className="hidden sm:inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
+                <FiInfo className="h-3 w-3" /> Нет ссылки
+              </span>
+            )}
           </div>
         </div>
         {linkNotice && <div className="text-sm text-emerald-500">{linkNotice}</div>}
@@ -649,7 +723,17 @@ export default function DomainPage() {
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <div className="text-xs uppercase tracking-wide text-slate-400">История задач</div>
-                <span className="text-xs text-slate-500 dark:text-slate-400">Всего: {linkTasks.length}</span>
+                <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                  <span>Всего: {linkTasks.length}</span>
+                  {linkTasks.length > 2 && (
+                    <button
+                      onClick={() => setShowAllLinkTasks((v) => !v)}
+                      className="text-indigo-600 hover:underline"
+                    >
+                      {showAllLinkTasks ? "Скрыть" : "Показать все"}
+                    </button>
+                  )}
+                </div>
               </div>
               {linkTasks.length === 0 ? (
                 <div className="text-sm text-slate-500 dark:text-slate-400">Нет данных по задачам.</div>
@@ -666,7 +750,7 @@ export default function DomainPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                      {linkTasks.slice(0, 6).map((task) => (
+                      {visibleLinkTasks.map((task) => (
                         <tr key={task.id}>
                           <td className="py-2 pr-4 font-mono text-xs">{task.id.slice(0, 8)}</td>
                           <td className="py-2 pr-4">
@@ -701,25 +785,49 @@ export default function DomainPage() {
         )}
         {linkTab === "logs" && (
           <div className="space-y-4">
+            <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+              <span>Всего: {linkTasks.length}</span>
+              {linkTasks.length > 2 && (
+                <button
+                  onClick={() => setShowAllLinkTasks((v) => !v)}
+                  className="text-indigo-600 hover:underline"
+                >
+                  {showAllLinkTasks ? "Скрыть" : "Показать все"}
+                </button>
+              )}
+            </div>
             {linkTasks.length === 0 ? (
               <div className="text-sm text-slate-500 dark:text-slate-400">Нет задач для отображения.</div>
             ) : (
-              linkTasks.slice(0, 6).map((task) => {
-                const steps = [
-                  { id: "pending", label: "В очереди" },
-                  { id: "searching", label: "Поиск места" },
-                  { id: "found", label: "Место найдено" },
-                  { id: "inserted", label: "Вставка ссылки" },
-                  { id: "generated", label: "Генерация текста" }
-                ];
+              visibleLinkTasks.map((task) => {
+                const isRemove = (task.action || "insert") === "remove";
+                const steps = isRemove
+                  ? [
+                      { id: "pending", label: "В очереди" },
+                      { id: "searching", label: "Поиск ссылки" },
+                      { id: "removing", label: "Удаление" },
+                      { id: "removed", label: "Удалено" }
+                    ]
+                  : [
+                      { id: "pending", label: "В очереди" },
+                      { id: "searching", label: "Поиск места" },
+                      { id: "found", label: "Место найдено" },
+                      { id: "inserted", label: "Вставка ссылки" },
+                      { id: "generated", label: "Генерация текста" }
+                    ];
                 const reached = new Set<string>();
-                if (["pending", "searching", "found", "inserted", "generated", "failed"].includes(task.status)) {
+                if (["pending", "searching", "found", "inserted", "generated", "removing", "removed", "failed"].includes(task.status)) {
                   reached.add("pending");
                 }
-                if (["searching", "found", "inserted", "generated"].includes(task.status)) reached.add("searching");
-                if (["found", "inserted", "generated"].includes(task.status)) reached.add("found");
-                if (["inserted"].includes(task.status)) reached.add("inserted");
-                if (["generated"].includes(task.status)) reached.add("generated");
+                if (["searching", "found", "inserted", "generated", "removing", "removed"].includes(task.status)) reached.add("searching");
+                if (!isRemove) {
+                  if (["found", "inserted", "generated"].includes(task.status)) reached.add("found");
+                  if (["inserted"].includes(task.status)) reached.add("inserted");
+                  if (["generated"].includes(task.status)) reached.add("generated");
+                } else {
+                  if (["removing", "removed"].includes(task.status)) reached.add("removing");
+                  if (["removed"].includes(task.status)) reached.add("removed");
+                }
                 return (
                   <div key={task.id} className="rounded-lg border border-slate-200 dark:border-slate-800 p-3 bg-slate-50/60 dark:bg-slate-900/60 space-y-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -855,7 +963,7 @@ export default function DomainPage() {
                   <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">{g.updated_at ? new Date(g.updated_at).toLocaleString() : "—"}</td>
                   <td className="py-3 pr-4">
                     <div className="flex items-center gap-3">
-                    <Link href={`/queue/${g.id}`} target="_blank" className="text-indigo-600 hover:underline">
+                    <Link href={`/queue/${g.id}`} className="text-indigo-600 hover:underline">
                       Открыть
                     </Link>
                       {g.status === "paused" && (
@@ -979,9 +1087,11 @@ function LinkTaskStatusBadge({ status }: { status: string }) {
   const map: Record<string, { text: string; color: string; icon: React.ReactNode }> = {
     pending: { text: "Ожидает", color: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200", icon: <FiClock /> },
     searching: { text: "Поиск", color: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-200", icon: <FiRefreshCw /> },
+    removing: { text: "Удаление", color: "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-200", icon: <FiRefreshCw /> },
     found: { text: "Найдено", color: "bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-200", icon: <FiCheck /> },
     inserted: { text: "Вставлено", color: "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-200", icon: <FiCheck /> },
     generated: { text: "Сгенерировано", color: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-200", icon: <FiCheck /> },
+    removed: { text: "Удалено", color: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200", icon: <FiCheck /> },
     failed: { text: "Ошибка", color: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-200", icon: <FiAlertTriangle /> }
   };
   const cfg = map[status] || { text: status, color: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200", icon: <FiClock /> };

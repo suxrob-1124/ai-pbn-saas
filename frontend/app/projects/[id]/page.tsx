@@ -2,9 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
-import { authFetch, post, patch, del } from "../../../lib/http";
+import { authFetch, authFetchCached, post, patch, del } from "../../../lib/http";
 import { useAuthGuard } from "../../../lib/useAuth";
-import { FiPlay, FiRefreshCw, FiList, FiClock, FiPauseCircle, FiCheck, FiTrash2, FiUsers, FiX, FiKey, FiAlertCircle, FiLink } from "react-icons/fi";
+import { FiPlay, FiRefreshCw, FiList, FiClock, FiPauseCircle, FiCheck, FiTrash2, FiUsers, FiX, FiKey, FiAlertCircle, FiLink, FiInfo } from "react-icons/fi";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { showToast } from "../../../lib/toastStore";
@@ -22,6 +22,7 @@ type Project = {
   name: string;
   target_country?: string;
   target_language?: string;
+  timezone?: string;
   status?: string;
   ownerHasApiKey?: boolean;
 };
@@ -45,11 +46,21 @@ type Domain = {
 
 type Generation = {
   id: string;
+  domain_id?: string;
+  domain_url?: string | null;
   status: string;
   progress: number;
   error?: string;
   created_at?: string;
+  updated_at?: string;
+  started_at?: string;
   finished_at?: string;
+};
+
+type ProjectSummary = {
+  project: Project;
+  domains: Domain[];
+  members: Array<{ email: string; role: string; createdAt: string }>;
 };
 
 const QUEUE_STATUS_LABELS: Record<string, string> = {
@@ -77,6 +88,38 @@ export default function ProjectDetailPage() {
   const [openRuns, setOpenRuns] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [projectName, setProjectName] = useState("");
+  const [projectCountry, setProjectCountry] = useState("");
+  const [projectLanguage, setProjectLanguage] = useState("");
+  const [projectTimezone, setProjectTimezone] = useState("");
+  const [timezoneQuery, setTimezoneQuery] = useState("");
+  const [recentTimezones, setRecentTimezones] = useState<string[]>([]);
+  const [projectSettingsLoading, setProjectSettingsLoading] = useState(false);
+  const [projectSettingsError, setProjectSettingsError] = useState<string | null>(null);
+  const timezoneFallback = useMemo(
+    () => ["UTC", "Europe/Moscow", "Europe/Paris", "Europe/London", "Europe/Berlin", "Asia/Bangkok", "Asia/Tokyo", "Asia/Singapore", "America/New_York", "America/Los_Angeles"],
+    []
+  );
+  const availableTimezones = useMemo(() => {
+    let zones: string[] = [];
+    try {
+      const supported = (Intl as unknown as { supportedValuesOf?: (key: string) => string[] }).supportedValuesOf;
+      if (typeof supported === "function") {
+        zones = supported("timeZone") || [];
+      }
+    } catch {
+      zones = [];
+    }
+    if (zones.length === 0) {
+      zones = timezoneFallback;
+    }
+    const unique = Array.from(new Set(zones)).sort();
+    const current = (projectTimezone || "").trim();
+    if (current && !unique.includes(current)) {
+      unique.unshift(current);
+    }
+    return unique;
+  }, [projectTimezone, timezoneFallback]);
 
   const [url, setUrl] = useState("");
   const [keyword, setKeyword] = useState("");
@@ -86,7 +129,7 @@ export default function ProjectDetailPage() {
   const [importText, setImportText] = useState("");
   const [keywordEdits, setKeywordEdits] = useState<Record<string, string>>({});
   const [linkEdits, setLinkEdits] = useState<Record<string, { anchor: string; acceptor: string }>>({});
-  const [activeTab, setActiveTab] = useState<"domains" | "members" | "schedules" | "queue">("domains");
+  const [activeTab, setActiveTab] = useState<"domains" | "members" | "schedules" | "queue" | "errors" | "settings">("domains");
   const [members, setMembers] = useState<Array<{ email: string; role: string; createdAt: string }>>([]);
   const [newMemberEmail, setNewMemberEmail] = useState("");
   const [newMemberRole, setNewMemberRole] = useState("editor");
@@ -130,18 +173,33 @@ export default function ProjectDetailPage() {
   const [queueError, setQueueError] = useState<string | null>(null);
   const [queuePermission, setQueuePermission] = useState(false);
   const [linkLoadingId, setLinkLoadingId] = useState<string | null>(null);
+  const [projectErrors, setProjectErrors] = useState<Generation[]>([]);
+  const [projectErrorsLoading, setProjectErrorsLoading] = useState(false);
+  const [projectErrorsError, setProjectErrorsError] = useState<string | null>(null);
 
-  const load = async () => {
+  const load = async (force = false) => {
     setLoading(true);
     setError(null);
     try {
-      const p = await authFetch<Project>(`/api/projects/${projectId}`);
+      const summary = await authFetchCached<ProjectSummary>(`/api/projects/${projectId}/summary`, undefined, {
+        ttlMs: 15000,
+        bypassCache: force
+      });
+      const p = summary?.project || null;
+      const d = Array.isArray(summary?.domains) ? summary.domains : [];
+      const m = Array.isArray(summary?.members) ? summary.members : [];
       setProject(p);
-      const d = await authFetch<Domain[]>(`/api/projects/${projectId}/domains`);
-      setDomains(Array.isArray(d) ? d : []);
+      setCountry(p?.target_country || "");
+      setLanguage(p?.target_language || "");
+      setProjectName(p?.name || "");
+      setProjectCountry(p?.target_country || "");
+      setProjectLanguage(p?.target_language || "");
+      setProjectTimezone(p?.timezone || "UTC");
+      setDomains(d);
+      setMembers(m);
       const edits: Record<string, string> = {};
       const linkDrafts: Record<string, { anchor: string; acceptor: string }> = {};
-      (Array.isArray(d) ? d : []).forEach((item) => {
+      d.forEach((item) => {
         edits[item.id] = item.main_keyword || "";
         linkDrafts[item.id] = {
           anchor: item.link_anchor_text || "",
@@ -150,17 +208,10 @@ export default function ProjectDetailPage() {
       });
       setKeywordEdits(edits);
       setLinkEdits(linkDrafts);
-      setCountry(p?.target_country || "");
-      setLanguage(p?.target_language || "");
-      
-      // Загружаем участников
-      try {
-        const m = await authFetch<Array<{ email: string; role: string; createdAt: string }>>(`/api/projects/${projectId}/members`);
-        setMembers(Array.isArray(m) ? m : []);
-      } catch {
-        // Игнорируем ошибки загрузки участников (может не быть прав)
-      }
     } catch (err: any) {
+      setProject(null);
+      setDomains([]);
+      setMembers([]);
       setError(err?.message || "Не удалось загрузить проект");
     } finally {
       setLoading(false);
@@ -170,6 +221,155 @@ export default function ProjectDetailPage() {
   const isPermissionError = (message: string) =>
     /permission|access denied|admin only|forbidden/i.test(message);
 
+  const resolvedProjectTimezone = (projectTimezone || project?.timezone || "UTC").trim() || "UTC";
+
+  const filteredTimezones = useMemo(() => {
+    const q = timezoneQuery.trim().toLowerCase();
+    if (!q) return availableTimezones;
+    const filtered = availableTimezones.filter((tz) => tz.toLowerCase().includes(q));
+    const current = (projectTimezone || "").trim();
+    if (current && !filtered.includes(current)) {
+      return [current, ...filtered];
+    }
+    return filtered;
+  }, [availableTimezones, projectTimezone, timezoneQuery]);
+
+  const timezoneGroups = useMemo(() => {
+    const groups = new Map<string, string[]>();
+    filteredTimezones.forEach((tz) => {
+      const parts = tz.split("/");
+      const group = parts.length > 1 ? parts[0] : "Other";
+      const list = groups.get(group) || [];
+      list.push(tz);
+      groups.set(group, list);
+    });
+    return Array.from(groups.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [filteredTimezones]);
+
+  const recentFiltered = useMemo(() => {
+    const q = timezoneQuery.trim().toLowerCase();
+    const list = recentTimezones.filter((tz) => availableTimezones.includes(tz));
+    if (!q) return list;
+    return list.filter((tz) => tz.toLowerCase().includes(q));
+  }, [availableTimezones, recentTimezones, timezoneQuery]);
+
+  const getTimezoneOffsetLabel = useMemo(() => {
+    const cache = new Map<string, string>();
+    return (tz: string) => {
+      if (cache.has(tz)) return cache.get(tz) as string;
+      try {
+        const now = new Date();
+        const formatter = new Intl.DateTimeFormat("en-US", {
+          timeZone: tz,
+          hour12: false,
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit"
+        });
+        const parts = formatter.formatToParts(now);
+        const partMap: Record<string, string> = {};
+        parts.forEach((p) => {
+          if (p.type !== "literal") partMap[p.type] = p.value;
+        });
+        const asUTC = Date.UTC(
+          Number(partMap.year),
+          Number(partMap.month) - 1,
+          Number(partMap.day),
+          Number(partMap.hour),
+          Number(partMap.minute),
+          Number(partMap.second)
+        );
+        const offsetMinutes = Math.round((asUTC - now.getTime()) / 60000);
+        const sign = offsetMinutes >= 0 ? "+" : "-";
+        const abs = Math.abs(offsetMinutes);
+        const hh = String(Math.floor(abs / 60)).padStart(2, "0");
+        const mm = String(abs % 60).padStart(2, "0");
+        const label = `UTC${sign}${hh}:${mm}`;
+        cache.set(tz, label);
+        return label;
+      } catch {
+        cache.set(tz, "");
+        return "";
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem("obz_recent_timezones");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          setRecentTimezones(parsed.filter((v) => typeof v === "string"));
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const updateRecentTimezone = (tz: string) => {
+    setRecentTimezones((prev) => {
+      const next = [tz, ...prev.filter((v) => v !== tz)].slice(0, 5);
+      try {
+        window.localStorage.setItem("obz_recent_timezones", JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  };
+
+  const deriveStrategy = (config: Record<string, unknown> | undefined) => {
+    const cfg = config || {};
+    if (typeof (cfg as any).cron === "string" || typeof (cfg as any).interval === "string") {
+      return "custom";
+    }
+    if (
+      typeof (cfg as any).weekday === "string" ||
+      typeof (cfg as any).day === "string" ||
+      typeof (cfg as any).day === "number"
+    ) {
+      return "weekly";
+    }
+    if (typeof (cfg as any).time === "string") {
+      return "daily";
+    }
+    return "immediate";
+  };
+
+  const normalizeSchedule = (schedule: ScheduleDTO | null) => {
+    if (!schedule) return null;
+    const config = schedule.config && typeof schedule.config === "object" ? schedule.config : {};
+    return {
+      ...schedule,
+      config,
+      strategy: schedule.strategy || deriveStrategy(config)
+    };
+  };
+
+  const formatDateTime = (value?: string, tzOverride?: string) => {
+    if (!value) return "—";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "—";
+    const tz = (tzOverride || resolvedProjectTimezone || "").trim();
+    if (tz) {
+      try {
+        return new Intl.DateTimeFormat("ru-RU", {
+          dateStyle: "short",
+          timeStyle: "medium",
+          timeZone: tz
+        }).format(date);
+      } catch {
+        // fallback to local
+      }
+    }
+    return date.toLocaleString();
+  };
+
   const loadSchedules = async () => {
     if (!projectId) return;
     setSchedulesLoading(true);
@@ -178,8 +378,8 @@ export default function ProjectDetailPage() {
     try {
       const list = await listSchedules(projectId);
       const normalized = Array.isArray(list) ? list : [];
-      setSchedules(normalized);
       setSchedulesMultiple(normalized.length > 1);
+      setSchedules(normalized);
       if (normalized.length > 0) {
         applyScheduleToForm(normalized[0]);
       } else {
@@ -204,14 +404,17 @@ export default function ProjectDetailPage() {
     setLinkSchedulePermission(false);
     try {
       const schedule = await getLinkSchedule(projectId);
-      setLinkSchedule(schedule);
-      if (schedule) {
-        applyLinkScheduleToForm(schedule);
+      const normalized = normalizeSchedule(schedule);
+      setLinkSchedule(normalized);
+      if (normalized) {
+        applyLinkScheduleToForm(normalized);
       } else {
         resetLinkScheduleForm();
       }
     } catch (err: any) {
       const msg = err?.message || "Не удалось загрузить расписание ссылок";
+      setLinkSchedule(null);
+      resetLinkScheduleForm();
       if (isPermissionError(msg)) {
         setLinkSchedulePermission(true);
       } else {
@@ -239,6 +442,75 @@ export default function ProjectDetailPage() {
       }
     } finally {
       setQueueLoading(false);
+    }
+  };
+
+  const loadProjectErrors = async (force = false) => {
+    if (!projectId) return;
+    setProjectErrorsLoading(true);
+    setProjectErrorsError(null);
+    try {
+      const list = await authFetchCached<Generation[]>(`/api/generations?limit=100`, undefined, {
+        ttlMs: 15000,
+        bypassCache: force
+      });
+      const normalized = Array.isArray(list) ? list : [];
+      const domainIDs = new Set(domains.map((d) => d.id));
+      const errors = normalized
+        .filter((g) => g.status === "error" && g.domain_id && domainIDs.has(g.domain_id))
+        .sort((a, b) => {
+          const aTime = new Date((a.updated_at || a.finished_at || a.started_at || a.created_at || "") as string).getTime() || 0;
+          const bTime = new Date((b.updated_at || b.finished_at || b.started_at || b.created_at || "") as string).getTime() || 0;
+          return bTime - aTime;
+        })
+        .slice(0, 20);
+      setProjectErrors(errors);
+    } catch (err: any) {
+      setProjectErrorsError(err?.message || "Не удалось загрузить ошибки");
+      setProjectErrors([]);
+    } finally {
+      setProjectErrorsLoading(false);
+    }
+  };
+
+  const saveProjectSettings = async () => {
+    if (!projectId) return;
+    const name = projectName.trim();
+    if (!name) {
+      setProjectSettingsError("Название проекта не может быть пустым");
+      return;
+    }
+    setProjectSettingsLoading(true);
+    setProjectSettingsError(null);
+    try {
+      const payload = {
+        name,
+        country: projectCountry.trim(),
+        language: projectLanguage.trim(),
+        status: project?.status || "draft",
+        timezone: resolvedProjectTimezone
+      };
+      const updated = await authFetch<Project>(`/api/projects/${projectId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      setProject(updated);
+      setProjectName(updated.name || "");
+      setProjectCountry(updated.target_country || "");
+      setProjectLanguage(updated.target_language || "");
+      setProjectTimezone(updated.timezone || "UTC");
+      showToast({
+        type: "success",
+        title: "Настройки проекта сохранены",
+        message: updated.name
+      });
+    } catch (err: any) {
+      const msg = err?.message || "Не удалось сохранить настройки проекта";
+      setProjectSettingsError(msg);
+      showToast({ type: "error", title: "Ошибка сохранения", message: msg });
+    } finally {
+      setProjectSettingsLoading(false);
     }
   };
 
@@ -276,15 +548,22 @@ export default function ProjectDetailPage() {
 
   const applyScheduleToForm = (schedule: ScheduleDTO) => {
     const config = schedule.config || {};
+    const strategy = schedule.strategy || deriveStrategy(config as Record<string, unknown>);
+    const weeklyDay =
+      typeof (config as any).weekday === "string"
+        ? String((config as any).weekday)
+        : typeof (config as any).day === "string"
+        ? String((config as any).day)
+        : "mon";
     setScheduleForm({
       name: schedule.name,
       description: schedule.description ?? "",
-      strategy: schedule.strategy,
+      strategy,
       isActive: schedule.isActive,
       dailyLimit: typeof config.limit === "number" ? String(config.limit) : "5",
       dailyTime: typeof config.time === "string" ? config.time : "09:00",
       weeklyLimit: typeof config.limit === "number" ? String(config.limit) : "3",
-      weeklyDay: typeof config.day === "string" ? config.day : "mon",
+      weeklyDay,
       weeklyTime: typeof config.time === "string" ? config.time : "09:00",
       customCron: typeof config.cron === "string" ? config.cron : "0 9 * * *"
     });
@@ -293,15 +572,22 @@ export default function ProjectDetailPage() {
 
   const applyLinkScheduleToForm = (schedule: ScheduleDTO) => {
     const config = schedule.config || {};
+    const strategy = schedule.strategy || deriveStrategy(config as Record<string, unknown>);
+    const weeklyDay =
+      typeof (config as any).weekday === "string"
+        ? String((config as any).weekday)
+        : typeof (config as any).day === "string"
+        ? String((config as any).day)
+        : "mon";
     setLinkScheduleForm({
       name: schedule.name,
       description: schedule.description ?? "",
-      strategy: schedule.strategy,
+      strategy,
       isActive: schedule.isActive,
       dailyLimit: typeof config.limit === "number" ? String(config.limit) : "5",
       dailyTime: typeof config.time === "string" ? config.time : "09:00",
       weeklyLimit: typeof config.limit === "number" ? String(config.limit) : "3",
-      weeklyDay: typeof config.day === "string" ? config.day : "mon",
+      weeklyDay,
       weeklyTime: typeof config.time === "string" ? config.time : "09:00",
       customCron: typeof config.cron === "string" ? config.cron : "0 9 * * *"
     });
@@ -319,7 +605,8 @@ export default function ProjectDetailPage() {
           description: scheduleForm.description || undefined,
           strategy: scheduleForm.strategy,
           config,
-          isActive: scheduleForm.isActive
+          isActive: scheduleForm.isActive,
+          timezone: editingSchedule.timezone || resolvedProjectTimezone
         });
         showToast({
           type: "success",
@@ -332,7 +619,8 @@ export default function ProjectDetailPage() {
           description: scheduleForm.description || undefined,
           strategy: scheduleForm.strategy,
           config,
-          isActive: scheduleForm.isActive
+          isActive: scheduleForm.isActive,
+          timezone: resolvedProjectTimezone
         });
         showToast({
           type: "success",
@@ -464,15 +752,19 @@ export default function ProjectDetailPage() {
         description: linkScheduleForm.description || undefined,
         strategy: linkScheduleForm.strategy,
         config,
-        isActive: linkScheduleForm.isActive
+        isActive: linkScheduleForm.isActive,
+        timezone: linkSchedule?.timezone || resolvedProjectTimezone
       });
       showToast({
         type: "success",
         title: "Расписание ссылок сохранено",
         message: saved.name
       });
-      setLinkSchedule(saved);
-      applyLinkScheduleToForm(saved);
+      const normalized = normalizeSchedule(saved);
+      setLinkSchedule(normalized);
+      if (normalized) {
+        applyLinkScheduleToForm(normalized);
+      }
     } catch (err: any) {
       const msg = err?.message || "Не удалось сохранить расписание ссылок";
       setLinkScheduleError(msg);
@@ -548,6 +840,7 @@ export default function ProjectDetailPage() {
       });
       setLinkSchedule(null);
       resetLinkScheduleForm();
+      await loadLinkSchedule();
     } catch (err: any) {
       const msg = err?.message || "Не удалось удалить расписание ссылок";
       setLinkScheduleError(msg);
@@ -597,6 +890,12 @@ export default function ProjectDetailPage() {
     }
   }, [activeTab, projectId]);
 
+  useEffect(() => {
+    if (activeTab === "errors") {
+      loadProjectErrors();
+    }
+  }, [activeTab, projectId, domains]);
+
   const addDomain = async () => {
     if (!url.trim()) return;
     setLoading(true);
@@ -606,7 +905,7 @@ export default function ProjectDetailPage() {
       setUrl("");
       setKeyword("");
       setExclude("");
-      await load();
+      await load(true);
     } catch (err: any) {
       setError(err?.message || "Не удалось добавить домен");
     } finally {
@@ -621,7 +920,7 @@ export default function ProjectDetailPage() {
     try {
       await post(`/api/projects/${projectId}/domains/import`, { text: importText });
       setImportText("");
-      await load();
+      await load(true);
     } catch (err: any) {
       setError(err?.message || "Не удалось импортировать");
     } finally {
@@ -648,7 +947,7 @@ export default function ProjectDetailPage() {
     setError(null);
     try {
       await post(`/api/domains/${id}/generate`);
-      await load();
+      await load(true);
     } catch (err: any) {
       const errMsg = err?.message || "Не удалось запустить генерацию";
       // Улучшаем сообщение об ошибке, если это связано с API ключом
@@ -672,7 +971,7 @@ export default function ProjectDetailPage() {
         title: "Ключевое слово сохранено",
         message: domainById[id]?.url || ""
       });
-      await load();
+      await load(true);
     } catch (err: any) {
       showToast({
         type: "error",
@@ -699,7 +998,7 @@ export default function ProjectDetailPage() {
         title: "Ссылка сохранена",
         message: domainById[id]?.url || ""
       });
-      await load();
+      await load(true);
     } catch (err: any) {
       showToast({
         type: "error",
@@ -718,7 +1017,7 @@ export default function ProjectDetailPage() {
     setError(null);
     try {
       await del(`/api/domains/${id}`);
-      await load();
+      await load(true);
     } catch (err: any) {
       setError(err?.message || "Не удалось удалить домен");
     } finally {
@@ -729,6 +1028,8 @@ export default function ProjectDetailPage() {
   const runLinkTask = async (id: string) => {
     const domain = domainById[id];
     if (!domain) return;
+    const linkStatus = (domain.link_status || "").toLowerCase();
+    const hasActiveLink = ["inserted", "generated"].includes(linkStatus);
     const anchor = (domain.link_anchor_text || "").trim();
     const acceptor = (domain.link_acceptor_url || "").trim();
     const draft = linkEdits[id] || { anchor, acceptor };
@@ -750,20 +1051,66 @@ export default function ProjectDetailPage() {
       });
       return;
     }
-    const hasExistingLink = Boolean(domain.link_status || domain.link_last_task_id);
     setLinkLoadingId(id);
     try {
       await post(`/api/domains/${id}/link/run`);
       showToast({
         type: "success",
-        title: hasExistingLink ? "Ссылка обновляется" : "Ссылка добавляется",
+        title: hasActiveLink ? "Ссылка обновляется" : "Ссылка добавляется",
         message: domain.url
       });
-      await load();
+      await load(true);
     } catch (err: any) {
       showToast({
         type: "error",
         title: "Не удалось запустить ссылку",
+        message: err?.message || "Попробуйте позже"
+      });
+    } finally {
+      setLinkLoadingId(null);
+    }
+  };
+
+  const removeLinkTask = async (id: string) => {
+    const domain = domainById[id];
+    if (!domain) return;
+    const linkStatus = (domain.link_status || "").toLowerCase();
+    const canRemoveLink = ["inserted", "generated"].includes(linkStatus);
+    const anchor = (domain.link_anchor_text || "").trim();
+    const acceptor = (domain.link_acceptor_url || "").trim();
+    const draft = linkEdits[id] || { anchor, acceptor };
+    const draftAnchor = (draft.anchor || "").trim();
+    const draftAcceptor = (draft.acceptor || "").trim();
+    if (draftAnchor !== anchor || draftAcceptor !== acceptor) {
+      showToast({
+        type: "error",
+        title: "Сначала сохраните ссылку",
+        message: "В полях есть несохранённые изменения."
+      });
+      return;
+    }
+    if (!canRemoveLink) {
+      showToast({
+        type: "error",
+        title: "Удалять нечего",
+        message: "Ссылка на сайте не найдена."
+      });
+      return;
+    }
+    if (!confirm(`Удалить ссылку с сайта ${domain.url}?`)) return;
+    setLinkLoadingId(id);
+    try {
+      await post(`/api/domains/${id}/link/remove`);
+      showToast({
+        type: "success",
+        title: "Ссылка удаляется",
+        message: domain.url
+      });
+      await load(true);
+    } catch (err: any) {
+      showToast({
+        type: "error",
+        title: "Не удалось удалить ссылку",
         message: err?.message || "Попробуйте позже"
       });
     } finally {
@@ -792,7 +1139,7 @@ export default function ProjectDetailPage() {
     try {
       await post(`/api/projects/${projectId}/members`, { email: newMemberEmail.trim(), role: newMemberRole });
       setNewMemberEmail("");
-      await load();
+      await load(true);
     } catch (err: any) {
       setError(err?.message || "Не удалось добавить участника");
     } finally {
@@ -805,7 +1152,7 @@ export default function ProjectDetailPage() {
     setError(null);
     try {
       await patch(`/api/projects/${projectId}/members/${encodeURIComponent(email)}`, { role });
-      await load();
+      await load(true);
     } catch (err: any) {
       setError(err?.message || "Не удалось обновить роль");
     } finally {
@@ -819,7 +1166,7 @@ export default function ProjectDetailPage() {
     setError(null);
     try {
       await del(`/api/projects/${projectId}/members/${encodeURIComponent(email)}`);
-      await load();
+      await load(true);
     } catch (err: any) {
       setError(err?.message || "Не удалось удалить участника");
     } finally {
@@ -851,7 +1198,7 @@ export default function ProjectDetailPage() {
           </div>
           <div className="flex gap-2">
             <button
-              onClick={load}
+              onClick={() => load(true)}
               disabled={loading}
               className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
             >
@@ -932,6 +1279,26 @@ export default function ProjectDetailPage() {
             }`}
           >
             Очередь
+          </button>
+          <button
+            onClick={() => setActiveTab("errors")}
+            className={`px-4 py-2 text-sm font-semibold border-b-2 transition-colors ${
+              activeTab === "errors"
+                ? "border-indigo-600 text-indigo-600 dark:border-indigo-400 dark:text-indigo-400"
+                : "border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+            }`}
+          >
+            Ошибки
+          </button>
+          <button
+            onClick={() => setActiveTab("settings")}
+            className={`px-4 py-2 text-sm font-semibold border-b-2 transition-colors ${
+              activeTab === "settings"
+                ? "border-indigo-600 text-indigo-600 dark:border-indigo-400 dark:text-indigo-400"
+                : "border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+            }`}
+          >
+            Настройки
           </button>
           <button
             onClick={() => setActiveTab("members")}
@@ -1019,11 +1386,15 @@ export default function ProjectDetailPage() {
           <span className="text-xs text-slate-500 dark:text-slate-400">Всего: {domains.length}</span>
         </div>
         <div className="space-y-3">
-          {domains.map((d) => (
-            <div
-              key={d.id}
-              className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white/60 dark:bg-slate-900/40 p-4 shadow-sm space-y-3"
-            >
+          {domains.map((d) => {
+            const linkStatus = (d.link_status || "").toLowerCase();
+            const hasActiveLink = ["inserted", "generated"].includes(linkStatus);
+            const canRemoveLink = hasActiveLink;
+            return (
+              <div
+                key={d.id}
+                className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white/60 dark:bg-slate-900/40 p-4 shadow-sm space-y-3"
+              >
               <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                 <div className="space-y-2">
                   <div className="flex flex-wrap items-center gap-2">
@@ -1034,7 +1405,7 @@ export default function ProjectDetailPage() {
                     <LinkStatusBadge domain={d} />
                   </div>
                   <div className="text-xs text-slate-500 dark:text-slate-400">
-                    Обновлено: {d.updated_at ? new Date(d.updated_at).toLocaleString() : "—"}
+                    Обновлено: {formatDateTime(d.updated_at)}
                   </div>
                   <div className="text-xs text-slate-400">
                     Страна: {d.target_country || "—"} · Язык: {d.target_language || "—"}
@@ -1048,17 +1419,42 @@ export default function ProjectDetailPage() {
                     className="hidden sm:inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   >
                     <FiLink />
-                    {d.link_status || d.link_last_task_id ? "Обновить ссылку" : "Добавить ссылку"}
+                    {hasActiveLink ? "Обновить ссылку" : "Добавить ссылку"}
                   </button>
                   <button
                     onClick={() => runLinkTask(d.id)}
                     disabled={loading || linkLoadingId === d.id}
                     className="inline-flex sm:hidden items-center justify-center rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                    title={d.link_status || d.link_last_task_id ? "Обновить ссылку" : "Добавить ссылку"}
-                    aria-label={d.link_status || d.link_last_task_id ? "Обновить ссылку" : "Добавить ссылку"}
+                    title={hasActiveLink ? "Обновить ссылку" : "Добавить ссылку"}
+                    aria-label={hasActiveLink ? "Обновить ссылку" : "Добавить ссылку"}
                   >
                     <FiLink />
                   </button>
+                  {canRemoveLink ? (
+                    <>
+                      <button
+                        onClick={() => removeLinkTask(d.id)}
+                        disabled={loading || linkLoadingId === d.id}
+                        className="hidden sm:inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
+                      >
+                        <FiTrash2 />
+                        Удалить ссылку
+                      </button>
+                      <button
+                        onClick={() => removeLinkTask(d.id)}
+                        disabled={loading || linkLoadingId === d.id}
+                        className="inline-flex sm:hidden items-center justify-center rounded-lg border border-red-200 bg-white px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
+                        title="Удалить ссылку"
+                        aria-label="Удалить ссылку"
+                      >
+                        <FiTrash2 />
+                      </button>
+                    </>
+                  ) : (
+                    <span className="hidden sm:inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
+                      <FiInfo className="h-3 w-3" /> Нет ссылки
+                    </span>
+                  )}
                   <button
                     onClick={() => loadGens(d.id)}
                     className="hidden sm:inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
@@ -1198,8 +1594,9 @@ export default function ProjectDetailPage() {
               </div>
 
               {openRuns[d.id] && gens[d.id] && <RunsList runs={gens[d.id]} />}
-            </div>
-          ))}
+              </div>
+            );
+          })}
         </div>
       </div>
           </>
@@ -1215,11 +1612,14 @@ export default function ProjectDetailPage() {
                 </div>
               )}
               <ScheduleForm
+                key="generation-schedule-form"
                 value={scheduleForm}
                 loading={schedulesLoading}
                 error={schedulesError}
                 title={editingSchedule ? "Редактировать расписание генерации" : "Новое расписание генерации"}
                 submitLabel={editingSchedule ? "Сохранить изменения" : "Создать расписание"}
+                timezone={resolvedProjectTimezone}
+                timezoneLabel={resolvedProjectTimezone}
                 onChange={setScheduleForm}
                 onSubmit={handleSubmitSchedule}
               />
@@ -1229,6 +1629,7 @@ export default function ProjectDetailPage() {
                 loading={schedulesLoading}
                 error={schedulesError}
                 permissionDenied={schedulesPermission}
+                timezone={resolvedProjectTimezone}
                 onRefresh={loadSchedules}
                 onTrigger={handleTriggerSchedule}
                 onToggle={handleToggleSchedule}
@@ -1240,11 +1641,14 @@ export default function ProjectDetailPage() {
             <div className="space-y-3">
               <h3 className="text-base font-semibold">Расписание ссылок</h3>
               <ScheduleForm
+                key="link-schedule-form"
                 value={linkScheduleForm}
                 loading={linkScheduleLoading}
                 error={linkScheduleError}
                 title={editingLinkSchedule ? "Редактировать расписание ссылок" : "Новое расписание ссылок"}
                 submitLabel={editingLinkSchedule ? "Сохранить изменения" : "Создать расписание"}
+                timezone={resolvedProjectTimezone}
+                timezoneLabel={resolvedProjectTimezone}
                 onChange={setLinkScheduleForm}
                 onSubmit={handleSubmitLinkSchedule}
               />
@@ -1254,6 +1658,7 @@ export default function ProjectDetailPage() {
                 loading={linkScheduleLoading}
                 error={linkScheduleError}
                 permissionDenied={linkSchedulePermission}
+                timezone={resolvedProjectTimezone}
                 onRefresh={loadLinkSchedule}
                 onTrigger={handleTriggerLinkSchedule}
                 onToggle={handleToggleLinkSchedule}
@@ -1307,6 +1712,7 @@ export default function ProjectDetailPage() {
                         <th className="py-2 pr-4">Домен</th>
                         <th className="py-2 pr-4">Статус</th>
                         <th className="py-2 pr-4">Запланировано</th>
+                        <th className="py-2 pr-4">Запуск</th>
                         <th className="py-2 pr-4 text-right">Действия</th>
                       </tr>
                     </thead>
@@ -1329,7 +1735,10 @@ export default function ProjectDetailPage() {
                             </td>
                             <td className="py-3 pr-4">{statusLabel}</td>
                             <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">
-                              {new Date(item.scheduled_for).toLocaleString()}
+                              {formatDateTime(item.scheduled_for)}
+                            </td>
+                            <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">
+                              {formatDateTime(item.processed_at)}
                             </td>
                             <td className="py-3 pr-4 text-right">
                               <button
@@ -1350,6 +1759,206 @@ export default function ProjectDetailPage() {
             <Link href="/queue" className="text-xs text-indigo-600 hover:underline">
               Открыть общую очередь →
             </Link>
+          </div>
+        )}
+
+        {activeTab === "errors" && (
+          <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-semibold">Ошибки генерации</h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400">
+                  Последние сбои генерации по доменам проекта с быстрым перезапуском.
+                </p>
+              </div>
+              <button
+                onClick={() => loadProjectErrors(true)}
+                disabled={projectErrorsLoading}
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              >
+                <FiRefreshCw /> Обновить
+              </button>
+            </div>
+            {projectErrorsLoading && (
+              <div className="text-sm text-slate-500 dark:text-slate-400">Загрузка ошибок...</div>
+            )}
+            {!projectErrorsLoading && projectErrorsError && (
+              <div className="text-sm text-red-500">{projectErrorsError}</div>
+            )}
+            {!projectErrorsLoading && !projectErrorsError && projectErrors.length === 0 && (
+              <div className="text-sm text-slate-500 dark:text-slate-400">Ошибок пока нет.</div>
+            )}
+            {!projectErrorsLoading && !projectErrorsError && projectErrors.length > 0 && (
+              <div className="space-y-3">
+                {projectErrors.map((g) => {
+                  const domain = g.domain_id ? domainById[g.domain_id] : undefined;
+                  const label = domain?.url || g.domain_url || g.domain_id || "Неизвестный домен";
+                  const when = g.updated_at || g.finished_at || g.started_at || g.created_at;
+                  const timeLabel = formatDateTime(when);
+                  const message = (g.error || "Ошибка не указана").trim();
+                  const shortMessage = message.length > 160 ? `${message.slice(0, 160)}…` : message;
+                  return (
+                    <div
+                      key={g.id}
+                      className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white/90 px-3 py-2 text-sm dark:border-slate-800 dark:bg-slate-900/70 md:flex-row md:items-center md:justify-between"
+                    >
+                      <div className="space-y-1">
+                        <div className="font-semibold text-slate-900 dark:text-slate-100">{label}</div>
+                        <div className="text-xs text-slate-500 dark:text-slate-400">
+                          {timeLabel} · {shortMessage}
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Link
+                          href={`/queue/${g.id}`}
+                          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                        >
+                          Открыть
+                        </Link>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === "settings" && (
+          <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3">
+            <div>
+              <h3 className="font-semibold">Настройки проекта</h3>
+              <p className="text-sm text-slate-500 dark:text-slate-400">
+                Эти параметры влияют на расписания и отображение времени в проекте.
+              </p>
+            </div>
+            {projectSettingsError && (
+              <div className="text-sm text-red-500">{projectSettingsError}</div>
+            )}
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="space-y-1">
+                <div className="text-xs uppercase tracking-wide text-slate-400">Название</div>
+                <input
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
+                  value={projectName}
+                  onChange={(e) => setProjectName(e.target.value)}
+                  placeholder="Название проекта"
+                />
+              </div>
+              <div className="space-y-1">
+                <div className="text-xs uppercase tracking-wide text-slate-400">Страна</div>
+                <input
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
+                  value={projectCountry}
+                  onChange={(e) => setProjectCountry(e.target.value)}
+                  placeholder="se"
+                />
+              </div>
+              <div className="space-y-1">
+                <div className="text-xs uppercase tracking-wide text-slate-400">Язык</div>
+                <input
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
+                  value={projectLanguage}
+                  onChange={(e) => setProjectLanguage(e.target.value)}
+                  placeholder="sv"
+                />
+              </div>
+              <div className="space-y-1">
+                <div className="text-xs uppercase tracking-wide text-slate-400">Таймзона проекта</div>
+                <input
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
+                  value={timezoneQuery}
+                  onChange={(e) => setTimezoneQuery(e.target.value)}
+                  placeholder="Поиск таймзоны (например, Asia/Bangkok)"
+                />
+                <div className="rounded-lg border border-slate-200 bg-white p-2 dark:border-slate-800 dark:bg-slate-950">
+                  <div className="text-[11px] uppercase tracking-wide text-slate-400">Выбранная зона</div>
+                  <div className="mt-1 flex items-center justify-between rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:text-slate-100">
+                    <span>{resolvedProjectTimezone || "UTC"}</span>
+                    <span className="text-xs text-slate-500 dark:text-slate-400">
+                      {getTimezoneOffsetLabel(resolvedProjectTimezone)}
+                    </span>
+                  </div>
+                  <div className="mt-3 text-[11px] uppercase tracking-wide text-slate-400">Поиск</div>
+                  <input
+                    className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
+                    value={timezoneQuery}
+                    onChange={(e) => setTimezoneQuery(e.target.value)}
+                    placeholder="Начните вводить таймзону"
+                  />
+                  {recentFiltered.length > 0 && (
+                    <div className="mt-3">
+                      <div className="text-[11px] uppercase tracking-wide text-slate-400">Недавние</div>
+                      <div className="mt-1 flex flex-wrap gap-2">
+                        {recentFiltered.map((tz) => (
+                          <button
+                            key={`recent-${tz}`}
+                            type="button"
+                            onClick={() => {
+                              setProjectTimezone(tz);
+                              updateRecentTimezone(tz);
+                            }}
+                            className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1 text-xs text-slate-700 hover:bg-slate-100 dark:border-slate-800 dark:text-slate-200 dark:hover:bg-slate-900"
+                          >
+                            <span>{tz}</span>
+                            <span className="text-[10px] text-slate-500 dark:text-slate-400">
+                              {getTimezoneOffsetLabel(tz)}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <div className="mt-3 text-[11px] uppercase tracking-wide text-slate-400">Все таймзоны</div>
+                  <div className="mt-2 max-h-64 space-y-3 overflow-auto pr-2">
+                    {timezoneGroups.length === 0 && (
+                      <div className="text-sm text-slate-500 dark:text-slate-400">Ничего не найдено</div>
+                    )}
+                    {timezoneGroups.map(([group, items]) => (
+                      <div key={group} className="space-y-2">
+                        <div className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">
+                          {group}
+                        </div>
+                        <div className="grid gap-2">
+                          {items.map((tz) => (
+                            <button
+                              key={tz}
+                              type="button"
+                              onClick={() => {
+                                setProjectTimezone(tz);
+                                updateRecentTimezone(tz);
+                              }}
+                              className={`flex items-center justify-between rounded-md border px-3 py-2 text-sm ${
+                                tz === projectTimezone
+                                  ? "border-indigo-400 bg-indigo-50 text-indigo-700 dark:border-indigo-500/60 dark:bg-indigo-500/10 dark:text-indigo-200"
+                                  : "border-slate-200 text-slate-700 hover:bg-slate-100 dark:border-slate-800 dark:text-slate-200 dark:hover:bg-slate-900"
+                              }`}
+                            >
+                              <span>{tz}</span>
+                              <span className="text-xs text-slate-500 dark:text-slate-400">
+                                {getTimezoneOffsetLabel(tz)}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                  Используется для расписаний и отображения времени.
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={saveProjectSettings}
+                disabled={projectSettingsLoading || !projectName.trim()}
+                className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+              >
+                {projectSettingsLoading ? "Сохраняем..." : "Сохранить настройки"}
+              </button>
+            </div>
           </div>
         )}
 
@@ -1418,7 +2027,7 @@ export default function ProjectDetailPage() {
                           )}
                         </td>
                         <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">
-                          {m.createdAt ? new Date(m.createdAt).toLocaleString() : "—"}
+                          {formatDateTime(m.createdAt)}
                         </td>
                         <td className="py-3 pr-4 text-right">
                           {m.role !== "owner" && (
@@ -1512,9 +2121,11 @@ function LinkStatusBadge({ domain }: { domain: { link_anchor_text?: string; link
     ready: { text: "Готово к запуску", color: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200", icon: <FiClock /> },
     pending: { text: "Ожидает добавления", color: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200", icon: <FiClock /> },
     searching: { text: "Поиск места", color: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-200", icon: <FiRefreshCw /> },
+    removing: { text: "Удаление", color: "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-200", icon: <FiRefreshCw /> },
     found: { text: "Место найдено", color: "bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-200", icon: <FiCheck /> },
     inserted: { text: "Ссылка вставлена", color: "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-200", icon: <FiCheck /> },
     generated: { text: "Текст сгенерирован", color: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-200", icon: <FiCheck /> },
+    removed: { text: "Ссылка удалена", color: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200", icon: <FiCheck /> },
     failed: { text: "Ошибка ссылки", color: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-200", icon: <FiPauseCircle /> }
   };
   const cfg = map[status] || map.ready;

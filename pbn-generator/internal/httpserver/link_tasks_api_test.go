@@ -106,6 +106,7 @@ func TestLinkTasksUpdateAndRetry(t *testing.T) {
 		AnchorText:   "Anchor",
 		TargetURL:    "https://example.com",
 		ScheduledFor: time.Now().Add(-time.Hour).UTC(),
+		Action:       "insert",
 		Status:       "failed",
 		Attempts:     1,
 		CreatedBy:    "owner@example.com",

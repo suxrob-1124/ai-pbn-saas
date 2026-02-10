@@ -41,6 +41,9 @@ func (s *stubLinkTaskStore) Update(ctx context.Context, taskID string, updates s
 	if updates.TargetURL != nil {
 		task.TargetURL = *updates.TargetURL
 	}
+	if updates.Action != nil {
+		task.Action = *updates.Action
+	}
 	if updates.Status != nil {
 		task.Status = *updates.Status
 	}
@@ -61,6 +64,9 @@ func (s *stubLinkTaskStore) Update(ctx context.Context, taskID string, updates s
 	}
 	if updates.CompletedAt != nil {
 		task.CompletedAt = *updates.CompletedAt
+	}
+	if updates.LogLines != nil {
+		task.LogLines = *updates.LogLines
 	}
 	return nil
 }
@@ -189,6 +195,7 @@ func TestLinkWorkerInsert(t *testing.T) {
 		DomainID:   "domain-1",
 		AnchorText: "anchor",
 		TargetURL:  "https://example.com",
+		Action:     "insert",
 		CreatedBy:  "user@example.com",
 	}
 	taskStore := newStubLinkTaskStore(task)
@@ -222,6 +229,57 @@ func TestLinkWorkerInsert(t *testing.T) {
 	}
 }
 
+func TestLinkWorkerExistingLinkInBody(t *testing.T) {
+	baseDir := t.TempDir()
+	domainDir := filepath.Join(baseDir, "example.com")
+	if err := os.MkdirAll(domainDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	htmlPath := filepath.Join(domainDir, "index.html")
+	original := "<body><p>Already <a href=\"https://example.com\">anchor</a> here</p></body>"
+	if err := os.WriteFile(htmlPath, []byte(original), 0o644); err != nil {
+		t.Fatalf("write html: %v", err)
+	}
+
+	task := sqlstore.LinkTask{
+		ID:         "task-1b",
+		DomainID:   "domain-1b",
+		AnchorText: "anchor",
+		TargetURL:  "https://example.com",
+		Action:     "insert",
+		CreatedBy:  "user@example.com",
+	}
+	taskStore := newStubLinkTaskStore(task)
+
+	w := &LinkWorker{
+		BaseDir:   baseDir,
+		Config:    config.Config{},
+		Tasks:     taskStore,
+		Domains:   &stubDomainStore{domains: map[string]sqlstore.Domain{"domain-1b": {ID: "domain-1b", ProjectID: "project-1b", URL: "example.com"}}},
+		Projects:  &stubProjectStore{projects: map[string]sqlstore.Project{"project-1b": {ID: "project-1b", UserEmail: "owner@example.com"}}},
+		Users:     &stubUserStore{},
+		SiteFiles: newStubSiteFileStore(),
+		FileEdits: &stubFileEditStore{},
+		Now:       func() time.Time { return time.Date(2026, 2, 4, 10, 0, 0, 0, time.UTC) },
+	}
+
+	if err := w.ProcessTask(context.Background(), "task-1b"); err != nil {
+		t.Fatalf("process task: %v", err)
+	}
+
+	updated := taskStore.tasks["task-1b"]
+	if updated.Status != "inserted" {
+		t.Fatalf("expected inserted, got %s", updated.Status)
+	}
+	if !updated.FoundLocation.Valid {
+		t.Fatalf("expected found location")
+	}
+	out, _ := os.ReadFile(htmlPath)
+	if string(out) != original {
+		t.Fatalf("expected html unchanged when link already exists")
+	}
+}
+
 func TestLinkWorkerGenerate(t *testing.T) {
 	baseDir := t.TempDir()
 	domainDir := filepath.Join(baseDir, "example.com")
@@ -238,6 +296,7 @@ func TestLinkWorkerGenerate(t *testing.T) {
 		DomainID:   "domain-2",
 		AnchorText: "anchor",
 		TargetURL:  "https://example.com",
+		Action:     "insert",
 		CreatedBy:  "user@example.com",
 	}
 	taskStore := newStubLinkTaskStore(task)
@@ -279,12 +338,15 @@ func TestLinkWorkerFailsWhenNoHTML(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 
+	now := time.Date(2026, 2, 4, 10, 0, 0, 0, time.UTC)
 	task := sqlstore.LinkTask{
 		ID:         "task-3",
 		DomainID:   "domain-3",
 		AnchorText: "anchor",
 		TargetURL:  "https://example.com",
+		Action:     "insert",
 		CreatedBy:  "user@example.com",
+		CreatedAt:  now,
 	}
 	taskStore := newStubLinkTaskStore(task)
 
@@ -297,7 +359,7 @@ func TestLinkWorkerFailsWhenNoHTML(t *testing.T) {
 		Users:     &stubUserStore{},
 		SiteFiles: newStubSiteFileStore(),
 		FileEdits: &stubFileEditStore{},
-		Now:       func() time.Time { return time.Date(2026, 2, 4, 10, 0, 0, 0, time.UTC) },
+		Now:       func() time.Time { return now },
 	}
 
 	if err := w.ProcessTask(context.Background(), "task-3"); err == nil {
@@ -305,11 +367,55 @@ func TestLinkWorkerFailsWhenNoHTML(t *testing.T) {
 	}
 
 	updated := taskStore.tasks["task-3"]
-	if updated.Status != "failed" {
-		t.Fatalf("expected failed, got %s", updated.Status)
+	if updated.Status != "pending" {
+		t.Fatalf("expected pending, got %s", updated.Status)
 	}
 	if updated.ErrorMessage.Valid == false {
 		t.Fatalf("expected error message")
+	}
+	if !updated.ScheduledFor.After(now) {
+		t.Fatalf("expected scheduled_for after now")
+	}
+}
+
+func TestLinkWorkerRetryWindowExceeded(t *testing.T) {
+	baseDir := t.TempDir()
+	domainDir := filepath.Join(baseDir, "example.com")
+	if err := os.MkdirAll(domainDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	now := time.Date(2026, 2, 4, 10, 0, 0, 0, time.UTC)
+	task := sqlstore.LinkTask{
+		ID:         "task-old",
+		DomainID:   "domain-old",
+		AnchorText: "anchor",
+		TargetURL:  "https://example.com",
+		Action:     "insert",
+		CreatedBy:  "user@example.com",
+		CreatedAt:  now.Add(-48 * time.Hour),
+	}
+	taskStore := newStubLinkTaskStore(task)
+
+	w := &LinkWorker{
+		BaseDir:   baseDir,
+		Config:    config.Config{},
+		Tasks:     taskStore,
+		Domains:   &stubDomainStore{domains: map[string]sqlstore.Domain{"domain-old": {ID: "domain-old", ProjectID: "project-1", URL: "example.com"}}},
+		Projects:  &stubProjectStore{projects: map[string]sqlstore.Project{"project-1": {ID: "project-1", UserEmail: "owner@example.com"}}},
+		Users:     &stubUserStore{},
+		SiteFiles: newStubSiteFileStore(),
+		FileEdits: &stubFileEditStore{},
+		Now:       func() time.Time { return now },
+	}
+
+	if err := w.ProcessTask(context.Background(), "task-old"); err == nil {
+		t.Fatalf("expected error")
+	}
+
+	updated := taskStore.tasks["task-old"]
+	if updated.Status != "failed" {
+		t.Fatalf("expected failed, got %s", updated.Status)
 	}
 }
 
@@ -329,6 +435,7 @@ func TestLinkWorkerReplaceFromFoundLocation(t *testing.T) {
 		DomainID:      "domain-4",
 		AnchorText:    "old anchor",
 		TargetURL:     "https://old.example",
+		Action:        "insert",
 		FoundLocation: sql.NullString{String: "index.html:1", Valid: true},
 		CreatedBy:     "user@example.com",
 	}
@@ -337,6 +444,7 @@ func TestLinkWorkerReplaceFromFoundLocation(t *testing.T) {
 		DomainID:   "domain-4",
 		AnchorText: "new anchor",
 		TargetURL:  "https://new.example",
+		Action:     "insert",
 		CreatedBy:  "user@example.com",
 	}
 	taskStore := &stubLinkTaskStore{tasks: map[string]*sqlstore.LinkTask{
@@ -402,6 +510,7 @@ func TestLinkWorkerReplaceFallsBackToNewAnchor(t *testing.T) {
 		DomainID:   "domain-5",
 		AnchorText: "old anchor",
 		TargetURL:  "https://old.example",
+		Action:     "insert",
 		CreatedBy:  "user@example.com",
 	}
 	newTask := sqlstore.LinkTask{
@@ -409,6 +518,7 @@ func TestLinkWorkerReplaceFallsBackToNewAnchor(t *testing.T) {
 		DomainID:   "domain-5",
 		AnchorText: "new anchor",
 		TargetURL:  "https://new.example",
+		Action:     "insert",
 		CreatedBy:  "user@example.com",
 	}
 	taskStore := &stubLinkTaskStore{tasks: map[string]*sqlstore.LinkTask{
@@ -448,5 +558,63 @@ func TestLinkWorkerReplaceFallsBackToNewAnchor(t *testing.T) {
 	updated := taskStore.tasks["task-new-2"]
 	if updated.Status != "inserted" {
 		t.Fatalf("expected inserted, got %s", updated.Status)
+	}
+}
+
+func TestLinkWorkerRemove(t *testing.T) {
+	baseDir := t.TempDir()
+	domainDir := filepath.Join(baseDir, "example.com")
+	if err := os.MkdirAll(domainDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	htmlPath := filepath.Join(domainDir, "index.html")
+	content := `<html><head><title>Title <a href="https://example.com">anchor</a></title></head><body><h1>Header</h1><p>Text <a href="https://example.com">anchor</a></p></body></html>`
+	if err := os.WriteFile(htmlPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write html: %v", err)
+	}
+
+	task := sqlstore.LinkTask{
+		ID:         "task-remove",
+		DomainID:   "domain-remove",
+		AnchorText: "anchor",
+		TargetURL:  "https://example.com",
+		Action:     "remove",
+		CreatedBy:  "user@example.com",
+	}
+	taskStore := newStubLinkTaskStore(task)
+
+	w := &LinkWorker{
+		BaseDir:   baseDir,
+		Config:    config.Config{},
+		Tasks:     taskStore,
+		Domains:   &stubDomainStore{domains: map[string]sqlstore.Domain{"domain-remove": {ID: "domain-remove", ProjectID: "project-1", URL: "example.com"}}},
+		Projects:  &stubProjectStore{projects: map[string]sqlstore.Project{"project-1": {ID: "project-1", UserEmail: "owner@example.com"}}},
+		Users:     &stubUserStore{},
+		SiteFiles: newStubSiteFileStore(),
+		FileEdits: &stubFileEditStore{},
+		Now:       func() time.Time { return time.Date(2026, 2, 4, 10, 0, 0, 0, time.UTC) },
+	}
+
+	if err := w.ProcessTask(context.Background(), "task-remove"); err != nil {
+		t.Fatalf("process task: %v", err)
+	}
+
+	out, _ := os.ReadFile(htmlPath)
+	if strings.Contains(string(out), "<a href=\"https://example.com\">anchor</a>") {
+		t.Fatalf("expected link removed")
+	}
+	updated := taskStore.tasks["task-remove"]
+	if updated.Status != "removed" {
+		t.Fatalf("expected removed, got %s", updated.Status)
+	}
+	foundLog := false
+	for _, line := range updated.LogLines {
+		if strings.Contains(line, "удалена ссылка из title") {
+			foundLog = true
+			break
+		}
+	}
+	if !foundLog {
+		t.Fatalf("expected log about title removal")
 	}
 }

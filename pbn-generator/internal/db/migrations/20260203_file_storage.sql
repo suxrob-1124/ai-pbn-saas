@@ -38,6 +38,8 @@ ALTER TABLE domains ADD COLUMN IF NOT EXISTS link_updated_at TIMESTAMPTZ;
 ALTER TABLE domains ADD COLUMN IF NOT EXISTS link_last_task_id TEXT;
 ALTER TABLE domains ADD COLUMN IF NOT EXISTS link_file_path TEXT;
 ALTER TABLE domains ADD COLUMN IF NOT EXISTS link_anchor_snapshot TEXT;
+ALTER TABLE domains ADD COLUMN IF NOT EXISTS link_ready_at TIMESTAMPTZ;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS timezone TEXT;
 
 CREATE TABLE IF NOT EXISTS generation_schedules (
   id TEXT PRIMARY KEY,
@@ -79,6 +81,7 @@ CREATE TABLE IF NOT EXISTS link_tasks (
   anchor_text TEXT NOT NULL,
   target_url TEXT NOT NULL,
   scheduled_for TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  action TEXT NOT NULL DEFAULT 'insert',
   status TEXT NOT NULL DEFAULT 'pending',
   found_location TEXT,
   generated_content TEXT,
@@ -88,6 +91,7 @@ CREATE TABLE IF NOT EXISTS link_tasks (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   completed_at TIMESTAMPTZ
 );
+ALTER TABLE link_tasks ADD COLUMN IF NOT EXISTS action TEXT NOT NULL DEFAULT 'insert';
 ALTER TABLE link_tasks ADD COLUMN IF NOT EXISTS log_lines JSONB;
 CREATE INDEX IF NOT EXISTS idx_link_tasks_domain ON link_tasks(domain_id);
 CREATE INDEX IF NOT EXISTS idx_link_tasks_status ON link_tasks(status);
@@ -100,11 +104,13 @@ CREATE TABLE IF NOT EXISTS link_schedules (
   config JSONB NOT NULL,
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
   created_by TEXT NOT NULL REFERENCES users(email),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 ALTER TABLE link_schedules ADD COLUMN IF NOT EXISTS last_run_at TIMESTAMPTZ;
 ALTER TABLE link_schedules ADD COLUMN IF NOT EXISTS next_run_at TIMESTAMPTZ;
 ALTER TABLE link_schedules ADD COLUMN IF NOT EXISTS timezone TEXT;
+ALTER TABLE link_schedules ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_link_schedules_project ON link_schedules(project_id);
 
 CREATE TABLE IF NOT EXISTS audit_rules (

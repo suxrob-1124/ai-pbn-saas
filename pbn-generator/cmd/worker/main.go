@@ -33,6 +33,7 @@ func main() {
 	genStore := sqlstore.NewGenerationStore(dbConn)
 	promptStore := sqlstore.NewPromptStore(dbConn)
 	projectStore := sqlstore.NewProjectStore(dbConn)
+	linkScheduleStore := sqlstore.NewLinkScheduleStore(dbConn)
 	userStore := sqlstore.NewUserStore(dbConn)
 	apiKeyUsageStore := sqlstore.NewAPIKeyUsageStore(dbConn)
 	siteFileStore := sqlstore.NewSiteFileStore(dbConn)
@@ -58,6 +59,7 @@ func main() {
 			genStore,
 			promptStore,
 			projectStore,
+			linkScheduleStore,
 			userStore,
 			apiKeyUsageStore,
 			siteFileStore,

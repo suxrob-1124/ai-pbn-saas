@@ -57,6 +57,13 @@ const buildPayload = (input: ScheduleCreateInput | ScheduleUpdateInput) => {
   if ("isActive" in input && typeof input.isActive === "boolean") {
     payload.isActive = input.isActive;
   }
+  if ("timezone" in input && typeof input.timezone === "string") {
+    const trimmed = input.timezone.trim();
+    if (!trimmed) {
+      throw new Error("timezone is required");
+    }
+    payload.timezone = trimmed;
+  }
   return payload;
 };
 

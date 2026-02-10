@@ -57,6 +57,7 @@ func TestApplyLinkSchedulesUpsertByLimitAndEligibility(t *testing.T) {
 		IsActive:  true,
 		CreatedBy: "owner@example.com",
 		CreatedAt: now,
+		UpdatedAt: now,
 	}
 	scheduleStore := &stubLinkScheduleStore{[]sqlstore.LinkSchedule{schedule}}
 
@@ -68,6 +69,7 @@ func TestApplyLinkSchedulesUpsertByLimitAndEligibility(t *testing.T) {
 					ProjectID:       "project-1",
 					URL:             "a.example.com",
 					Status:          "published",
+					LinkStatus:      sql.NullString{String: "pending", Valid: true},
 					LinkAnchorText:  sql.NullString{String: "Anchor A", Valid: true},
 					LinkAcceptorURL: sql.NullString{String: "https://acceptor/a", Valid: true},
 				},
@@ -76,6 +78,7 @@ func TestApplyLinkSchedulesUpsertByLimitAndEligibility(t *testing.T) {
 					ProjectID:       "project-1",
 					URL:             "b.example.com",
 					Status:          "published",
+					LinkStatus:      sql.NullString{String: "pending", Valid: true},
 					LinkAnchorText:  sql.NullString{String: "Anchor B", Valid: true},
 					LinkAcceptorURL: sql.NullString{String: "https://acceptor/b", Valid: true},
 				},
@@ -84,6 +87,7 @@ func TestApplyLinkSchedulesUpsertByLimitAndEligibility(t *testing.T) {
 					ProjectID:       "project-1",
 					URL:             "c.example.com",
 					Status:          "published",
+					LinkStatus:      sql.NullString{String: "pending", Valid: true},
 					LinkAnchorText:  sql.NullString{String: "Anchor C", Valid: true},
 					LinkAcceptorURL: sql.NullString{String: "https://acceptor/c", Valid: true},
 				},
@@ -92,6 +96,7 @@ func TestApplyLinkSchedulesUpsertByLimitAndEligibility(t *testing.T) {
 					ProjectID:       "project-1",
 					URL:             "d.example.com",
 					Status:          "draft",
+					LinkStatus:      sql.NullString{String: "pending", Valid: true},
 					LinkAnchorText:  sql.NullString{String: "Anchor D", Valid: true},
 					LinkAcceptorURL: sql.NullString{String: "https://acceptor/d", Valid: true},
 				},
@@ -100,6 +105,7 @@ func TestApplyLinkSchedulesUpsertByLimitAndEligibility(t *testing.T) {
 					ProjectID:       "project-1",
 					URL:             "e.example.com",
 					Status:          "published",
+					LinkStatus:      sql.NullString{String: "pending", Valid: true},
 					LinkAnchorText:  sql.NullString{},
 					LinkAcceptorURL: sql.NullString{String: "https://acceptor/e", Valid: true},
 				},
@@ -172,5 +178,170 @@ func TestApplyLinkSchedulesUpsertByLimitAndEligibility(t *testing.T) {
 		if task.DomainID == "domain-e" {
 			t.Fatalf("did not expect task for missing anchor text")
 		}
+	}
+}
+
+func TestApplyLinkSchedulesNeedsRelinkRunsWithoutDue(t *testing.T) {
+	now := time.Date(2026, 2, 5, 12, 0, 0, 0, time.UTC)
+	lastRun := now.Add(-2 * time.Hour)
+	schedule := sqlstore.LinkSchedule{
+		ID:        "link-s-2",
+		ProjectID: "project-2",
+		Name:      "Links",
+		Config:    json.RawMessage(`{"time":"10:00","limit":1}`),
+		IsActive:  true,
+		CreatedBy: "owner@example.com",
+		CreatedAt: now,
+		UpdatedAt: now,
+		LastRunAt: sql.NullTime{Time: lastRun, Valid: true},
+	}
+	scheduleStore := &stubLinkScheduleStore{[]sqlstore.LinkSchedule{schedule}}
+
+	domainStore := &stubDomainStore{
+		byProject: map[string][]sqlstore.Domain{
+			"project-2": {
+				{
+					ID:              "domain-x",
+					ProjectID:       "project-2",
+					URL:             "x.example.com",
+					Status:          "published",
+					LinkStatus:      sql.NullString{String: "needs_relink", Valid: true},
+					LinkAnchorText:  sql.NullString{String: "Anchor X", Valid: true},
+					LinkAcceptorURL: sql.NullString{String: "https://acceptor/x", Valid: true},
+					LinkReadyAt:     sql.NullTime{Time: now.Add(-time.Hour), Valid: true},
+				},
+			},
+		},
+	}
+
+	linkTaskStore := &stubLinkTaskStore{
+		tasks:           make(map[string]sqlstore.LinkTask),
+		domainToProject: map[string]string{"domain-x": "project-2"},
+	}
+
+	if err := applyLinkSchedulesAt(context.Background(), scheduleStore, linkTaskStore, domainStore, nil, now); err != nil {
+		t.Fatalf("apply link schedules: %v", err)
+	}
+
+	if len(linkTaskStore.tasks) != 1 {
+		t.Fatalf("expected 1 task for needs_relink, got %d", len(linkTaskStore.tasks))
+	}
+	if !scheduleStore.schedules[0].LastRunAt.Valid || !scheduleStore.schedules[0].LastRunAt.Time.Equal(lastRun) {
+		t.Fatalf("expected last_run_at to remain %s", lastRun.Format(time.RFC3339))
+	}
+	if !scheduleStore.schedules[0].NextRunAt.Valid {
+		t.Fatalf("expected next_run_at to be updated")
+	}
+}
+
+func TestApplyLinkSchedulesHonorsEffectiveReadyAt(t *testing.T) {
+	now := time.Date(2026, 2, 5, 9, 0, 0, 0, time.UTC)
+	schedule := sqlstore.LinkSchedule{
+		ID:        "link-s-3",
+		ProjectID: "project-3",
+		Name:      "Links",
+		Config:    json.RawMessage(`{"time":"08:00","limit":1}`),
+		IsActive:  true,
+		CreatedBy: "owner@example.com",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	scheduleStore := &stubLinkScheduleStore{[]sqlstore.LinkSchedule{schedule}}
+
+	domainStore := &stubDomainStore{
+		byProject: map[string][]sqlstore.Domain{
+			"project-3": {
+				{
+					ID:              "domain-z",
+					ProjectID:       "project-3",
+					URL:             "z.example.com",
+					Status:          "published",
+					LinkStatus:      sql.NullString{String: "pending", Valid: true},
+					LinkAnchorText:  sql.NullString{String: "Anchor Z", Valid: true},
+					LinkAcceptorURL: sql.NullString{String: "https://acceptor/z", Valid: true},
+					LinkReadyAt:     sql.NullTime{Time: now.Add(time.Hour), Valid: true},
+				},
+			},
+		},
+	}
+
+	linkTaskStore := &stubLinkTaskStore{
+		tasks:           make(map[string]sqlstore.LinkTask),
+		domainToProject: map[string]string{"domain-z": "project-3"},
+	}
+
+	if err := applyLinkSchedulesAt(context.Background(), scheduleStore, linkTaskStore, domainStore, nil, now); err != nil {
+		t.Fatalf("apply link schedules: %v", err)
+	}
+
+	if len(linkTaskStore.tasks) != 0 {
+		t.Fatalf("expected no tasks due to effective_ready_at, got %d", len(linkTaskStore.tasks))
+	}
+	if scheduleStore.schedules[0].LastRunAt.Valid {
+		t.Fatalf("did not expect last_run_at to be updated without eligible domains")
+	}
+	if !scheduleStore.schedules[0].NextRunAt.Valid {
+		t.Fatalf("expected next_run_at to be updated")
+	}
+}
+
+func TestScheduleRunAtToday(t *testing.T) {
+	now := time.Date(2026, 2, 5, 12, 15, 0, 0, time.UTC)
+	runAt, err := scheduleRunAtToday(now, scheduleConfig{Time: "09:30"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	expected := time.Date(2026, 2, 5, 9, 30, 0, 0, time.UTC)
+	if !runAt.Equal(expected) {
+		t.Fatalf("expected %s, got %s", expected, runAt)
+	}
+
+	if _, err := scheduleRunAtToday(now, scheduleConfig{Time: "bad"}); err == nil {
+		t.Fatalf("expected error for invalid time format")
+	}
+}
+
+func TestApplyLinkSchedulesPublishedAfterScheduleTime(t *testing.T) {
+	now := time.Date(2026, 2, 5, 13, 30, 0, 0, time.UTC)
+	schedule := sqlstore.LinkSchedule{
+		ID:        "link-s-4",
+		ProjectID: "project-4",
+		Name:      "Links",
+		Config:    json.RawMessage(`{"time":"10:00","limit":1}`),
+		IsActive:  true,
+		CreatedBy: "owner@example.com",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	scheduleStore := &stubLinkScheduleStore{[]sqlstore.LinkSchedule{schedule}}
+
+	domainStore := &stubDomainStore{
+		byProject: map[string][]sqlstore.Domain{
+			"project-4": {
+				{
+					ID:              "domain-late",
+					ProjectID:       "project-4",
+					URL:             "late.example.com",
+					Status:          "published",
+					LinkStatus:      sql.NullString{String: "pending", Valid: true},
+					LinkAnchorText:  sql.NullString{String: "Anchor Late", Valid: true},
+					LinkAcceptorURL: sql.NullString{String: "https://acceptor/late", Valid: true},
+					LinkReadyAt:     sql.NullTime{Time: time.Date(2026, 2, 5, 13, 0, 0, 0, time.UTC), Valid: true},
+				},
+			},
+		},
+	}
+
+	linkTaskStore := &stubLinkTaskStore{
+		tasks:           make(map[string]sqlstore.LinkTask),
+		domainToProject: map[string]string{"domain-late": "project-4"},
+	}
+
+	if err := applyLinkSchedulesAt(context.Background(), scheduleStore, linkTaskStore, domainStore, nil, now); err != nil {
+		t.Fatalf("apply link schedules: %v", err)
+	}
+
+	if len(linkTaskStore.tasks) != 1 {
+		t.Fatalf("expected 1 task after delay_minutes, got %d", len(linkTaskStore.tasks))
 	}
 }

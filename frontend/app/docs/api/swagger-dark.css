@@ -1,0 +1,169 @@
+:root {
+  --swagger-bg: #ffffff;
+  --swagger-surface: #f8fafc;
+  --swagger-surface-2: #f1f5f9;
+  --swagger-border: #e2e8f0;
+  --swagger-text: #0f172a;
+  --swagger-muted: #475569;
+  --swagger-accent: #2563eb;
+  --swagger-code-bg: #0f172a;
+}
+
+.dark {
+  --swagger-bg: #0b1220;
+  --swagger-surface: #0f172a;
+  --swagger-surface-2: #111827;
+  --swagger-border: #1f2a44;
+  --swagger-text: #e2e8f0;
+  --swagger-muted: #94a3b8;
+  --swagger-accent: #22c55e;
+  --swagger-code-bg: #0b1220;
+}
+
+.swagger-ui,
+.swagger-ui .wrapper,
+.swagger-ui .scheme-container {
+  background: transparent;
+  color: var(--swagger-text);
+}
+
+.swagger-ui .topbar,
+.swagger-ui .information-container {
+  background: var(--swagger-surface);
+}
+
+.swagger-ui .info .title,
+.swagger-ui .info p,
+.swagger-ui .info li,
+.swagger-ui .info h1,
+.swagger-ui .info h2,
+.swagger-ui .info h3,
+.swagger-ui .opblock-summary-description,
+.swagger-ui .opblock-summary-path,
+.swagger-ui .opblock-tag,
+.swagger-ui .opblock-tag small {
+  color: var(--swagger-text);
+}
+
+.swagger-ui .opblock {
+  background: var(--swagger-surface);
+  border-color: var(--swagger-border);
+  box-shadow: none;
+}
+
+.swagger-ui .opblock-summary,
+.swagger-ui .opblock-section-header {
+  background: var(--swagger-surface-2);
+  border-color: var(--swagger-border);
+}
+
+.swagger-ui .opblock .opblock-summary-method,
+.swagger-ui .btn {
+  background: var(--swagger-surface-2);
+  border-color: var(--swagger-border);
+  color: var(--swagger-text);
+}
+
+.swagger-ui .btn:hover {
+  background: var(--swagger-border);
+}
+
+.swagger-ui .parameter__name,
+.swagger-ui .parameter__type,
+.swagger-ui .response-col_status,
+.swagger-ui .response-col_description,
+.swagger-ui .tab li,
+.swagger-ui label,
+.swagger-ui .checkbox p {
+  color: var(--swagger-text);
+}
+
+.swagger-ui .model-title,
+.swagger-ui .model,
+.swagger-ui .model-toggle,
+.swagger-ui .model-box {
+  color: var(--swagger-text);
+}
+
+.swagger-ui .model-box {
+  background: var(--swagger-surface-2);
+  border-color: var(--swagger-border);
+}
+
+.swagger-ui .opblock-description-wrapper,
+.swagger-ui .opblock-external-docs-wrapper,
+.swagger-ui .opblock-body {
+  background: var(--swagger-surface);
+  border-color: var(--swagger-border);
+}
+
+.swagger-ui input,
+.swagger-ui select,
+.swagger-ui textarea {
+  background: var(--swagger-bg);
+  border-color: var(--swagger-border);
+  color: var(--swagger-text);
+}
+
+.swagger-ui input::placeholder,
+.swagger-ui textarea::placeholder {
+  color: var(--swagger-muted);
+}
+
+.swagger-ui .highlight-code,
+.swagger-ui pre,
+.swagger-ui .microlight {
+  background: var(--swagger-code-bg);
+  color: #e2e8f0;
+}
+
+.swagger-ui .copy-to-clipboard {
+  background: var(--swagger-surface-2);
+  border-color: var(--swagger-border);
+}
+
+.swagger-ui .authorization__btn {
+  color: var(--swagger-accent);
+}
+
+
+.swagger-ui .modal-ux {
+  background: rgba(15, 23, 42, 0.7);
+}
+
+.swagger-ui .modal-ux-content {
+  background: var(--swagger-bg);
+  color: var(--swagger-text);
+  border: 1px solid var(--swagger-border);
+  box-shadow: 0 20px 60px rgba(2, 6, 23, 0.35);
+}
+
+.swagger-ui .modal-ux-header,
+.swagger-ui .modal-ux-content h3,
+.swagger-ui .modal-ux-content h4,
+.swagger-ui .modal-ux-content label,
+.swagger-ui .modal-ux-content p {
+  color: var(--swagger-text);
+}
+
+.swagger-ui .modal-ux-content input,
+.swagger-ui .modal-ux-content select,
+.swagger-ui .modal-ux-content textarea {
+  background: var(--swagger-bg);
+  border-color: var(--swagger-border);
+  color: var(--swagger-text);
+}
+
+.swagger-ui .modal-ux-content .btn {
+  background: var(--swagger-surface-2);
+  border-color: var(--swagger-border);
+  color: var(--swagger-text);
+}
+
+.swagger-ui .opblock.opblock-get .opblock-summary-method,
+.swagger-ui .opblock.opblock-post .opblock-summary-method,
+.swagger-ui .opblock.opblock-put .opblock-summary-method,
+.swagger-ui .opblock.opblock-delete .opblock-summary-method,
+.swagger-ui .opblock.opblock-patch .opblock-summary-method {
+  color: #ffffff;
+}

@@ -3,8 +3,31 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuthGuard } from "../../lib/useAuth";
-import { authFetch, post } from "../../lib/http";
-import { FiFolder, FiPlay, FiPauseCircle, FiPlus, FiRefreshCw, FiClock } from "react-icons/fi";
+import { authFetchCached, post } from "../../lib/http";
+import { FiFolder, FiPlay, FiPauseCircle, FiPlus, FiRefreshCw, FiClock, FiAlertCircle } from "react-icons/fi";
+
+type GenerationDTO = {
+  id: string;
+  domain_id: string;
+  domain_url?: string | null;
+  status: string;
+  error?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  updated_at?: string | null;
+};
+
+type DashboardDTO = {
+  projects: any[];
+  stats: {
+    pending: number;
+    processing: number;
+    error: number;
+    avg_minutes?: number | null;
+    avg_sample: number;
+  };
+  recent_errors: GenerationDTO[];
+};
 
 export default function ProjectsPage() {
   useAuthGuard();
@@ -14,13 +37,43 @@ export default function ProjectsPage() {
   const [name, setName] = useState("");
   const [country, setCountry] = useState("");
   const [language, setLanguage] = useState("");
+  const [genStats, setGenStats] = useState({
+    pending: 0,
+    processing: 0,
+    error: 0,
+    avgMinutes: null as number | null,
+    avgSample: 0
+  });
+  const [recentErrors, setRecentErrors] = useState<GenerationDTO[]>([]);
+  const [recentErrorsError, setRecentErrorsError] = useState<string | null>(null);
 
-  const load = async () => {
+  const load = async (force = false) => {
     setLoading(true);
     setError(null);
     try {
-      const data = await authFetch<any[]>("/api/projects");
-      setProjects(Array.isArray(data) ? data : []);
+      const dashboard = await authFetchCached<DashboardDTO>("/api/dashboard", undefined, {
+        ttlMs: 15000,
+        bypassCache: force
+      });
+      setProjects(Array.isArray(dashboard?.projects) ? dashboard.projects : []);
+      if (dashboard?.stats) {
+        setGenStats({
+          pending: dashboard.stats.pending || 0,
+          processing: dashboard.stats.processing || 0,
+          error: dashboard.stats.error || 0,
+          avgMinutes: dashboard.stats.avg_minutes ?? null,
+          avgSample: dashboard.stats.avg_sample || 0
+        });
+      } else {
+        setGenStats({ pending: 0, processing: 0, error: 0, avgMinutes: null, avgSample: 0 });
+      }
+      if (Array.isArray(dashboard?.recent_errors)) {
+        setRecentErrors(dashboard.recent_errors);
+        setRecentErrorsError(null);
+      } else {
+        setRecentErrors([]);
+        setRecentErrorsError("Не удалось загрузить ошибки генерации");
+      }
     } catch (err: any) {
       setError(err?.message || "Не удалось загрузить проекты");
     } finally {
@@ -45,7 +98,7 @@ export default function ProjectsPage() {
       setName("");
       setCountry("");
       setLanguage("");
-      await load();
+      await load(true);
     } catch (err: any) {
       setError(err?.message || "Не удалось создать проект");
     } finally {
@@ -58,7 +111,7 @@ export default function ProjectsPage() {
       <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-xl">
         <h2 className="text-xl font-semibold mb-2">Проекты</h2>
         <p className="text-sm text-slate-500 dark:text-slate-400">
-          Заготовка под управление сгенерированными сайтами. Дальше здесь появятся CRUD, статусы и метрики.
+          Создавайте проекты, управляйте доменами и следите за генерацией и ошибками в одном месте.
         </p>
         <div className="mt-4 grid gap-3 md:grid-cols-4">
           <input
@@ -88,7 +141,7 @@ export default function ProjectsPage() {
               <FiPlus /> Создать
             </button>
             <button
-              onClick={load}
+              onClick={() => load(true)}
               disabled={loading}
               className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
             >
@@ -125,19 +178,72 @@ export default function ProjectsPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow">
-          <h4 className="text-sm font-semibold mb-2">Очередь публикаций</h4>
-          <div className="text-3xl font-bold">—</div>
-          <div className="text-xs text-slate-500 dark:text-slate-400">подключим после воркера</div>
+          <h4 className="text-sm font-semibold mb-2">Очередь генераций</h4>
+          <div className="text-3xl font-bold">{genStats.pending + genStats.processing}</div>
+          <div className="text-xs text-slate-500 dark:text-slate-400">
+            В очереди: {genStats.pending} · В работе: {genStats.processing}
+          </div>
         </div>
         <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow">
-          <h4 className="text-sm font-semibold mb-2">Средний билд</h4>
-          <div className="text-3xl font-bold">—</div>
-          <div className="text-xs text-slate-500 dark:text-slate-400">данных пока нет</div>
+          <h4 className="text-sm font-semibold mb-2">Средняя длительность</h4>
+          <div className="text-3xl font-bold">{genStats.avgMinutes ? `${genStats.avgMinutes} мин` : "—"}</div>
+          <div className="text-xs text-slate-500 dark:text-slate-400">
+            По успешным генерациям: {genStats.avgSample || "нет данных"}
+          </div>
         </div>
         <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow">
-          <h4 className="text-sm font-semibold mb-2">Uptime генератора</h4>
-          <div className="text-3xl font-bold">—</div>
-          <div className="text-xs text-slate-500 dark:text-slate-400">плейсхолдер под мониторинг</div>
+          <h4 className="text-sm font-semibold mb-2">Ошибки генератора</h4>
+          <div className="text-3xl font-bold">{genStats.error}</div>
+          <div className="text-xs text-slate-500 dark:text-slate-400">по последним 100 запускам</div>
+        </div>
+      </div>
+
+      <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow">
+        <div className="flex items-center justify-between">
+          <h4 className="text-sm font-semibold">Последние ошибки генерации</h4>
+          <button
+            onClick={() => load(true)}
+            disabled={loading}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+          >
+            <FiRefreshCw /> Обновить
+          </button>
+        </div>
+        {recentErrorsError && <div className="mt-2 text-sm text-red-500">{recentErrorsError}</div>}
+        {!recentErrorsError && recentErrors.length === 0 && (
+          <div className="mt-3 text-sm text-slate-500 dark:text-slate-400">Ошибок пока нет.</div>
+        )}
+        <div className="mt-3 space-y-3">
+          {recentErrors.map((g) => {
+            const label = g.domain_url || g.domain_id || "Неизвестный домен";
+            const when = g.updated_at || g.finished_at || g.started_at;
+            const timeLabel = when ? new Date(when).toLocaleString() : "—";
+            const message = (g.error || "Ошибка не указана").trim();
+            const shortMessage = message.length > 140 ? `${message.slice(0, 140)}…` : message;
+            return (
+              <div
+                key={g.id}
+                className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white/80 px-3 py-2 text-sm dark:border-slate-800 dark:bg-slate-900/60 md:flex-row md:items-center md:justify-between"
+              >
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 font-semibold text-slate-900 dark:text-slate-100">
+                    <FiAlertCircle className="text-red-500" /> {label}
+                  </div>
+                  <div className="text-xs text-slate-500 dark:text-slate-400">
+                    {timeLabel} · {shortMessage}
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Link
+                    href={`/queue/${g.id}`}
+                    className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  >
+                    Открыть
+                  </Link>
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>
@@ -148,11 +254,11 @@ function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { text: string; color: string; icon: React.ReactNode }> = {
     Активен: { text: "Активен", color: "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-200", icon: <FiPlay /> },
     active: { text: "Активен", color: "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-200", icon: <FiPlay /> },
-    Черновик: { text: "Черновик", color: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200", icon: <FiPauseCircle /> },
-    draft: { text: "Черновик", color: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200", icon: <FiPauseCircle /> },
-    "В разработке": { text: "В разработке", color: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200", icon: <FiPauseCircle /> },
-    wip: { text: "В разработке", color: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200", icon: <FiPauseCircle /> },
-    paused: { text: "Приостановлено", color: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200", icon: <FiPauseCircle /> }
+    Черновик: { text: "В подготовке", color: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200", icon: <FiClock /> },
+    draft: { text: "В подготовке", color: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200", icon: <FiClock /> },
+    "В разработке": { text: "В работе", color: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200", icon: <FiPauseCircle /> },
+    wip: { text: "В работе", color: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200", icon: <FiPauseCircle /> },
+    paused: { text: "Пауза", color: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200", icon: <FiPauseCircle /> }
   };
   const cfg = map[status] || { text: status, color: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200", icon: <FiPauseCircle /> };
   return (

@@ -28,6 +28,11 @@ Thumbs.db
 # Logs
 *.log
 
+# E2E artifacts
+tests/e2e/state.json
+tests/e2e/.cookies/
+tests/e2e/logs/
+
 # Environment
 .env
 .env.prod

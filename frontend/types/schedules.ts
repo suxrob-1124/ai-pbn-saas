@@ -22,6 +22,7 @@ export type ScheduleCreateInput = {
   strategy: ScheduleStrategy;
   config: Record<string, unknown>;
   isActive?: boolean;
+  timezone?: string;
 };
 
 export type ScheduleUpdateInput = {
@@ -30,6 +31,7 @@ export type ScheduleUpdateInput = {
   strategy?: ScheduleStrategy;
   config?: Record<string, unknown>;
   isActive?: boolean;
+  timezone?: string;
 };
 
 export type ScheduleTriggerResponse = {

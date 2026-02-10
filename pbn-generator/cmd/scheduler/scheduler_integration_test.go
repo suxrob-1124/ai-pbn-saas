@@ -132,8 +132,8 @@ func TestApplySchedulesImmediateEnqueue(t *testing.T) {
 	domainStore := &stubDomainStore{
 		byProject: map[string][]sqlstore.Domain{
 			"project-1": {
-				{ID: "domain-1", ProjectID: "project-1", URL: "example.com"},
-				{ID: "domain-2", ProjectID: "project-1", URL: "example.org"},
+				{ID: "domain-1", ProjectID: "project-1", URL: "example.com", Status: "waiting"},
+				{ID: "domain-2", ProjectID: "project-1", URL: "example.org", Status: "waiting"},
 			},
 		},
 	}
@@ -183,7 +183,7 @@ func TestApplySchedulesDailySkipsSameDay(t *testing.T) {
 	domainStore := &stubDomainStore{
 		byProject: map[string][]sqlstore.Domain{
 			"project-2": {
-				{ID: "domain-1", ProjectID: "project-2", URL: "example.com"},
+				{ID: "domain-1", ProjectID: "project-2", URL: "example.com", Status: "waiting"},
 			},
 		},
 	}
@@ -219,7 +219,7 @@ func TestApplySchedulesCustomEnqueue(t *testing.T) {
 	domainStore := &stubDomainStore{
 		byProject: map[string][]sqlstore.Domain{
 			"project-3": {
-				{ID: "domain-1", ProjectID: "project-3", URL: "example.com"},
+				{ID: "domain-1", ProjectID: "project-3", URL: "example.com", Status: "waiting"},
 			},
 		},
 	}

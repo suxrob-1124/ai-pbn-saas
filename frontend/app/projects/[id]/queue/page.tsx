@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { FiRefreshCw, FiTrash2 } from "react-icons/fi";
-import { listQueue, deleteQueueItem } from "../../../../lib/queueApi";
+import { listQueue, deleteQueueItem, cleanupQueue } from "../../../../lib/queueApi";
 import { authFetch } from "../../../../lib/http";
 import { useAuthGuard } from "../../../../lib/useAuth";
 import { showToast } from "../../../../lib/toastStore";
@@ -35,6 +35,8 @@ export default function ProjectQueuePage() {
   const [items, setItems] = useState<QueueItemDTO[]>([]);
   const [domains, setDomains] = useState<Record<string, Domain>>({});
   const [loading, setLoading] = useState(false);
+  const [cleaning, setCleaning] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [permissionDenied, setPermissionDenied] = useState(false);
 
@@ -42,9 +44,11 @@ export default function ProjectQueuePage() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
 
-  const load = async () => {
+  const load = async (opts?: { silent?: boolean }) => {
     if (!projectId) return;
-    setLoading(true);
+    if (!opts?.silent) {
+      setLoading(true);
+    }
     setError(null);
     setPermissionDenied(false);
     try {
@@ -68,7 +72,9 @@ export default function ProjectQueuePage() {
         setError(msg);
       }
     } finally {
-      setLoading(false);
+      if (!opts?.silent) {
+        setLoading(false);
+      }
     }
   };
 
@@ -115,6 +121,38 @@ export default function ProjectQueuePage() {
     }
   };
 
+  const handleCleanup = async () => {
+    if (!projectId) return;
+    if (!confirm("Очистить устаревшие элементы очереди?")) return;
+    setCleaning(true);
+    setError(null);
+    try {
+      const res = await cleanupQueue(projectId);
+      showToast({
+        type: "success",
+        title: "Очистка очереди",
+        message: `Удалено: ${res?.removed ?? 0}`
+      });
+      await load();
+    } catch (err: any) {
+      const msg = err?.message || "Не удалось очистить очередь";
+      setError(msg);
+      showToast({ type: "error", title: "Ошибка очистки", message: msg });
+    } finally {
+      setCleaning(false);
+    }
+  };
+
+  const handleRefresh = async () => {
+    if (!projectId) return;
+    setRefreshing(true);
+    try {
+      await load({ silent: true });
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-xl">
@@ -123,13 +161,23 @@ export default function ProjectQueuePage() {
             <h2 className="text-xl font-semibold">Очередь проекта</h2>
             <p className="text-sm text-slate-500 dark:text-slate-400">ID проекта: {projectId}</p>
           </div>
-          <button
-            onClick={load}
-            disabled={loading}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-          >
-            <FiRefreshCw /> Обновить
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleCleanup}
+              disabled={cleaning}
+              className="inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm font-semibold text-amber-700 hover:bg-amber-50 dark:border-amber-900/40 dark:bg-slate-800 dark:text-amber-200"
+            >
+              <FiRefreshCw className={cleaning ? "animate-spin" : ""} />
+              {cleaning ? "Очищаю..." : "Очистить очередь"}
+            </button>
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            >
+              <FiRefreshCw className={refreshing ? "animate-spin" : ""} /> Обновить
+            </button>
+          </div>
         </div>
         {error && <div className="text-sm text-red-500 mt-2">{error}</div>}
         {permissionDenied && (
@@ -191,7 +239,8 @@ export default function ProjectQueuePage() {
               <thead>
                 <tr className="text-left text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
                   <th className="py-2 pr-4">Домен</th>
-                  <th className="py-2 pr-4">Время запуска</th>
+                  <th className="py-2 pr-4">Запланировано</th>
+                  <th className="py-2 pr-4">Запуск</th>
                   <th className="py-2 pr-4">Статус</th>
                   <th className="py-2 pr-4">Приоритет</th>
                   <th className="py-2 pr-4 text-right">Действия</th>
@@ -214,6 +263,9 @@ export default function ProjectQueuePage() {
                       </td>
                       <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">
                         {new Date(item.scheduled_for).toLocaleString()}
+                      </td>
+                      <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">
+                        {item.processed_at ? new Date(item.processed_at).toLocaleString() : "—"}
                       </td>
                       <td className="py-3 pr-4">{STATUS_LABELS[item.status] || item.status}</td>
                       <td className="py-3 pr-4">{item.priority}</td>

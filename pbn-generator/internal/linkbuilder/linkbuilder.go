@@ -251,6 +251,89 @@ func (b *Builder) FindAnchorInBody(htmlContent, anchorText string, allowInAnchor
 	}
 }
 
+// FindExistingLinkInBody ищет уже существующую ссылку в пределах <body>,
+// исключая заголовки и служебные теги.
+func FindExistingLinkInBody(htmlContent, anchorText, targetURL string) (position int, found bool) {
+	anchorText = strings.TrimSpace(anchorText)
+	targetURL = strings.TrimSpace(targetURL)
+	if anchorText == "" || targetURL == "" {
+		return -1, false
+	}
+	lowerAnchor := strings.ToLower(anchorText)
+	lowerTarget := strings.ToLower(targetURL)
+	tokenizer := html.NewTokenizer(strings.NewReader(htmlContent))
+	offset := 0
+	inBody := false
+	headingDepth := 0
+	inScript := false
+	inStyle := false
+	inAnchor := false
+	anchorHref := ""
+
+	for {
+		tt := tokenizer.Next()
+		if tt == html.ErrorToken {
+			return -1, false
+		}
+		raw := tokenizer.Raw()
+		base := offset
+
+		switch tt {
+		case html.StartTagToken:
+			tok := tokenizer.Token()
+			tag := strings.ToLower(tok.Data)
+			switch tag {
+			case "body":
+				inBody = true
+			case "script":
+				inScript = true
+			case "style":
+				inStyle = true
+			case "a":
+				inAnchor = true
+				anchorHref = ""
+				for _, attr := range tok.Attr {
+					if strings.EqualFold(attr.Key, "href") {
+						anchorHref = strings.TrimSpace(attr.Val)
+						break
+					}
+				}
+			case "h1", "h2", "h3", "h4", "h5", "h6":
+				headingDepth++
+			}
+		case html.EndTagToken:
+			tok := tokenizer.Token()
+			tag := strings.ToLower(tok.Data)
+			switch tag {
+			case "body":
+				inBody = false
+			case "script":
+				inScript = false
+			case "style":
+				inStyle = false
+			case "a":
+				inAnchor = false
+				anchorHref = ""
+			case "h1", "h2", "h3", "h4", "h5", "h6":
+				if headingDepth > 0 {
+					headingDepth--
+				}
+			}
+		case html.TextToken:
+			if inBody && headingDepth == 0 && !inScript && !inStyle && inAnchor && anchorHref != "" {
+				if strings.EqualFold(strings.ToLower(anchorHref), lowerTarget) {
+					lowerText := strings.ToLower(string(raw))
+					if idx := strings.Index(lowerText, lowerAnchor); idx != -1 {
+						return base + idx, true
+					}
+				}
+			}
+		}
+
+		offset += len(raw)
+	}
+}
+
 // InsertLink вставляет ссылку в HTML по позиции.
 func (b *Builder) InsertLink(htmlContent string, position int, anchorText, targetURL string) string {
 	anchorText = strings.TrimSpace(anchorText)

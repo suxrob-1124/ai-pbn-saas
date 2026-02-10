@@ -18,6 +18,7 @@ type LinkSchedule struct {
 	IsActive  bool
 	CreatedBy string
 	CreatedAt time.Time
+	UpdatedAt time.Time
 	LastRunAt sql.NullTime
 	NextRunAt sql.NullTime
 	Timezone  sql.NullString
@@ -46,7 +47,7 @@ func NewLinkScheduleStore(db *sql.DB) *LinkScheduleStore {
 // GetByProject возвращает расписание по проекту.
 func (s *LinkScheduleStore) GetByProject(ctx context.Context, projectID string) (*LinkSchedule, error) {
 	var sched LinkSchedule
-	if err := s.db.QueryRowContext(ctx, `SELECT id, project_id, name, config, is_active, created_by, created_at, last_run_at, next_run_at, timezone
+	if err := s.db.QueryRowContext(ctx, `SELECT id, project_id, name, config, is_active, created_by, created_at, updated_at, last_run_at, next_run_at, timezone
 		FROM link_schedules WHERE project_id=$1`, projectID).
 		Scan(
 			&sched.ID,
@@ -56,6 +57,7 @@ func (s *LinkScheduleStore) GetByProject(ctx context.Context, projectID string) 
 			&sched.IsActive,
 			&sched.CreatedBy,
 			&sched.CreatedAt,
+			&sched.UpdatedAt,
 			&sched.LastRunAt,
 			&sched.NextRunAt,
 			&sched.Timezone,
@@ -69,15 +71,16 @@ func (s *LinkScheduleStore) GetByProject(ctx context.Context, projectID string) 
 func (s *LinkScheduleStore) Upsert(ctx context.Context, schedule LinkSchedule) (*LinkSchedule, error) {
 	var stored LinkSchedule
 	if err := s.db.QueryRowContext(ctx, `INSERT INTO link_schedules(
-			id, project_id, name, config, is_active, created_by, created_at, next_run_at, timezone
-		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
+			id, project_id, name, config, is_active, created_by, created_at, updated_at, next_run_at, timezone
+		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 		ON CONFLICT (project_id) DO UPDATE SET
 			name=EXCLUDED.name,
 			config=EXCLUDED.config,
 			is_active=EXCLUDED.is_active,
 			next_run_at=EXCLUDED.next_run_at,
-			timezone=EXCLUDED.timezone
-		RETURNING id, project_id, name, config, is_active, created_by, created_at, last_run_at, next_run_at, timezone`,
+			timezone=EXCLUDED.timezone,
+			updated_at=EXCLUDED.updated_at
+		RETURNING id, project_id, name, config, is_active, created_by, created_at, updated_at, last_run_at, next_run_at, timezone`,
 		schedule.ID,
 		schedule.ProjectID,
 		schedule.Name,
@@ -85,6 +88,7 @@ func (s *LinkScheduleStore) Upsert(ctx context.Context, schedule LinkSchedule) (
 		schedule.IsActive,
 		schedule.CreatedBy,
 		schedule.CreatedAt,
+		schedule.UpdatedAt,
 		nullableTime(schedule.NextRunAt),
 		nullableString(schedule.Timezone),
 	).Scan(
@@ -95,6 +99,7 @@ func (s *LinkScheduleStore) Upsert(ctx context.Context, schedule LinkSchedule) (
 		&stored.IsActive,
 		&stored.CreatedBy,
 		&stored.CreatedAt,
+		&stored.UpdatedAt,
 		&stored.LastRunAt,
 		&stored.NextRunAt,
 		&stored.Timezone,
@@ -144,6 +149,7 @@ func (s *LinkScheduleStore) Update(ctx context.Context, scheduleID string, updat
 		return nil
 	}
 
+	setClauses = append(setClauses, "updated_at=NOW()")
 	args = append(args, scheduleID)
 	query := fmt.Sprintf("UPDATE link_schedules SET %s WHERE id=$%d", strings.Join(setClauses, ", "), idx)
 	if _, err := s.db.ExecContext(ctx, query, args...); err != nil {
@@ -154,7 +160,7 @@ func (s *LinkScheduleStore) Update(ctx context.Context, scheduleID string, updat
 
 // DisableByProject отключает расписание по проекту.
 func (s *LinkScheduleStore) DisableByProject(ctx context.Context, projectID string) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE link_schedules SET is_active=FALSE WHERE project_id=$1`, projectID)
+	res, err := s.db.ExecContext(ctx, `UPDATE link_schedules SET is_active=FALSE, updated_at=NOW() WHERE project_id=$1`, projectID)
 	if err != nil {
 		return fmt.Errorf("failed to disable link schedule: %w", err)
 	}
@@ -165,9 +171,22 @@ func (s *LinkScheduleStore) DisableByProject(ctx context.Context, projectID stri
 	return nil
 }
 
+// DeleteByProject удаляет расписание по проекту.
+func (s *LinkScheduleStore) DeleteByProject(ctx context.Context, projectID string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM link_schedules WHERE project_id=$1`, projectID)
+	if err != nil {
+		return fmt.Errorf("failed to delete link schedule: %w", err)
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 // ListActive возвращает активные расписания линкбилдинга.
 func (s *LinkScheduleStore) ListActive(ctx context.Context) ([]LinkSchedule, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, project_id, name, config, is_active, created_by, created_at, last_run_at, next_run_at, timezone
+	rows, err := s.db.QueryContext(ctx, `SELECT id, project_id, name, config, is_active, created_by, created_at, updated_at, last_run_at, next_run_at, timezone
 		FROM link_schedules
 		WHERE is_active=TRUE
 		ORDER BY created_at ASC`)
@@ -187,6 +206,7 @@ func (s *LinkScheduleStore) ListActive(ctx context.Context) ([]LinkSchedule, err
 			&sched.IsActive,
 			&sched.CreatedBy,
 			&sched.CreatedAt,
+			&sched.UpdatedAt,
 			&sched.LastRunAt,
 			&sched.NextRunAt,
 			&sched.Timezone,

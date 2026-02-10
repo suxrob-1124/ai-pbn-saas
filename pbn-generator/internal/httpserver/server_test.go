@@ -719,6 +719,7 @@ func TestDomainLinkRunUpsertsActiveTask(t *testing.T) {
 		AnchorText:   "Old Anchor",
 		TargetURL:    "https://old.example",
 		ScheduledFor: time.Now().Add(-time.Hour),
+		Action:       "insert",
 		Status:       "searching",
 		Attempts:     2,
 		CreatedBy:    "user@example.com",
@@ -1935,6 +1936,9 @@ func (s *stubLinkScheduleStore) Upsert(ctx context.Context, schedule sqlstore.Li
 		if schedule.Timezone.Valid {
 			existing.Timezone = schedule.Timezone
 		}
+		if !schedule.UpdatedAt.IsZero() {
+			existing.UpdatedAt = schedule.UpdatedAt
+		}
 		s.schedules[id] = existing
 		out := existing
 		return &out, nil
@@ -1944,6 +1948,9 @@ func (s *stubLinkScheduleStore) Upsert(ctx context.Context, schedule sqlstore.Li
 	}
 	if schedule.CreatedAt.IsZero() {
 		schedule.CreatedAt = time.Now().UTC()
+	}
+	if schedule.UpdatedAt.IsZero() {
+		schedule.UpdatedAt = schedule.CreatedAt
 	}
 	s.schedules[schedule.ID] = schedule
 	out := schedule
@@ -1958,7 +1965,21 @@ func (s *stubLinkScheduleStore) DisableByProject(ctx context.Context, projectID 
 			continue
 		}
 		sched.IsActive = false
+		sched.UpdatedAt = time.Now().UTC()
 		s.schedules[id] = sched
+		return nil
+	}
+	return sql.ErrNoRows
+}
+
+func (s *stubLinkScheduleStore) DeleteByProject(ctx context.Context, projectID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, sched := range s.schedules {
+		if sched.ProjectID != projectID {
+			continue
+		}
+		delete(s.schedules, id)
 		return nil
 	}
 	return sql.ErrNoRows
@@ -2047,6 +2068,9 @@ func (s *stubLinkTaskStore) Create(ctx context.Context, task sqlstore.LinkTask) 
 	if task.Status == "" {
 		task.Status = "pending"
 	}
+	if strings.TrimSpace(task.Action) == "" {
+		task.Action = "insert"
+	}
 	s.tasks[task.ID] = task
 	return nil
 }
@@ -2130,6 +2154,9 @@ func (s *stubLinkTaskStore) Update(ctx context.Context, taskID string, updates s
 	}
 	if updates.TargetURL != nil {
 		task.TargetURL = *updates.TargetURL
+	}
+	if updates.Action != nil {
+		task.Action = *updates.Action
 	}
 	if updates.Status != nil {
 		task.Status = *updates.Status

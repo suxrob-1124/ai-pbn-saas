@@ -4,11 +4,16 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"path"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // PublishStep публикует собранную статику в локальное хранилище.
@@ -21,9 +26,11 @@ func (s *PublishStep) ArtifactKey() string { return "published_path" }
 func (s *PublishStep) Progress() int { return 100 }
 
 func (s *PublishStep) Execute(ctx context.Context, state *PipelineState) (map[string]any, error) {
+	const defaultDelayMinutes = 60
 	if state.Publisher == nil {
 		return nil, fmt.Errorf("publish: publisher is not configured")
 	}
+	now := time.Now().UTC()
 	zipB64, _ := state.Artifacts["zip_archive"].(string)
 	if strings.TrimSpace(zipB64) == "" {
 		return nil, fmt.Errorf("publish: zip_archive artifact is empty")
@@ -42,12 +49,74 @@ func (s *PublishStep) Execute(ctx context.Context, state *PipelineState) (map[st
 	if err := state.DomainStore.UpdateStatus(ctx, state.DomainID, "published"); err != nil {
 		return nil, fmt.Errorf("publish: update domain status: %w", err)
 	}
+	if state.DomainStore != nil && state.Domain != nil {
+		anchor := strings.TrimSpace(state.Domain.LinkAnchorText.String)
+		target := strings.TrimSpace(state.Domain.LinkAcceptorURL.String)
+		if state.Domain.LinkAnchorText.Valid && state.Domain.LinkAcceptorURL.Valid && anchor != "" && target != "" {
+			if err := state.DomainStore.UpdateLinkStatus(ctx, state.DomainID, "needs_relink"); err != nil {
+				return nil, fmt.Errorf("publish: update link status: %w", err)
+			}
+		}
+	}
+	if state.DomainStore != nil {
+		delayMinutes := defaultDelayMinutes
+		if state.LinkScheduleStore != nil && state.Domain != nil {
+			sched, err := state.LinkScheduleStore.GetByProject(ctx, state.Domain.ProjectID)
+			if err == nil {
+				if parsed, err := parseLinkDelayMinutes(sched.Config, defaultDelayMinutes); err == nil {
+					delayMinutes = parsed
+				}
+			} else if !errors.Is(err, sql.ErrNoRows) && state.AppendLog != nil {
+				state.AppendLog(fmt.Sprintf("publish: link schedule load failed: %v", err))
+			}
+		}
+		readyAt := now.Add(time.Duration(delayMinutes) * time.Minute)
+		if err := state.DomainStore.UpdateLinkReadyAt(ctx, state.DomainID, readyAt); err != nil {
+			return nil, fmt.Errorf("publish: update link ready at: %w", err)
+		}
+	}
 
 	publishedPath := state.Publisher.GetPublishedPath(state.DomainID)
 	artifacts := map[string]any{
 		"published_path": publishedPath,
 	}
 	return artifacts, nil
+}
+
+func parseLinkDelayMinutes(raw json.RawMessage, fallback int) (int, error) {
+	if fallback <= 0 {
+		fallback = 60
+	}
+	if len(raw) == 0 {
+		return fallback, nil
+	}
+	var data map[string]any
+	if err := json.Unmarshal(raw, &data); err != nil {
+		return fallback, err
+	}
+	rawDelay, ok := data["delay_minutes"]
+	if !ok {
+		return fallback, nil
+	}
+	switch value := rawDelay.(type) {
+	case float64:
+		if value < 0 {
+			return fallback, fmt.Errorf("delay_minutes must be non-negative")
+		}
+		return int(value), nil
+	case string:
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			return fallback, nil
+		}
+		parsed, err := strconv.Atoi(trimmed)
+		if err != nil || parsed < 0 {
+			return fallback, fmt.Errorf("delay_minutes must be non-negative")
+		}
+		return parsed, nil
+	default:
+		return fallback, fmt.Errorf("delay_minutes must be number or string")
+	}
 }
 
 func unzipToMap(zipBytes []byte) (map[string][]byte, error) {
