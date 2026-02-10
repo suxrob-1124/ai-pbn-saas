@@ -64,7 +64,9 @@ type GenerationStore interface {
 	Create(ctx context.Context, g sqlstore.Generation) error
 	ListByDomain(ctx context.Context, domainID string) ([]sqlstore.Generation, error)
 	ListRecentByUser(ctx context.Context, email string, limit int) ([]sqlstore.Generation, error)
+	ListRecentByUserLite(ctx context.Context, email string, limit int) ([]sqlstore.Generation, error)
 	ListRecentAll(ctx context.Context, limit int) ([]sqlstore.Generation, error)
+	ListRecentAllLite(ctx context.Context, limit int) ([]sqlstore.Generation, error)
 	CountsByStatus(ctx context.Context) (map[string]int, error)
 	UpdateStatus(ctx context.Context, id, status string, progress int, errText *string) error
 	UpdateFull(ctx context.Context, id, status string, progress int, errText *string, logs, artifacts []byte, started, finished *time.Time, promptID *string) error
@@ -289,7 +291,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "could not list projects")
 			return
 		}
-		gens, err = s.generations.ListRecentAll(r.Context(), limit)
+		gens, err = s.generations.ListRecentAllLite(r.Context(), limit)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "could not list generations")
 			return
@@ -300,7 +302,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "could not list projects")
 			return
 		}
-		gens, err = s.generations.ListRecentByUser(r.Context(), user.Email, limit)
+		gens, err = s.generations.ListRecentByUserLite(r.Context(), user.Email, limit)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "could not list generations")
 			return
@@ -987,7 +989,7 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
 		}
 		tz := strings.TrimSpace(body.Timezone)
 		if tz == "" {
-			tz = "UTC"
+			tz = "Europe/Moscow"
 		}
 		if _, err := time.LoadLocation(tz); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid timezone")
@@ -2413,14 +2415,28 @@ func (s *Server) handleGenerations(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
+	lite := false
+	if v := r.URL.Query().Get("lite"); v != "" {
+		if v == "1" || strings.EqualFold(v, "true") {
+			lite = true
+		}
+	}
 	var (
 		list []sqlstore.Generation
 		err  error
 	)
 	if strings.EqualFold(user.Role, "admin") {
-		list, err = s.generations.ListRecentAll(r.Context(), limit)
+		if lite {
+			list, err = s.generations.ListRecentAllLite(r.Context(), limit)
+		} else {
+			list, err = s.generations.ListRecentAll(r.Context(), limit)
+		}
 	} else {
-		list, err = s.generations.ListRecentByUser(r.Context(), user.Email, limit)
+		if lite {
+			list, err = s.generations.ListRecentByUserLite(r.Context(), user.Email, limit)
+		} else {
+			list, err = s.generations.ListRecentByUser(r.Context(), user.Email, limit)
+		}
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not list generations")

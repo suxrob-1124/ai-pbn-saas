@@ -1619,6 +1619,10 @@ func (s *stubGenerationStore) ListRecentByUser(ctx context.Context, email string
 	return res, nil
 }
 
+func (s *stubGenerationStore) ListRecentByUserLite(ctx context.Context, email string, limit int) ([]sqlstore.Generation, error) {
+	return s.ListRecentByUser(ctx, email, limit)
+}
+
 func (s *stubGenerationStore) ListRecentAll(ctx context.Context, limit int) ([]sqlstore.Generation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1630,6 +1634,10 @@ func (s *stubGenerationStore) ListRecentAll(ctx context.Context, limit int) ([]s
 		res = res[:limit]
 	}
 	return res, nil
+}
+
+func (s *stubGenerationStore) ListRecentAllLite(ctx context.Context, limit int) ([]sqlstore.Generation, error) {
+	return s.ListRecentAll(ctx, limit)
 }
 
 func (s *stubGenerationStore) Delete(ctx context.Context, id string) error {

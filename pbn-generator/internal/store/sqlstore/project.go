@@ -599,6 +599,30 @@ LIMIT $2`, email, limit)
 	return res, rows.Err()
 }
 
+func (s *GenerationStore) ListRecentByUserLite(ctx context.Context, email string, limit int) ([]Generation, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT g.id, g.domain_id, g.requested_by, g.status, g.progress, g.error, g.attempts, g.retryable, g.next_retry_at, g.last_error_at, g.started_at, g.finished_at, g.prompt_id, g.created_at, g.updated_at
+FROM generations g
+JOIN domains d ON g.domain_id = d.id
+JOIN projects p ON d.project_id = p.id
+WHERE p.user_email = $1
+   OR EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = p.id AND pm.user_email = $1)
+ORDER BY g.created_at DESC
+LIMIT $2`, email, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var res []Generation
+	for rows.Next() {
+		var g Generation
+		if err := rows.Scan(&g.ID, &g.DomainID, &g.RequestedBy, &g.Status, &g.Progress, &g.Error, &g.Attempts, &g.Retryable, &g.NextRetryAt, &g.LastErrorAt, &g.StartedAt, &g.FinishedAt, &g.PromptID, &g.CreatedAt, &g.UpdatedAt); err != nil {
+			return nil, err
+		}
+		res = append(res, g)
+	}
+	return res, rows.Err()
+}
+
 func (s *GenerationStore) ListRecentAll(ctx context.Context, limit int) ([]Generation, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT g.id, g.domain_id, g.requested_by, g.status, g.progress, g.error, g.logs, g.artifacts, g.checkpoint_data, g.attempts, g.retryable, g.next_retry_at, g.last_error_at, g.started_at, g.finished_at, g.prompt_id, g.created_at, g.updated_at
 FROM generations g
@@ -623,6 +647,26 @@ LIMIT $1`, limit)
 		}
 		if checkpoint.Valid {
 			g.CheckpointData = []byte(checkpoint.String)
+		}
+		res = append(res, g)
+	}
+	return res, rows.Err()
+}
+
+func (s *GenerationStore) ListRecentAllLite(ctx context.Context, limit int) ([]Generation, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT g.id, g.domain_id, g.requested_by, g.status, g.progress, g.error, g.attempts, g.retryable, g.next_retry_at, g.last_error_at, g.started_at, g.finished_at, g.prompt_id, g.created_at, g.updated_at
+FROM generations g
+ORDER BY g.created_at DESC
+LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var res []Generation
+	for rows.Next() {
+		var g Generation
+		if err := rows.Scan(&g.ID, &g.DomainID, &g.RequestedBy, &g.Status, &g.Progress, &g.Error, &g.Attempts, &g.Retryable, &g.NextRetryAt, &g.LastErrorAt, &g.StartedAt, &g.FinishedAt, &g.PromptID, &g.CreatedAt, &g.UpdatedAt); err != nil {
+			return nil, err
 		}
 		res = append(res, g)
 	}

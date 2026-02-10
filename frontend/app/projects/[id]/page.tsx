@@ -450,7 +450,7 @@ export default function ProjectDetailPage() {
     setProjectErrorsLoading(true);
     setProjectErrorsError(null);
     try {
-      const list = await authFetchCached<Generation[]>(`/api/generations?limit=100`, undefined, {
+      const list = await authFetchCached<Generation[]>(`/api/generations?limit=100&lite=1`, undefined, {
         ttlMs: 15000,
         bypassCache: force
       });

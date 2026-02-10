@@ -27,7 +27,7 @@ export default function QueuePage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await authFetch<Generation[]>("/api/generations");
+      const res = await authFetch<Generation[]>("/api/generations?limit=50&lite=1");
       setItems(Array.isArray(res) ? res : []);
     } catch (err: any) {
       setError(err?.message || "Не удалось загрузить очередь");
