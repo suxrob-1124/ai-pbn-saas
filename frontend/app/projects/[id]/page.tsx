@@ -5,14 +5,12 @@ import type { UrlObject } from "url";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { authFetch, authFetchCached, post, patch, del } from "../../../lib/http";
 import { useAuthGuard } from "../../../lib/useAuth";
-import { FiPlay, FiRefreshCw, FiList, FiClock, FiPauseCircle, FiCheck, FiTrash2, FiUsers, FiX, FiKey, FiAlertCircle, FiLink, FiInfo } from "react-icons/fi";
+import { FiPlay, FiRefreshCw, FiList, FiClock, FiPauseCircle, FiCheck, FiTrash2, FiX, FiKey, FiAlertCircle, FiLink, FiInfo } from "react-icons/fi";
 import Link from "next/link";
 import { showToast } from "../../../lib/toastStore";
 import { createSchedule, deleteSchedule, listSchedules, triggerSchedule, updateSchedule } from "../../../lib/schedulesApi";
 import { deleteLinkSchedule, getLinkSchedule, triggerLinkSchedule, upsertLinkSchedule } from "../../../lib/linkSchedulesApi";
-import { deleteQueueItem, listQueue } from "../../../lib/queueApi";
 import type { ScheduleDTO } from "../../../types/schedules";
-import type { QueueItemDTO } from "../../../types/queue";
 import { ScheduleForm } from "../../../components/ScheduleForm";
 import { ScheduleList } from "../../../components/ScheduleList";
 import type { ScheduleFormValue } from "../../../lib/scheduleFormValidation";
@@ -65,15 +63,8 @@ type ProjectSummary = {
   members: Array<{ email: string; role: string; createdAt: string }>;
 };
 
-type ProjectTab = "domains" | "members" | "schedules" | "queue" | "errors" | "settings";
-const PROJECT_TABS: ProjectTab[] = ["domains", "members", "schedules", "queue", "errors", "settings"];
-
-const QUEUE_STATUS_LABELS: Record<string, string> = {
-  pending: "Ожидает",
-  queued: "В очереди",
-  completed: "Завершено",
-  failed: "Ошибка"
-};
+type ProjectTab = "domains" | "schedules" | "errors" | "settings";
+const PROJECT_TABS: ProjectTab[] = ["domains", "schedules", "errors", "settings"];
 
 export default function ProjectDetailPage() {
   const { me } = useAuthGuard();
@@ -176,10 +167,6 @@ export default function ProjectDetailPage() {
   const [linkScheduleLoading, setLinkScheduleLoading] = useState(false);
   const [linkScheduleError, setLinkScheduleError] = useState<string | null>(null);
   const [linkSchedulePermission, setLinkSchedulePermission] = useState(false);
-  const [queueItems, setQueueItems] = useState<QueueItemDTO[]>([]);
-  const [queueLoading, setQueueLoading] = useState(false);
-  const [queueError, setQueueError] = useState<string | null>(null);
-  const [queuePermission, setQueuePermission] = useState(false);
   const [linkLoadingId, setLinkLoadingId] = useState<string | null>(null);
   const [projectErrors, setProjectErrors] = useState<Generation[]>([]);
   const [projectErrorsLoading, setProjectErrorsLoading] = useState(false);
@@ -223,10 +210,18 @@ export default function ProjectDetailPage() {
 
   useEffect(() => {
     const tab = searchParams.get("tab");
+    if (tab === "queue" && projectId) {
+      router.replace(`/projects/${projectId}/queue`, { scroll: false });
+      return;
+    }
+    if (tab === "members" && projectId) {
+      router.replace(`/projects/${projectId}?tab=settings`, { scroll: false });
+      return;
+    }
     if (tab && PROJECT_TABS.includes(tab as ProjectTab) && tab !== activeTab) {
       setActiveTab(tab as ProjectTab);
     }
-  }, [searchParams, activeTab]);
+  }, [searchParams, activeTab, projectId, router]);
 
   const load = async (force = false) => {
     setLoading(true);
@@ -493,26 +488,6 @@ export default function ProjectDetailPage() {
     }
   };
 
-  const loadQueue = async () => {
-    if (!projectId) return;
-    setQueueLoading(true);
-    setQueueError(null);
-    setQueuePermission(false);
-    try {
-      const list = await listQueue(projectId);
-      setQueueItems(Array.isArray(list) ? list : []);
-    } catch (err: any) {
-      const msg = err?.message || "Не удалось загрузить очередь";
-      if (isPermissionError(msg)) {
-        setQueuePermission(true);
-      } else {
-        setQueueError(msg);
-      }
-    } finally {
-      setQueueLoading(false);
-    }
-  };
-
   const loadProjectErrors = async (force = false) => {
     if (!projectId) return;
     setProjectErrorsLoading(true);
@@ -754,32 +729,11 @@ export default function ProjectDetailPage() {
           message: `${sched.name} · ${enqueued} задач`
         });
       } else {
-        let queuedForSchedule = 0;
-        try {
-          const list = await listQueue(projectId);
-          const items = Array.isArray(list) ? list : [];
-          setQueueItems(items);
-          queuedForSchedule = items.filter(
-            (item) =>
-              item.schedule_id === sched.id &&
-              (item.status === "pending" || item.status === "queued")
-          ).length;
-        } catch {
-          queuedForSchedule = 0;
-        }
-        if (queuedForSchedule > 0) {
-          showToast({
-            type: "info",
-            title: "Уже в очереди",
-            message: `${sched.name} · ${queuedForSchedule} задач`
-          });
-        } else {
-          showToast({
-            type: "warning",
-            title: "Нечего запускать",
-            message: `${sched.name} · нет доменов для запуска`
-          });
-        }
+        showToast({
+          type: "warning",
+          title: "Нечего запускать",
+          message: `${sched.name} · нет доменов для запуска`
+        });
       }
     } catch (err: any) {
       const msg = err?.message || "Не удалось запустить расписание";
@@ -918,27 +872,6 @@ export default function ProjectDetailPage() {
     }
   };
 
-  const handleDeleteQueueItem = async (item: QueueItemDTO) => {
-    if (!confirm(`Удалить элемент очереди ${item.id}?`)) return;
-    setQueueLoading(true);
-    setQueueError(null);
-    try {
-      await deleteQueueItem(item.id);
-      showToast({
-        type: "success",
-        title: "Элемент очереди удален",
-        message: item.id
-      });
-      await loadQueue();
-    } catch (err: any) {
-      const msg = err?.message || "Не удалось удалить элемент очереди";
-      setQueueError(msg);
-      showToast({ type: "error", title: "Ошибка удаления", message: msg });
-    } finally {
-      setQueueLoading(false);
-    }
-  };
-
   useEffect(() => {
     if (projectId) {
       load();
@@ -949,12 +882,6 @@ export default function ProjectDetailPage() {
     if (activeTab === "schedules") {
       loadSchedules();
       loadLinkSchedule();
-    }
-  }, [activeTab, projectId]);
-
-  useEffect(() => {
-    if (activeTab === "queue") {
-      loadQueue();
     }
   }, [activeTab, projectId]);
 
@@ -1265,6 +1192,16 @@ export default function ProjectDetailPage() {
             </p>
           </div>
           <div className="flex gap-2">
+            <Link
+              href={
+                projectId
+                  ? ({ pathname: "/projects/[id]/queue", query: { id: projectId, tab: "domains" } } as UrlObject)
+                  : "/projects"
+              }
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            >
+              <FiList /> Очередь проекта
+            </Link>
             <button
               onClick={() => load(true)}
               disabled={loading}
@@ -1317,7 +1254,8 @@ export default function ProjectDetailPage() {
 
       {/* Tabs */}
       <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow">
-        <div className="flex gap-2 border-b border-slate-200 dark:border-slate-800 mb-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 mb-4">
+          <div className="flex flex-wrap gap-2">
           <Link
             href={buildTabHref("domains")}
             className={`px-4 py-2 text-sm font-semibold border-b-2 transition-colors ${
@@ -1339,16 +1277,6 @@ export default function ProjectDetailPage() {
             Расписания
           </Link>
           <Link
-            href={buildTabHref("queue")}
-            className={`px-4 py-2 text-sm font-semibold border-b-2 transition-colors ${
-              activeTab === "queue"
-                ? "border-indigo-600 text-indigo-600 dark:border-indigo-400 dark:text-indigo-400"
-                : "border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
-            }`}
-          >
-            Очередь
-          </Link>
-          <Link
             href={buildTabHref("errors")}
             className={`px-4 py-2 text-sm font-semibold border-b-2 transition-colors ${
               activeTab === "errors"
@@ -1368,16 +1296,7 @@ export default function ProjectDetailPage() {
           >
             Настройки
           </Link>
-          <Link
-            href={buildTabHref("members")}
-            className={`px-4 py-2 text-sm font-semibold border-b-2 transition-colors ${
-              activeTab === "members"
-                ? "border-indigo-600 text-indigo-600 dark:border-indigo-400 dark:text-indigo-400"
-                : "border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
-            }`}
-          >
-            <FiUsers className="inline mr-1" /> Участники
-          </Link>
+          </div>
         </div>
 
         {activeTab === "domains" && (
@@ -1768,116 +1687,6 @@ export default function ProjectDetailPage() {
           </div>
         )}
 
-        {activeTab === "queue" && (
-          <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
-                  <Badge label="Проектная" tone="emerald" />
-                  <Badge label="Кратко" tone="amber" />
-                </div>
-                <h3 className="font-semibold">Очередь проекта (кратко)</h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Короткий список активных задач. Полная очередь — на отдельной странице.
-                </p>
-              </div>
-              <button
-                onClick={loadQueue}
-                disabled={queueLoading}
-                className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              >
-                <FiRefreshCw /> Обновить
-              </button>
-            </div>
-            {queueLoading && (
-              <div className="text-sm text-slate-500 dark:text-slate-400">Загрузка очереди...</div>
-            )}
-            {!queueLoading && queuePermission && (
-              <div className="text-sm text-amber-600 dark:text-amber-400">
-                Недостаточно прав для просмотра очереди.
-              </div>
-            )}
-            {!queueLoading && !queuePermission && queueError && (
-              <div className="text-sm text-red-500">{queueError}</div>
-            )}
-            {!queueLoading &&
-              !queuePermission &&
-              !queueError &&
-              queueItems.length === 0 && (
-                <div className="text-sm text-slate-500 dark:text-slate-400">
-                  Очередь пуста.
-                </div>
-              )}
-            {!queueLoading &&
-              !queuePermission &&
-              !queueError &&
-              queueItems.length > 0 && (
-                <div className="overflow-x-auto">
-                  <table className="min-w-full text-sm">
-                    <thead>
-                      <tr className="text-left text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
-                        <th className="py-2 pr-4">ID</th>
-                        <th className="py-2 pr-4">Домен</th>
-                        <th className="py-2 pr-4">Статус</th>
-                        <th className="py-2 pr-4">Запланировано</th>
-                        <th className="py-2 pr-4">Запуск</th>
-                        <th className="py-2 pr-4 text-right">Действия</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                      {queueItems.map((item) => {
-                        const domain = domainById[item.domain_id];
-                        const domainLabel = item.domain_url || domain?.url || item.domain_id;
-                        const statusLabel = QUEUE_STATUS_LABELS[item.status] || item.status;
-                        return (
-                          <tr key={item.id}>
-                            <td className="py-3 pr-4 font-mono text-xs">{item.id.slice(0, 8)}</td>
-                            <td className="py-3 pr-4">
-                              {domain || item.domain_url ? (
-                                <Link href={`/domains/${domain?.id || item.domain_id}`} className="text-indigo-600 hover:underline">
-                                  {domainLabel}
-                                </Link>
-                              ) : (
-                                <span className="text-slate-500 dark:text-slate-400">{domainLabel}</span>
-                              )}
-                            </td>
-                            <td className="py-3 pr-4">{statusLabel}</td>
-                            <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">
-                              {formatDateTime(item.scheduled_for)}
-                            </td>
-                            <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">
-                              {formatDateTime(item.processed_at)}
-                            </td>
-                            <td className="py-3 pr-4 text-right">
-                              <button
-                                onClick={() => handleDeleteQueueItem(item)}
-                                disabled={queueLoading}
-                                className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
-                              >
-                                <FiTrash2 /> Удалить
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            <div className="flex flex-wrap items-center gap-3 text-xs">
-              <Link
-                href={projectId ? `/projects/${projectId}/queue?tab=domains` : "/projects"}
-                className="text-indigo-600 hover:underline"
-              >
-                Открыть подробную очередь проекта →
-              </Link>
-              <Link href="/queue?tab=domains" className="text-indigo-600 hover:underline">
-                Открыть общую очередь →
-              </Link>
-            </div>
-          </div>
-        )}
-
         {activeTab === "errors" && (
           <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3">
             <div className="flex items-center justify-between">
@@ -1941,132 +1750,14 @@ export default function ProjectDetailPage() {
         )}
 
         {activeTab === "settings" && (
-          <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3">
-            <div>
-              <h3 className="font-semibold">Настройки проекта</h3>
-              <p className="text-sm text-slate-500 dark:text-slate-400">
-                Эти параметры влияют на расписания и отображение времени в проекте.
-              </p>
-            </div>
-            {projectSettingsError && (
-              <div className="text-sm text-red-500">{projectSettingsError}</div>
-            )}
-            <div className="grid gap-3 md:grid-cols-2">
-              <div className="space-y-1">
-                <div className="text-xs uppercase tracking-wide text-slate-400">Название</div>
-                <input
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-                  value={projectName}
-                  onChange={(e) => setProjectName(e.target.value)}
-                  placeholder="Название проекта"
-                />
+          <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-4">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <h3 className="font-semibold">Настройки проекта</h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400">
+                  Основные параметры, таймзона и доступы команды.
+                </p>
               </div>
-              <div className="space-y-1">
-                <div className="text-xs uppercase tracking-wide text-slate-400">Страна</div>
-                <input
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-                  value={projectCountry}
-                  onChange={(e) => setProjectCountry(e.target.value)}
-                  placeholder="se"
-                />
-              </div>
-              <div className="space-y-1">
-                <div className="text-xs uppercase tracking-wide text-slate-400">Язык</div>
-                <input
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-                  value={projectLanguage}
-                  onChange={(e) => setProjectLanguage(e.target.value)}
-                  placeholder="sv"
-                />
-              </div>
-              <div className="space-y-1">
-                <div className="text-xs uppercase tracking-wide text-slate-400">Таймзона проекта</div>
-                <input
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-                  value={timezoneQuery}
-                  onChange={(e) => setTimezoneQuery(e.target.value)}
-                  placeholder="Поиск таймзоны (например, Asia/Bangkok)"
-                />
-                <div className="rounded-lg border border-slate-200 bg-white p-2 dark:border-slate-800 dark:bg-slate-950">
-                  <div className="text-[11px] uppercase tracking-wide text-slate-400">Выбранная зона</div>
-                  <div className="mt-1 flex items-center justify-between rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:text-slate-100">
-                    <span>{resolvedProjectTimezone || "UTC"}</span>
-                    <span className="text-xs text-slate-500 dark:text-slate-400">
-                      {getTimezoneOffsetLabel(resolvedProjectTimezone)}
-                    </span>
-                  </div>
-                  <div className="mt-3 text-[11px] uppercase tracking-wide text-slate-400">Поиск</div>
-                  <input
-                    className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-                    value={timezoneQuery}
-                    onChange={(e) => setTimezoneQuery(e.target.value)}
-                    placeholder="Начните вводить таймзону"
-                  />
-                  {recentFiltered.length > 0 && (
-                    <div className="mt-3">
-                      <div className="text-[11px] uppercase tracking-wide text-slate-400">Недавние</div>
-                      <div className="mt-1 flex flex-wrap gap-2">
-                        {recentFiltered.map((tz) => (
-                          <button
-                            key={`recent-${tz}`}
-                            type="button"
-                            onClick={() => {
-                              setProjectTimezone(tz);
-                              updateRecentTimezone(tz);
-                            }}
-                            className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1 text-xs text-slate-700 hover:bg-slate-100 dark:border-slate-800 dark:text-slate-200 dark:hover:bg-slate-900"
-                          >
-                            <span>{tz}</span>
-                            <span className="text-[10px] text-slate-500 dark:text-slate-400">
-                              {getTimezoneOffsetLabel(tz)}
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  <div className="mt-3 text-[11px] uppercase tracking-wide text-slate-400">Все таймзоны</div>
-                  <div className="mt-2 max-h-64 space-y-3 overflow-auto pr-2">
-                    {timezoneGroups.length === 0 && (
-                      <div className="text-sm text-slate-500 dark:text-slate-400">Ничего не найдено</div>
-                    )}
-                    {timezoneGroups.map(([group, items]) => (
-                      <div key={group} className="space-y-2">
-                        <div className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">
-                          {group}
-                        </div>
-                        <div className="grid gap-2">
-                          {items.map((tz) => (
-                            <button
-                              key={tz}
-                              type="button"
-                              onClick={() => {
-                                setProjectTimezone(tz);
-                                updateRecentTimezone(tz);
-                              }}
-                              className={`flex items-center justify-between rounded-md border px-3 py-2 text-sm ${
-                                tz === projectTimezone
-                                  ? "border-indigo-400 bg-indigo-50 text-indigo-700 dark:border-indigo-500/60 dark:bg-indigo-500/10 dark:text-indigo-200"
-                                  : "border-slate-200 text-slate-700 hover:bg-slate-100 dark:border-slate-800 dark:text-slate-200 dark:hover:bg-slate-900"
-                              }`}
-                            >
-                              <span>{tz}</span>
-                              <span className="text-xs text-slate-500 dark:text-slate-400">
-                                {getTimezoneOffsetLabel(tz)}
-                              </span>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                  Используется для расписаний и отображения времени.
-                </div>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
               <button
                 onClick={saveProjectSettings}
                 disabled={projectSettingsLoading || !projectName.trim()}
@@ -2075,92 +1766,224 @@ export default function ProjectDetailPage() {
                 {projectSettingsLoading ? "Сохраняем..." : "Сохранить настройки"}
               </button>
             </div>
-          </div>
-        )}
+            {projectSettingsError && (
+              <div className="text-sm text-red-500">{projectSettingsError}</div>
+            )}
 
-        {activeTab === "members" && (
-          <div className="space-y-4">
-            <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3">
-              <h3 className="font-semibold">Добавить участника</h3>
-              <div className="grid gap-3 md:grid-cols-3">
-                <input
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-                  placeholder="email@example.com"
-                  value={newMemberEmail}
-                  onChange={(e) => setNewMemberEmail(e.target.value)}
-                />
-                <select
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-                  value={newMemberRole}
-                  onChange={(e) => setNewMemberRole(e.target.value)}
-                >
-                  <option value="viewer">Наблюдатель</option>
-                  <option value="editor">Редактор</option>
-                  <option value="owner">Владелец</option>
-                </select>
-                <button
-                  onClick={addMember}
-                  disabled={loading || !newMemberEmail.trim()}
-                  className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
-                >
-                  Добавить
-                </button>
+            <div className="grid gap-4 lg:grid-cols-[1fr_1.2fr]">
+              <div className="bg-white/60 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-4">
+                <div>
+                  <h4 className="font-semibold">Профиль проекта</h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Название и региональные параметры.
+                  </p>
+                </div>
+                <div className="grid gap-3">
+                  <div className="space-y-1">
+                    <div className="text-xs uppercase tracking-wide text-slate-400">Название</div>
+                    <input
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
+                      value={projectName}
+                      onChange={(e) => setProjectName(e.target.value)}
+                      placeholder="Название проекта"
+                    />
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div className="space-y-1">
+                      <div className="text-xs uppercase tracking-wide text-slate-400">Страна</div>
+                      <input
+                        className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
+                        value={projectCountry}
+                        onChange={(e) => setProjectCountry(e.target.value)}
+                        placeholder="se"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <div className="text-xs uppercase tracking-wide text-slate-400">Язык</div>
+                      <input
+                        className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
+                        value={projectLanguage}
+                        onChange={(e) => setProjectLanguage(e.target.value)}
+                        placeholder="sv"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white/60 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-4">
+                <div>
+                  <h4 className="font-semibold">Таймзона проекта</h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Используется для расписаний и отображения времени.
+                  </p>
+                </div>
+                <div className="space-y-3">
+                  <input
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
+                    value={timezoneQuery}
+                    onChange={(e) => setTimezoneQuery(e.target.value)}
+                    placeholder="Поиск таймзоны (например, Asia/Bangkok)"
+                  />
+                  <div className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-950 space-y-3">
+                    <div>
+                      <div className="text-[11px] uppercase tracking-wide text-slate-400">Выбранная зона</div>
+                      <div className="mt-1 flex items-center justify-between rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:text-slate-100">
+                        <span>{resolvedProjectTimezone || "UTC"}</span>
+                        <span className="text-xs text-slate-500 dark:text-slate-400">
+                          {getTimezoneOffsetLabel(resolvedProjectTimezone)}
+                        </span>
+                      </div>
+                    </div>
+                    {recentFiltered.length > 0 && (
+                      <div>
+                        <div className="text-[11px] uppercase tracking-wide text-slate-400">Недавние</div>
+                        <div className="mt-1 flex flex-wrap gap-2">
+                          {recentFiltered.map((tz) => (
+                            <button
+                              key={`recent-${tz}`}
+                              type="button"
+                              onClick={() => {
+                                setProjectTimezone(tz);
+                                updateRecentTimezone(tz);
+                              }}
+                              className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1 text-xs text-slate-700 hover:bg-slate-100 dark:border-slate-800 dark:text-slate-200 dark:hover:bg-slate-900"
+                            >
+                              <span>{tz}</span>
+                              <span className="text-[10px] text-slate-500 dark:text-slate-400">
+                                {getTimezoneOffsetLabel(tz)}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <div>
+                      <div className="text-[11px] uppercase tracking-wide text-slate-400">Все таймзоны</div>
+                      <div className="mt-2 max-h-64 space-y-3 overflow-auto pr-2">
+                        {timezoneGroups.length === 0 && (
+                          <div className="text-sm text-slate-500 dark:text-slate-400">Ничего не найдено</div>
+                        )}
+                        {timezoneGroups.map(([group, items]) => (
+                          <div key={group} className="space-y-2">
+                            <div className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">
+                              {group}
+                            </div>
+                            <div className="grid gap-2">
+                              {items.map((tz) => (
+                                <button
+                                  key={tz}
+                                  type="button"
+                                  onClick={() => {
+                                    setProjectTimezone(tz);
+                                    updateRecentTimezone(tz);
+                                  }}
+                                  className={`flex items-center justify-between rounded-md border px-3 py-2 text-sm ${
+                                    tz === projectTimezone
+                                      ? "border-indigo-400 bg-indigo-50 text-indigo-700 dark:border-indigo-500/60 dark:bg-indigo-500/10 dark:text-indigo-200"
+                                      : "border-slate-200 text-slate-700 hover:bg-slate-100 dark:border-slate-800 dark:text-slate-200 dark:hover:bg-slate-900"
+                                  }`}
+                                >
+                                  <span>{tz}</span>
+                                  <span className="text-xs text-slate-500 dark:text-slate-400">
+                                    {getTimezoneOffsetLabel(tz)}
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
 
-            <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="font-semibold">Участники проекта</h3>
-                <span className="text-xs text-slate-500 dark:text-slate-400">Всего: {members.length}</span>
+            <div className="border-t border-slate-200 dark:border-slate-800 pt-4 space-y-4">
+              <h3 className="font-semibold">Участники проекта</h3>
+              <div className="bg-white/60 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3">
+                <h4 className="font-semibold">Добавить участника</h4>
+                <div className="grid gap-3 md:grid-cols-3">
+                  <input
+                    className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
+                    placeholder="email@example.com"
+                    value={newMemberEmail}
+                    onChange={(e) => setNewMemberEmail(e.target.value)}
+                  />
+                  <select
+                    className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
+                    value={newMemberRole}
+                    onChange={(e) => setNewMemberRole(e.target.value)}
+                  >
+                    <option value="viewer">Наблюдатель</option>
+                    <option value="editor">Редактор</option>
+                    <option value="owner">Владелец</option>
+                  </select>
+                  <button
+                    onClick={addMember}
+                    disabled={loading || !newMemberEmail.trim()}
+                    className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+                  >
+                    Добавить
+                  </button>
+                </div>
               </div>
-              <div className="overflow-x-auto">
-                <table className="min-w-full text-sm">
-                  <thead>
-                    <tr className="text-left text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
-                      <th className="py-2 pr-4">Почта</th>
-                      <th className="py-2 pr-4">Роль</th>
-                      <th className="py-2 pr-4">Добавлен</th>
-                      <th className="py-2 pr-4 text-right">Действия</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                    {members.map((m) => (
-                      <tr key={m.email}>
-                        <td className="py-3 pr-4 font-medium">{m.email}</td>
-                        <td className="py-3 pr-4">
-                          {m.role === "owner" ? (
-                            <span className="text-sm text-slate-600 dark:text-slate-400">Владелец</span>
-                          ) : (
-                            <select
-                              className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-                              value={m.role}
-                              onChange={(e) => updateMemberRole(m.email, e.target.value)}
-                            >
-                              <option value="viewer">Наблюдатель</option>
-                              <option value="editor">Редактор</option>
-                              <option value="owner">Владелец</option>
-                            </select>
-                          )}
-                        </td>
-                        <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">
-                          {formatDateTime(m.createdAt)}
-                        </td>
-                        <td className="py-3 pr-4 text-right">
-                          {m.role !== "owner" && (
-                            <button
-                              onClick={() => removeMember(m.email)}
-                              disabled={loading}
-                              className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
-                            >
-                              <FiX /> Удалить
-                            </button>
-                          )}
-                        </td>
+
+              <div className="bg-white/60 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-semibold">Список участников</h4>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">Всего: {members.length}</span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
+                        <th className="py-2 pr-4">Почта</th>
+                        <th className="py-2 pr-4">Роль</th>
+                        <th className="py-2 pr-4">Добавлен</th>
+                        <th className="py-2 pr-4 text-right">Действия</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {members.length === 0 && <div className="text-sm text-slate-500 mt-2">Участников пока нет.</div>}
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                      {members.map((m) => (
+                        <tr key={m.email}>
+                          <td className="py-3 pr-4 font-medium">{m.email}</td>
+                          <td className="py-3 pr-4">
+                            {m.role === "owner" ? (
+                              <span className="text-sm text-slate-600 dark:text-slate-400">Владелец</span>
+                            ) : (
+                              <select
+                                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                                value={m.role}
+                                onChange={(e) => updateMemberRole(m.email, e.target.value)}
+                              >
+                                <option value="viewer">Наблюдатель</option>
+                                <option value="editor">Редактор</option>
+                                <option value="owner">Владелец</option>
+                              </select>
+                            )}
+                          </td>
+                          <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">
+                            {formatDateTime(m.createdAt)}
+                          </td>
+                          <td className="py-3 pr-4 text-right">
+                            {m.role !== "owner" && (
+                              <button
+                                onClick={() => removeMember(m.email)}
+                                disabled={loading}
+                                className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
+                              >
+                                <FiX /> Удалить
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {members.length === 0 && <div className="text-sm text-slate-500 mt-2">Участников пока нет.</div>}
+                </div>
               </div>
             </div>
           </div>
