@@ -3,7 +3,7 @@ id: prompt-design-architect
 name: Design Architect
 description: Промпт для разработки дизайн-системы на основе контента и случайных ID
 stage: design_architecture
-model: gemini-2.5-pro
+model: gemini-2.5-flash
 ---
 
 # РОЛЬ

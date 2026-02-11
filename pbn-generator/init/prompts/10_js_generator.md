@@ -3,7 +3,7 @@ id: prompt-js-generator
 name: JS Generator
 description: Генерация JS для интерактивности сайта
 stage: js_generation
-model: gemini-2.5-pro
+model: gemini-2.5-flash
 ---
 
 # РОЛЬ

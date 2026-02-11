@@ -3,7 +3,7 @@ id: prompt-logo-generator
 name: SVG Logo Generator
 description: Генерация цветных SVG логотипов из дизайн-системы
 stage: logo_generation
-model: gemini-2.5-pro
+model: gemini-2.5-flash
 ---
 
 # РОЛЬ

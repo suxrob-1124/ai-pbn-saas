@@ -3,7 +3,7 @@ id: prompt-html-slicer
 name: HTML Slicer
 description: HTML-каркас из дизайн-системы и markdown контента
 stage: html_generation
-model: gemini-2.5-pro
+model: gemini-2.5-flash
 ---
 
 # РОЛЬ

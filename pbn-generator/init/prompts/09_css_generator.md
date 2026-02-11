@@ -3,7 +3,7 @@ id: prompt-css-generator
 name: CSS Generator
 description: Генерация CSS из дизайн-системы и HTML каркаса
 stage: css_generation
-model: gemini-2.5-pro
+model: gemini-2.5-flash
 ---
 
 # РОЛЬ
