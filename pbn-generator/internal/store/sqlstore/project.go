@@ -222,6 +222,50 @@ func (s *DomainStore) ListByProject(ctx context.Context, projectID string) ([]Do
 	return res, rows.Err()
 }
 
+func (s *DomainStore) ListByIDs(ctx context.Context, ids []string) ([]Domain, error) {
+	unique := make(map[string]struct{}, len(ids))
+	filtered := make([]string, 0, len(ids))
+	for _, id := range ids {
+		trimmed := strings.TrimSpace(id)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := unique[trimmed]; ok {
+			continue
+		}
+		unique[trimmed] = struct{}{}
+		filtered = append(filtered, trimmed)
+	}
+	if len(filtered) == 0 {
+		return []Domain{}, nil
+	}
+	placeholders := make([]string, len(filtered))
+	args := make([]any, len(filtered))
+	for i, id := range filtered {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = id
+	}
+	query := fmt.Sprintf(`SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, published_at, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, created_at, updated_at FROM domains WHERE id IN (%s)`, strings.Join(placeholders, ","))
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var res []Domain
+	for rows.Next() {
+		var d Domain
+		var sb sql.NullString
+		if err := rows.Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.PublishedAt, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.LinkReadyAt, &d.CreatedAt, &d.UpdatedAt); err != nil {
+			return nil, err
+		}
+		if sb.Valid {
+			d.SpecificBlacklist = []byte(sb.String)
+		}
+		res = append(res, d)
+	}
+	return res, rows.Err()
+}
+
 func (s *DomainStore) Get(ctx context.Context, id string) (Domain, error) {
 	var d Domain
 	var sb sql.NullString
@@ -565,15 +609,27 @@ func (s *GenerationStore) Delete(ctx context.Context, id string) error {
 	return err
 }
 
-func (s *GenerationStore) ListRecentByUser(ctx context.Context, email string, limit int) ([]Generation, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT g.id, g.domain_id, g.requested_by, g.status, g.progress, g.error, g.logs, g.artifacts, g.checkpoint_data, g.attempts, g.retryable, g.next_retry_at, g.last_error_at, g.started_at, g.finished_at, g.prompt_id, g.created_at, g.updated_at
+func (s *GenerationStore) ListRecentByUser(ctx context.Context, email string, limit, offset int, search string) ([]Generation, error) {
+	clauses := []string{
+		`p.user_email = $1
+   OR EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = p.id AND pm.user_email = $1)`,
+	}
+	args := []interface{}{email}
+	idx := 2
+	if term := strings.TrimSpace(search); term != "" {
+		clauses = append(clauses, fmt.Sprintf("(LOWER(COALESCE(d.url, '')) LIKE $%d OR LOWER(g.domain_id) LIKE $%d)", idx, idx))
+		args = append(args, "%"+strings.ToLower(term)+"%")
+		idx++
+	}
+	query := fmt.Sprintf(`SELECT g.id, g.domain_id, g.requested_by, g.status, g.progress, g.error, g.logs, g.artifacts, g.checkpoint_data, g.attempts, g.retryable, g.next_retry_at, g.last_error_at, g.started_at, g.finished_at, g.prompt_id, g.created_at, g.updated_at
 FROM generations g
 JOIN domains d ON g.domain_id = d.id
 JOIN projects p ON d.project_id = p.id
-WHERE p.user_email = $1
-   OR EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = p.id AND pm.user_email = $1)
+WHERE %s
 ORDER BY g.created_at DESC
-LIMIT $2`, email, limit)
+LIMIT $%d OFFSET $%d`, strings.Join(clauses, " AND "), idx, idx+1)
+	args = append(args, limit, offset)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -599,15 +655,27 @@ LIMIT $2`, email, limit)
 	return res, rows.Err()
 }
 
-func (s *GenerationStore) ListRecentByUserLite(ctx context.Context, email string, limit int) ([]Generation, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT g.id, g.domain_id, g.requested_by, g.status, g.progress, g.error, g.attempts, g.retryable, g.next_retry_at, g.last_error_at, g.started_at, g.finished_at, g.prompt_id, g.created_at, g.updated_at
+func (s *GenerationStore) ListRecentByUserLite(ctx context.Context, email string, limit, offset int, search string) ([]Generation, error) {
+	clauses := []string{
+		`p.user_email = $1
+   OR EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = p.id AND pm.user_email = $1)`,
+	}
+	args := []interface{}{email}
+	idx := 2
+	if term := strings.TrimSpace(search); term != "" {
+		clauses = append(clauses, fmt.Sprintf("(LOWER(COALESCE(d.url, '')) LIKE $%d OR LOWER(g.domain_id) LIKE $%d)", idx, idx))
+		args = append(args, "%"+strings.ToLower(term)+"%")
+		idx++
+	}
+	query := fmt.Sprintf(`SELECT g.id, g.domain_id, g.requested_by, g.status, g.progress, g.error, g.attempts, g.retryable, g.next_retry_at, g.last_error_at, g.started_at, g.finished_at, g.prompt_id, g.created_at, g.updated_at
 FROM generations g
 JOIN domains d ON g.domain_id = d.id
 JOIN projects p ON d.project_id = p.id
-WHERE p.user_email = $1
-   OR EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = p.id AND pm.user_email = $1)
+WHERE %s
 ORDER BY g.created_at DESC
-LIMIT $2`, email, limit)
+LIMIT $%d OFFSET $%d`, strings.Join(clauses, " AND "), idx, idx+1)
+	args = append(args, limit, offset)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -623,11 +691,20 @@ LIMIT $2`, email, limit)
 	return res, rows.Err()
 }
 
-func (s *GenerationStore) ListRecentAll(ctx context.Context, limit int) ([]Generation, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT g.id, g.domain_id, g.requested_by, g.status, g.progress, g.error, g.logs, g.artifacts, g.checkpoint_data, g.attempts, g.retryable, g.next_retry_at, g.last_error_at, g.started_at, g.finished_at, g.prompt_id, g.created_at, g.updated_at
-FROM generations g
-ORDER BY g.created_at DESC
-LIMIT $1`, limit)
+func (s *GenerationStore) ListRecentAll(ctx context.Context, limit, offset int, search string) ([]Generation, error) {
+	args := []interface{}{}
+	idx := 1
+	query := `SELECT g.id, g.domain_id, g.requested_by, g.status, g.progress, g.error, g.logs, g.artifacts, g.checkpoint_data, g.attempts, g.retryable, g.next_retry_at, g.last_error_at, g.started_at, g.finished_at, g.prompt_id, g.created_at, g.updated_at
+FROM generations g`
+	if term := strings.TrimSpace(search); term != "" {
+		query += " LEFT JOIN domains d ON d.id = g.domain_id"
+		query += fmt.Sprintf(" WHERE (LOWER(COALESCE(d.url, '')) LIKE $%d OR LOWER(g.domain_id) LIKE $%d)", idx, idx)
+		args = append(args, "%"+strings.ToLower(term)+"%")
+		idx++
+	}
+	query += fmt.Sprintf(" ORDER BY g.created_at DESC LIMIT $%d OFFSET $%d", idx, idx+1)
+	args = append(args, limit, offset)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -653,11 +730,20 @@ LIMIT $1`, limit)
 	return res, rows.Err()
 }
 
-func (s *GenerationStore) ListRecentAllLite(ctx context.Context, limit int) ([]Generation, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT g.id, g.domain_id, g.requested_by, g.status, g.progress, g.error, g.attempts, g.retryable, g.next_retry_at, g.last_error_at, g.started_at, g.finished_at, g.prompt_id, g.created_at, g.updated_at
-FROM generations g
-ORDER BY g.created_at DESC
-LIMIT $1`, limit)
+func (s *GenerationStore) ListRecentAllLite(ctx context.Context, limit, offset int, search string) ([]Generation, error) {
+	args := []interface{}{}
+	idx := 1
+	query := `SELECT g.id, g.domain_id, g.requested_by, g.status, g.progress, g.error, g.attempts, g.retryable, g.next_retry_at, g.last_error_at, g.started_at, g.finished_at, g.prompt_id, g.created_at, g.updated_at
+FROM generations g`
+	if term := strings.TrimSpace(search); term != "" {
+		query += " LEFT JOIN domains d ON d.id = g.domain_id"
+		query += fmt.Sprintf(" WHERE (LOWER(COALESCE(d.url, '')) LIKE $%d OR LOWER(g.domain_id) LIKE $%d)", idx, idx)
+		args = append(args, "%"+strings.ToLower(term)+"%")
+		idx++
+	}
+	query += fmt.Sprintf(" ORDER BY g.created_at DESC LIMIT $%d OFFSET $%d", idx, idx+1)
+	args = append(args, limit, offset)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

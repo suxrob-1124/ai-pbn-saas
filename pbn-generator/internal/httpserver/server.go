@@ -50,6 +50,7 @@ type ProjectStore interface {
 type DomainStore interface {
 	Create(ctx context.Context, d sqlstore.Domain) error
 	ListByProject(ctx context.Context, projectID string) ([]sqlstore.Domain, error)
+	ListByIDs(ctx context.Context, ids []string) ([]sqlstore.Domain, error)
 	Get(ctx context.Context, id string) (sqlstore.Domain, error)
 	UpdateStatus(ctx context.Context, id, status string) error
 	UpdateKeyword(ctx context.Context, id, keyword string) error
@@ -64,10 +65,10 @@ type GenerationStore interface {
 	Get(ctx context.Context, id string) (sqlstore.Generation, error)
 	Create(ctx context.Context, g sqlstore.Generation) error
 	ListByDomain(ctx context.Context, domainID string) ([]sqlstore.Generation, error)
-	ListRecentByUser(ctx context.Context, email string, limit int) ([]sqlstore.Generation, error)
-	ListRecentByUserLite(ctx context.Context, email string, limit int) ([]sqlstore.Generation, error)
-	ListRecentAll(ctx context.Context, limit int) ([]sqlstore.Generation, error)
-	ListRecentAllLite(ctx context.Context, limit int) ([]sqlstore.Generation, error)
+	ListRecentByUser(ctx context.Context, email string, limit, offset int, search string) ([]sqlstore.Generation, error)
+	ListRecentByUserLite(ctx context.Context, email string, limit, offset int, search string) ([]sqlstore.Generation, error)
+	ListRecentAll(ctx context.Context, limit, offset int, search string) ([]sqlstore.Generation, error)
+	ListRecentAllLite(ctx context.Context, limit, offset int, search string) ([]sqlstore.Generation, error)
 	CountsByStatus(ctx context.Context) (map[string]int, error)
 	UpdateStatus(ctx context.Context, id, status string, progress int, errText *string) error
 	UpdateFull(ctx context.Context, id, status string, progress int, errText *string, logs, artifacts []byte, started, finished *time.Time, promptID *string) error
@@ -107,6 +108,7 @@ type GenQueueStore interface {
 	Enqueue(ctx context.Context, item sqlstore.QueueItem) error
 	Get(ctx context.Context, itemID string) (*sqlstore.QueueItem, error)
 	ListByProject(ctx context.Context, projectID string) ([]sqlstore.QueueItem, error)
+	ListByProjectPage(ctx context.Context, projectID string, limit, offset int, search string) ([]sqlstore.QueueItem, error)
 	Delete(ctx context.Context, itemID string) error
 }
 
@@ -227,6 +229,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("/api/dashboard", s.withAuth(http.HandlerFunc(s.handleDashboard)))
 	mux.Handle("/api/projects", s.withAuth(http.HandlerFunc(s.handleProjects)))
 	mux.Handle("/api/projects/", s.withAuth(http.HandlerFunc(s.handleProjectByID)))
+	mux.Handle("/api/domains", s.withAuth(http.HandlerFunc(s.handleDomainsBatch)))
 	mux.Handle("/api/domains/", s.withAuth(http.HandlerFunc(s.handleDomainActions)))
 	mux.Handle("/api/generations", s.withAuth(http.HandlerFunc(s.handleGenerations)))
 	mux.Handle("/api/generations/", s.withAuth(http.HandlerFunc(s.handleGenerationByID)))
@@ -292,7 +295,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "could not list projects")
 			return
 		}
-		gens, err = s.generations.ListRecentAllLite(r.Context(), limit)
+		gens, err = s.generations.ListRecentAllLite(r.Context(), limit, 0, "")
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "could not list generations")
 			return
@@ -303,7 +306,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "could not list projects")
 			return
 		}
-		gens, err = s.generations.ListRecentByUserLite(r.Context(), user.Email, limit)
+		gens, err = s.generations.ListRecentByUserLite(r.Context(), user.Email, limit, 0, "")
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "could not list generations")
 			return
@@ -1450,6 +1453,67 @@ func (s *Server) handleProjectDomains(w http.ResponseWriter, r *http.Request, pr
 	}
 }
 
+func (s *Server) handleDomainsBatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	user, ok := currentUserFromContext(r.Context())
+	if !ok || user.Email == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if s.domains == nil {
+		writeError(w, http.StatusInternalServerError, "domains not configured")
+		return
+	}
+	rawIDs := strings.TrimSpace(r.URL.Query().Get("ids"))
+	if rawIDs == "" {
+		writeJSON(w, http.StatusOK, []domainDTO{})
+		return
+	}
+	parts := strings.Split(rawIDs, ",")
+	unique := make(map[string]struct{}, len(parts))
+	ids := make([]string, 0, len(parts))
+	for _, part := range parts {
+		id := strings.TrimSpace(part)
+		if id == "" {
+			continue
+		}
+		if _, ok := unique[id]; ok {
+			continue
+		}
+		unique[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		writeJSON(w, http.StatusOK, []domainDTO{})
+		return
+	}
+	if len(ids) > 200 {
+		ids = ids[:200]
+	}
+	list, err := s.domains.ListByIDs(r.Context(), ids)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not list domains")
+		return
+	}
+	if !strings.EqualFold(user.Role, "admin") {
+		filtered := make([]sqlstore.Domain, 0, len(list))
+		for _, d := range list {
+			if _, err := s.authorizeProject(r.Context(), d.ProjectID); err == nil {
+				filtered = append(filtered, d)
+			}
+		}
+		list = filtered
+	}
+	resp := make([]domainDTO, 0, len(list))
+	for _, d := range list {
+		resp = append(resp, toDomainDTO(d))
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
 func (s *Server) handleDomainActions(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/domains/")
 	parts := strings.Split(path, "/")
@@ -2423,6 +2487,14 @@ func (s *Server) handleGenerations(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
+	search := strings.TrimSpace(r.URL.Query().Get("search"))
+	page := 1
+	if v := strings.TrimSpace(r.URL.Query().Get("page")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			page = n
+		}
+	}
+	offset := (page - 1) * limit
 	lite := false
 	if v := r.URL.Query().Get("lite"); v != "" {
 		if v == "1" || strings.EqualFold(v, "true") {
@@ -2435,15 +2507,15 @@ func (s *Server) handleGenerations(w http.ResponseWriter, r *http.Request) {
 	)
 	if strings.EqualFold(user.Role, "admin") {
 		if lite {
-			list, err = s.generations.ListRecentAllLite(r.Context(), limit)
+			list, err = s.generations.ListRecentAllLite(r.Context(), limit, offset, search)
 		} else {
-			list, err = s.generations.ListRecentAll(r.Context(), limit)
+			list, err = s.generations.ListRecentAll(r.Context(), limit, offset, search)
 		}
 	} else {
 		if lite {
-			list, err = s.generations.ListRecentByUserLite(r.Context(), user.Email, limit)
+			list, err = s.generations.ListRecentByUserLite(r.Context(), user.Email, limit, offset, search)
 		} else {
-			list, err = s.generations.ListRecentByUser(r.Context(), user.Email, limit)
+			list, err = s.generations.ListRecentByUser(r.Context(), user.Email, limit, offset, search)
 		}
 	}
 	if err != nil {
@@ -3726,6 +3798,7 @@ func (s *Server) handleProjectLinkScheduleTrigger(w http.ResponseWriter, r *http
 
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"status":   "queued",
+		"enqueued": created + updated,
 		"created":  created,
 		"updated":  updated,
 		"eligible": len(eligible),
@@ -3766,7 +3839,22 @@ func (s *Server) handleProjectQueue(w http.ResponseWriter, r *http.Request, proj
 		return
 	}
 
-	items, err := s.genQueue.ListByProject(r.Context(), projectID)
+	limit := 50
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 200 {
+			limit = n
+		}
+	}
+	search := strings.TrimSpace(r.URL.Query().Get("search"))
+	page := 1
+	if v := strings.TrimSpace(r.URL.Query().Get("page")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			page = n
+		}
+	}
+	offset := (page - 1) * limit
+
+	items, err := s.genQueue.ListByProjectPage(r.Context(), projectID, limit, offset, search)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not load queue")
 		return
@@ -3963,6 +4051,7 @@ func (s *Server) handleLinks(w http.ResponseWriter, r *http.Request) {
 	var list []sqlstore.LinkTask
 	switch {
 	case domainID != "":
+		filters.Search = nil
 		domain, project, err := s.authorizeDomain(r.Context(), domainID)
 		if err != nil {
 			respondAuthzError(w, err, "domain not found")
@@ -4127,6 +4216,16 @@ func (s *Server) handleLinkByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch r.Method {
+	case http.MethodGet:
+		if action != "" {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		if !hasProjectPermission(user.Role, memberRole, "viewer") {
+			writeError(w, http.StatusForbidden, "insufficient permissions: viewer role required")
+			return
+		}
+		writeJSON(w, http.StatusOK, toLinkTaskDTO(*task))
 	case http.MethodPatch:
 		if !ensureJSON(w, r) {
 			return
@@ -4221,12 +4320,28 @@ func parseLinkTaskFilters(r *http.Request) (sqlstore.LinkTaskFilters, error) {
 		tt := t.UTC()
 		filters.ScheduledBefore = &tt
 	}
+
 	if limitStr := strings.TrimSpace(query.Get("limit")); limitStr != "" {
 		limit, err := strconv.Atoi(limitStr)
 		if err != nil || limit < 0 {
 			return filters, fmt.Errorf("invalid limit")
 		}
 		filters.Limit = limit
+	}
+	if search := strings.TrimSpace(query.Get("search")); search != "" {
+		filters.Search = &search
+	}
+	if pageStr := strings.TrimSpace(query.Get("page")); pageStr != "" {
+		page, err := strconv.Atoi(pageStr)
+		if err != nil || page < 1 {
+			return filters, fmt.Errorf("invalid page")
+		}
+		if filters.Limit <= 0 {
+			filters.Limit = 50
+		}
+		if page > 1 {
+			filters.Offset = (page - 1) * filters.Limit
+		}
 	}
 
 	return filters, nil
@@ -4644,6 +4759,7 @@ type domainDTO struct {
 	LinkLastTaskID     *string    `json:"link_last_task_id,omitempty"`
 	LinkFilePath       *string    `json:"link_file_path,omitempty"`
 	LinkAnchorSnapshot *string    `json:"link_anchor_snapshot,omitempty"`
+	LinkReadyAt        *time.Time `json:"link_ready_at,omitempty"`
 	CreatedAt          time.Time  `json:"created_at"`
 	UpdatedAt          time.Time  `json:"updated_at"`
 }
@@ -4872,6 +4988,7 @@ func toDomainDTO(d sqlstore.Domain) domainDTO {
 		LinkLastTaskID:     nullableStringPtr(d.LinkLastTaskID),
 		LinkFilePath:       nullableStringPtr(d.LinkFilePath),
 		LinkAnchorSnapshot: nullableStringPtr(d.LinkAnchorSnapshot),
+		LinkReadyAt:        nullableTimePtr(d.LinkReadyAt),
 		CreatedAt:          d.CreatedAt,
 		UpdatedAt:          d.UpdatedAt,
 	}
@@ -5375,9 +5492,12 @@ func effectiveLinkReadyAt(domain sqlstore.Domain, scheduleRunAt time.Time) time.
 
 func isLinkStatusEligible(domain sqlstore.Domain) bool {
 	if !domain.LinkStatus.Valid {
-		return false
+		return true
 	}
 	status := strings.ToLower(strings.TrimSpace(domain.LinkStatus.String))
+	if status == "" || status == "ready" {
+		return true
+	}
 	return status == "needs_relink" || status == "pending"
 }
 

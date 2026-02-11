@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -28,6 +29,7 @@ type GenQueueStore interface {
 	ListByDomain(ctx context.Context, domainID string) ([]QueueItem, error)
 	Get(ctx context.Context, itemID string) (*QueueItem, error)
 	ListByProject(ctx context.Context, projectID string) ([]QueueItem, error)
+	ListByProjectPage(ctx context.Context, projectID string, limit, offset int, search string) ([]QueueItem, error)
 	Delete(ctx context.Context, itemID string) error
 }
 
@@ -140,6 +142,45 @@ func (s *GenQueueSQLStore) ListByProject(ctx context.Context, projectID string) 
 		JOIN domains d ON d.id = q.domain_id
 		WHERE d.project_id=$1
 		ORDER BY q.created_at DESC`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var res []QueueItem
+	for rows.Next() {
+		var item QueueItem
+		if err := rows.Scan(&item.ID, &item.DomainID, &item.ScheduleID, &item.Priority, &item.ScheduledFor, &item.Status, &item.ErrorMessage, &item.CreatedAt, &item.ProcessedAt); err != nil {
+			return nil, err
+		}
+		res = append(res, item)
+	}
+	return res, rows.Err()
+}
+
+// ListByProjectPage возвращает элементы очереди по проекту с пагинацией и фильтром активных доменов.
+func (s *GenQueueSQLStore) ListByProjectPage(ctx context.Context, projectID string, limit, offset int, search string) ([]QueueItem, error) {
+	query := `SELECT q.id, q.domain_id, q.schedule_id, q.priority, q.scheduled_for, q.status, q.error_message, q.created_at, q.processed_at
+		FROM generation_queue q
+		JOIN domains d ON d.id = q.domain_id
+		WHERE d.project_id=$1
+			AND q.status IN ('pending','queued')
+			AND LOWER(TRIM(d.status))='waiting'`
+	args := []interface{}{projectID}
+	if term := strings.TrimSpace(search); term != "" {
+		query += fmt.Sprintf(" AND (LOWER(COALESCE(d.url, '')) LIKE $%d OR LOWER(q.domain_id) LIKE $%d)", len(args)+1, len(args)+1)
+		args = append(args, "%"+strings.ToLower(term)+"%")
+	}
+	query += " ORDER BY q.created_at DESC"
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", len(args)+1)
+		args = append(args, limit)
+	}
+	if offset > 0 {
+		query += fmt.Sprintf(" OFFSET $%d", len(args)+1)
+		args = append(args, offset)
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

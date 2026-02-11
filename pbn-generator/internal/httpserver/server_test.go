@@ -1477,6 +1477,23 @@ func (s *stubDomainStore) ListByProject(ctx context.Context, projectID string) (
 	return res, nil
 }
 
+func (s *stubDomainStore) ListByIDs(ctx context.Context, ids []string) ([]sqlstore.Domain, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	res := make([]sqlstore.Domain, 0, len(ids))
+	seen := map[string]struct{}{}
+	for _, id := range ids {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		if d, ok := s.domains[id]; ok {
+			res = append(res, d)
+		}
+	}
+	return res, nil
+}
+
 func (s *stubDomainStore) Get(ctx context.Context, id string) (sqlstore.Domain, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1606,38 +1623,56 @@ func (s *stubGenerationStore) ListByDomain(ctx context.Context, domainID string)
 	return res, nil
 }
 
-func (s *stubGenerationStore) ListRecentByUser(ctx context.Context, email string, limit int) ([]sqlstore.Generation, error) {
+func (s *stubGenerationStore) ListRecentByUser(ctx context.Context, email string, limit, offset int, search string) ([]sqlstore.Generation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	res := make([]sqlstore.Generation, 0, len(s.generations))
 	for _, g := range s.generations {
+		if search != "" && !strings.Contains(strings.ToLower(g.DomainID), strings.ToLower(search)) {
+			continue
+		}
 		res = append(res, g)
 	}
-	if len(res) > limit {
+	if offset > 0 {
+		if offset >= len(res) {
+			return []sqlstore.Generation{}, nil
+		}
+		res = res[offset:]
+	}
+	if limit > 0 && len(res) > limit {
 		res = res[:limit]
 	}
 	return res, nil
 }
 
-func (s *stubGenerationStore) ListRecentByUserLite(ctx context.Context, email string, limit int) ([]sqlstore.Generation, error) {
-	return s.ListRecentByUser(ctx, email, limit)
+func (s *stubGenerationStore) ListRecentByUserLite(ctx context.Context, email string, limit, offset int, search string) ([]sqlstore.Generation, error) {
+	return s.ListRecentByUser(ctx, email, limit, offset, search)
 }
 
-func (s *stubGenerationStore) ListRecentAll(ctx context.Context, limit int) ([]sqlstore.Generation, error) {
+func (s *stubGenerationStore) ListRecentAll(ctx context.Context, limit, offset int, search string) ([]sqlstore.Generation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	res := make([]sqlstore.Generation, 0, len(s.generations))
 	for _, g := range s.generations {
+		if search != "" && !strings.Contains(strings.ToLower(g.DomainID), strings.ToLower(search)) {
+			continue
+		}
 		res = append(res, g)
 	}
-	if len(res) > limit {
+	if offset > 0 {
+		if offset >= len(res) {
+			return []sqlstore.Generation{}, nil
+		}
+		res = res[offset:]
+	}
+	if limit > 0 && len(res) > limit {
 		res = res[:limit]
 	}
 	return res, nil
 }
 
-func (s *stubGenerationStore) ListRecentAllLite(ctx context.Context, limit int) ([]sqlstore.Generation, error) {
-	return s.ListRecentAll(ctx, limit)
+func (s *stubGenerationStore) ListRecentAllLite(ctx context.Context, limit, offset int, search string) ([]sqlstore.Generation, error) {
+	return s.ListRecentAll(ctx, limit, offset, search)
 }
 
 func (s *stubGenerationStore) Delete(ctx context.Context, id string) error {
@@ -2036,6 +2071,32 @@ func (s *stubGenQueueStore) ListByProject(ctx context.Context, projectID string)
 		if s.domainToProject[item.DomainID] == projectID {
 			res = append(res, item)
 		}
+	}
+	return res, nil
+}
+
+func (s *stubGenQueueStore) ListByProjectPage(ctx context.Context, projectID string, limit, offset int, search string) ([]sqlstore.QueueItem, error) {
+	res, err := s.ListByProject(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if search != "" {
+		filtered := res[:0]
+		for _, item := range res {
+			if strings.Contains(strings.ToLower(item.DomainID), strings.ToLower(search)) {
+				filtered = append(filtered, item)
+			}
+		}
+		res = filtered
+	}
+	if offset > 0 {
+		if offset >= len(res) {
+			return []sqlstore.QueueItem{}, nil
+		}
+		res = res[offset:]
+	}
+	if limit > 0 && len(res) > limit {
+		res = res[:limit]
 	}
 	return res, nil
 }

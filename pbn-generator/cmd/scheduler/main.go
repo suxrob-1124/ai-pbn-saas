@@ -773,9 +773,12 @@ func effectiveLinkReadyAt(domain sqlstore.Domain, scheduleRunAt time.Time) time.
 
 func isLinkStatusEligible(domain sqlstore.Domain) bool {
 	if !domain.LinkStatus.Valid {
-		return false
+		return true
 	}
 	status := strings.ToLower(strings.TrimSpace(domain.LinkStatus.String))
+	if status == "" || status == "ready" {
+		return true
+	}
 	return status == "needs_relink" || status == "pending"
 }
 

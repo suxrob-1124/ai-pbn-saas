@@ -1,14 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useParams } from "next/navigation";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { FiRefreshCw, FiTrash2 } from "react-icons/fi";
+import { FiAlertTriangle, FiCheck, FiClock, FiRefreshCw, FiRotateCw, FiTrash2 } from "react-icons/fi";
 import { listQueue, deleteQueueItem, cleanupQueue } from "../../../../lib/queueApi";
+import { deleteLinkTask, listLinkTasks, retryLinkTask } from "../../../../lib/linkTasksApi";
 import { authFetch } from "../../../../lib/http";
 import { useAuthGuard } from "../../../../lib/useAuth";
 import { showToast } from "../../../../lib/toastStore";
 import type { QueueItemDTO } from "../../../../types/queue";
+import type { LinkTaskDTO } from "../../../../types/linkTasks";
+import { Badge } from "../../../../components/Badge";
 
 const statusOptions = ["all", "pending", "queued", "completed", "failed"];
 const STATUS_LABELS: Record<string, string> = {
@@ -16,6 +19,28 @@ const STATUS_LABELS: Record<string, string> = {
   pending: "Ожидает",
   queued: "В очереди",
   completed: "Завершено",
+  failed: "Ошибка"
+};
+
+const linkStatusOptions = [
+  "all",
+  "pending",
+  "searching",
+  "removing",
+  "inserted",
+  "generated",
+  "removed",
+  "failed"
+];
+
+const LINK_STATUS_LABELS: Record<string, string> = {
+  all: "Все",
+  pending: "Ожидает",
+  searching: "Поиск",
+  removing: "Удаление",
+  inserted: "Вставлено",
+  generated: "Вставлено (ген. текст)",
+  removed: "Удалено",
   failed: "Ошибка"
 };
 
@@ -30,7 +55,10 @@ const isPermissionError = (message: string) =>
 export default function ProjectQueuePage() {
   useAuthGuard();
   const params = useParams();
-  const projectId = params?.id as string;
+  const searchParams = useSearchParams();
+  const paramId = params?.id as string | undefined;
+  const queryId = searchParams.get("id") || undefined;
+  const projectId = paramId && paramId !== "[id]" ? paramId : queryId;
 
   const [items, setItems] = useState<QueueItemDTO[]>([]);
   const [domains, setDomains] = useState<Record<string, Domain>>({});
@@ -40,9 +68,27 @@ export default function ProjectQueuePage() {
   const [error, setError] = useState<string | null>(null);
   const [permissionDenied, setPermissionDenied] = useState(false);
 
+  const [linkTasks, setLinkTasks] = useState<LinkTaskDTO[]>([]);
+  const [linkLoading, setLinkLoading] = useState(false);
+  const [linkRefreshing, setLinkRefreshing] = useState(false);
+  const [linkError, setLinkError] = useState<string | null>(null);
+  const [linkPermissionDenied, setLinkPermissionDenied] = useState(false);
+
   const [statusFilter, setStatusFilter] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [search, setSearch] = useState("");
+  const [genPage, setGenPage] = useState(1);
+  const genPageSize = 20;
+
+  const [linkStatusFilter, setLinkStatusFilter] = useState("all");
+  const [linkDateFrom, setLinkDateFrom] = useState("");
+  const [linkDateTo, setLinkDateTo] = useState("");
+  const [linkSearch, setLinkSearch] = useState("");
+  const [linkPage, setLinkPage] = useState(1);
+  const linkPageSize = 20;
+  const tabParam = (searchParams.get("tab") || "domains").toLowerCase();
+  const activeTab = tabParam === "links" ? "links" : "domains";
 
   const load = async (opts?: { silent?: boolean }) => {
     if (!projectId) return;
@@ -52,7 +98,11 @@ export default function ProjectQueuePage() {
     setError(null);
     setPermissionDenied(false);
     try {
-      const list = await listQueue(projectId);
+      const list = await listQueue(projectId, {
+        limit: genPageSize,
+        page: genPage,
+        search: search.trim() ? search.trim() : undefined
+      });
       setItems(Array.isArray(list) ? list : []);
       try {
         const domainList = await authFetch<Domain[]>(`/api/projects/${projectId}/domains`);
@@ -78,13 +128,61 @@ export default function ProjectQueuePage() {
     }
   };
 
+  const loadLinkTasks = async (opts?: { silent?: boolean }) => {
+    if (!projectId) return;
+    if (!opts?.silent) {
+      setLinkLoading(true);
+    }
+    setLinkError(null);
+    setLinkPermissionDenied(false);
+    try {
+      const list = await listLinkTasks({
+        projectId,
+        limit: linkPageSize,
+        page: linkPage,
+        status: linkStatusFilter !== "all" ? linkStatusFilter : undefined,
+        search: linkSearch.trim() ? linkSearch.trim() : undefined,
+        scheduledFrom: linkDateFrom ? new Date(`${linkDateFrom}T00:00:00`) : undefined,
+        scheduledTo: linkDateTo ? new Date(`${linkDateTo}T23:59:59`) : undefined
+      });
+      setLinkTasks(Array.isArray(list) ? list : []);
+    } catch (err: any) {
+      const msg = err?.message || "Не удалось загрузить задачи ссылок";
+      if (isPermissionError(msg)) {
+        setLinkPermissionDenied(true);
+      } else {
+        setLinkError(msg);
+      }
+    } finally {
+      if (!opts?.silent) {
+        setLinkLoading(false);
+      }
+    }
+  };
+
   useEffect(() => {
     load();
-  }, [projectId]);
+  }, [projectId, genPage, search]);
+
+  useEffect(() => {
+    loadLinkTasks();
+  }, [projectId, linkPage, linkStatusFilter, linkDateFrom, linkDateTo, linkSearch]);
+
+  useEffect(() => {
+    const hasActiveLinks = linkTasks.some((task) => ["pending", "searching", "removing"].includes(task.status));
+    if (!hasActiveLinks) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      loadLinkTasks({ silent: true });
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [projectId, linkTasks]);
 
   const filtered = useMemo(() => {
     const fromDate = dateFrom ? new Date(`${dateFrom}T00:00:00`) : null;
     const toDate = dateTo ? new Date(`${dateTo}T23:59:59`) : null;
+    const term = search.trim().toLowerCase();
     return items.filter((item) => {
       if (statusFilter !== "all" && item.status !== statusFilter) {
         return false;
@@ -96,9 +194,50 @@ export default function ProjectQueuePage() {
       if (toDate && scheduled > toDate) {
         return false;
       }
-      return true;
+      if (!term) {
+        return true;
+      }
+      const domain = domains[item.domain_id];
+      const label = (item.domain_url || domain?.url || item.domain_id || "").toLowerCase();
+      return label.includes(term);
     });
-  }, [items, statusFilter, dateFrom, dateTo]);
+  }, [items, statusFilter, dateFrom, dateTo, search, domains]);
+
+  const filteredLinks = useMemo(() => {
+    const fromDate = linkDateFrom ? new Date(`${linkDateFrom}T00:00:00`) : null;
+    const toDate = linkDateTo ? new Date(`${linkDateTo}T23:59:59`) : null;
+    const term = linkSearch.trim().toLowerCase();
+    return linkTasks.filter((task) => {
+      if (linkStatusFilter !== "all" && task.status !== linkStatusFilter) {
+        return false;
+      }
+      const scheduled = new Date(task.scheduled_for);
+      if (fromDate && scheduled < fromDate) {
+        return false;
+      }
+      if (toDate && scheduled > toDate) {
+        return false;
+      }
+      if (!term) {
+        return true;
+      }
+      const label = (domains[task.domain_id]?.url || task.domain_id || "").toLowerCase();
+      return label.includes(term);
+    });
+  }, [linkTasks, linkStatusFilter, linkDateFrom, linkDateTo, linkSearch, domains]);
+
+  useEffect(() => {
+    setGenPage(1);
+  }, [statusFilter, dateFrom, dateTo, search]);
+
+  useEffect(() => {
+    setLinkPage(1);
+  }, [linkStatusFilter, linkDateFrom, linkDateTo, linkSearch]);
+
+  const genHasNext = items.length === genPageSize;
+  const linkHasNext = linkTasks.length === linkPageSize;
+  const visibleItems = filtered;
+  const visibleLinks = filteredLinks;
 
   const handleRemove = async (item: QueueItemDTO) => {
     if (!confirm(`Удалить из очереди: ${item.id}?`)) return;
@@ -118,6 +257,48 @@ export default function ProjectQueuePage() {
       showToast({ type: "error", title: "Ошибка удаления", message: msg });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleLinkRetry = async (task: LinkTaskDTO) => {
+    if (!confirm(`Повторить задачу ссылки: ${task.id}?`)) return;
+    setLinkLoading(true);
+    setLinkError(null);
+    try {
+      await retryLinkTask(task.id);
+      showToast({
+        type: "success",
+        title: "Повтор поставлен в очередь",
+        message: task.id
+      });
+      await loadLinkTasks();
+    } catch (err: any) {
+      const msg = err?.message || "Не удалось повторить задачу ссылки";
+      setLinkError(msg);
+      showToast({ type: "error", title: "Ошибка повтора", message: msg });
+    } finally {
+      setLinkLoading(false);
+    }
+  };
+
+  const handleLinkDelete = async (task: LinkTaskDTO) => {
+    if (!confirm(`Удалить задачу ссылки: ${task.id}?`)) return;
+    setLinkLoading(true);
+    setLinkError(null);
+    try {
+      await deleteLinkTask(task.id);
+      showToast({
+        type: "success",
+        title: "Задача ссылки удалена",
+        message: task.id
+      });
+      await loadLinkTasks();
+    } catch (err: any) {
+      const msg = err?.message || "Не удалось удалить задачу ссылки";
+      setLinkError(msg);
+      showToast({ type: "error", title: "Ошибка удаления", message: msg });
+    } finally {
+      setLinkLoading(false);
     }
   };
 
@@ -153,15 +334,54 @@ export default function ProjectQueuePage() {
     }
   };
 
+  const handleLinkRefresh = async () => {
+    if (!projectId) return;
+    setLinkRefreshing(true);
+    try {
+      await loadLinkTasks({ silent: true });
+    } finally {
+      setLinkRefreshing(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-xl">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-xl font-semibold">Очередь проекта</h2>
-            <p className="text-sm text-slate-500 dark:text-slate-400">ID проекта: {projectId}</p>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+              <Link href="/projects" className="hover:text-slate-700 dark:hover:text-slate-200">
+                Проекты
+              </Link>
+              <span>/</span>
+              <Link
+                href={projectId ? `/projects/${projectId}?tab=queue` : "/projects"}
+                className="hover:text-slate-700 dark:hover:text-slate-200"
+              >
+                Очередь проекта
+              </Link>
+              <Badge label="Проектная" tone="emerald" />
+              <Badge label="Подробная" tone="indigo" />
+            </div>
+            <h2 className="text-xl font-semibold">Очередь проекта (подробно)</h2>
+            <p className="text-sm text-slate-500 dark:text-slate-400">
+              Полная очередь доменов и ссылок по проекту. Кратко — во вкладке «Очередь» проекта.
+            </p>
+            <p className="text-xs text-slate-500 dark:text-slate-400">ID проекта: {projectId}</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              href={projectId ? `/projects/${projectId}?tab=queue` : "/projects"}
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            >
+              ← К проекту
+            </Link>
+            <Link
+              href="/queue?tab=domains"
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            >
+              Глобальная очередь
+            </Link>
             <button
               onClick={handleCleanup}
               disabled={cleaning}
@@ -187,7 +407,30 @@ export default function ProjectQueuePage() {
         )}
       </div>
 
+      <div className="flex flex-wrap gap-2">
+        <TabLink
+          href={
+            projectId
+              ? ({ pathname: `/projects/${projectId}/queue`, query: { tab: "domains" } } as LinkHref)
+              : "/projects"
+          }
+          label="Домены"
+          active={activeTab === "domains"}
+        />
+        <TabLink
+          href={
+            projectId
+              ? ({ pathname: `/projects/${projectId}/queue`, query: { tab: "links" } } as LinkHref)
+              : "/projects"
+          }
+          label="Ссылки"
+          active={activeTab === "links"}
+        />
+      </div>
+
+      {activeTab === "domains" && (
       <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3">
+        <div className="text-sm font-semibold">Фильтры генераций</div>
         <div className="grid gap-3 md:grid-cols-3">
           <label className="text-sm space-y-1">
             <span className="text-slate-600 dark:text-slate-300">Фильтр по статусу</span>
@@ -222,8 +465,190 @@ export default function ProjectQueuePage() {
             />
           </label>
         </div>
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Поиск по домену"
+          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
+        />
       </div>
+      )}
 
+      {activeTab === "links" && (
+      <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3">
+        <div className="text-sm font-semibold">Фильтры ссылок</div>
+        <div className="grid gap-3 md:grid-cols-3">
+          <label className="text-sm space-y-1">
+            <span className="text-slate-600 dark:text-slate-300">Фильтр по статусу</span>
+            <select
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
+              value={linkStatusFilter}
+              onChange={(e) => setLinkStatusFilter(e.target.value)}
+            >
+              {linkStatusOptions.map((opt) => (
+                <option key={opt} value={opt}>
+                  {LINK_STATUS_LABELS[opt] || opt}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-sm space-y-1">
+            <span className="text-slate-600 dark:text-slate-300">Фильтр по дате (от)</span>
+            <input
+              type="date"
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
+              value={linkDateFrom}
+              onChange={(e) => setLinkDateFrom(e.target.value)}
+            />
+          </label>
+          <label className="text-sm space-y-1">
+            <span className="text-slate-600 dark:text-slate-300">Фильтр по дате (до)</span>
+            <input
+              type="date"
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
+              value={linkDateTo}
+              onChange={(e) => setLinkDateTo(e.target.value)}
+            />
+          </label>
+        </div>
+        <input
+          type="search"
+          value={linkSearch}
+          onChange={(e) => setLinkSearch(e.target.value)}
+          placeholder="Поиск по домену"
+          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
+        />
+      </div>
+      )}
+
+      {activeTab === "links" && (
+      <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="font-semibold">Очередь ссылок</h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400">Задачи линкбилдинга по проекту.</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-slate-500 dark:text-slate-400">Всего: {filteredLinks.length}</span>
+            <button
+              onClick={handleLinkRefresh}
+              disabled={linkRefreshing}
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            >
+              <FiRefreshCw className={linkRefreshing ? "animate-spin" : ""} /> Обновить
+            </button>
+          </div>
+        </div>
+        {linkError && <div className="text-sm text-red-500">{linkError}</div>}
+        {linkPermissionDenied && (
+          <div className="text-sm text-amber-600 dark:text-amber-400">Недостаточно прав для просмотра задач ссылок.</div>
+        )}
+        {linkLoading && <div className="text-sm text-slate-500 dark:text-slate-400">Загрузка...</div>}
+        {!linkLoading && !linkPermissionDenied && filteredLinks.length === 0 && (
+          <div className="text-sm text-slate-500 dark:text-slate-400">Очередь ссылок пуста.</div>
+        )}
+        {!linkLoading && !linkPermissionDenied && filteredLinks.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="text-left text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
+                  <th className="py-2 pr-4">Домен</th>
+                  <th className="py-2 pr-4">Действие</th>
+                  <th className="py-2 pr-4">Запланировано</th>
+                  <th className="py-2 pr-4">Статус</th>
+                  <th className="py-2 pr-4">Попытки</th>
+                  <th className="py-2 pr-4">Событие</th>
+                  <th className="py-2 pr-4 text-right">Действия</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                {visibleLinks.map((task) => {
+                  const domain = domains[task.domain_id];
+                  const domainLabel = domain?.url || task.domain_id;
+                  const actionLabel = (task.action || "insert") === "remove" ? "Удаление" : "Вставка";
+                  const lastLog = task.log_lines?.length ? task.log_lines[task.log_lines.length - 1] : "";
+                  const eventText = task.error_message || lastLog || "—";
+                  return (
+                    <tr key={task.id}>
+                      <td className="py-3 pr-4">
+                        {domain ? (
+                          <Link href={{ pathname: `/domains/${domain.id}` }} className="text-indigo-600 hover:underline">
+                            {domainLabel}
+                          </Link>
+                        ) : (
+                          <span className="text-slate-500 dark:text-slate-400">{domainLabel}</span>
+                        )}
+                      </td>
+                      <td className="py-3 pr-4">{actionLabel}</td>
+                      <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">
+                        {new Date(task.scheduled_for).toLocaleString()}
+                      </td>
+                      <td className="py-3 pr-4">
+                        <LinkTaskStatusBadge status={task.status} />
+                      </td>
+                      <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">{task.attempts}</td>
+                      <td
+                        className={`py-3 pr-4 max-w-xs truncate ${task.error_message ? "text-red-500" : "text-slate-500 dark:text-slate-400"}`}
+                        title={eventText}
+                      >
+                        {eventText}
+                      </td>
+                      <td className="py-3 pr-4 text-right">
+                        <div className="flex items-center justify-end gap-3">
+                          <Link href={{ pathname: `/links/${task.id}` }} className="text-indigo-600 hover:underline">
+                            Открыть
+                          </Link>
+                          {task.status === "failed" && (
+                            <button
+                              onClick={() => handleLinkRetry(task)}
+                              disabled={linkLoading}
+                              className="inline-flex items-center gap-1 rounded-lg border border-amber-200 bg-white px-2 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:bg-slate-800 dark:text-amber-200"
+                            >
+                              <FiRotateCw /> Повтор
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleLinkDelete(task)}
+                            disabled={linkLoading}
+                            className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
+                          >
+                            <FiTrash2 /> Удалить
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {filteredLinks.length > 0 && (
+          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+            <span>Страница {linkPage}</span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setLinkPage((p) => Math.max(1, p - 1))}
+                disabled={linkPage <= 1}
+                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              >
+                Назад
+              </button>
+              <button
+                onClick={() => setLinkPage((p) => p + 1)}
+                disabled={!linkHasNext}
+                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              >
+                Вперёд
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+      )}
+
+      {activeTab === "domains" && (
       <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="font-semibold">Очередь генераций</h3>
@@ -247,14 +672,14 @@ export default function ProjectQueuePage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                {filtered.map((item) => {
+                {visibleItems.map((item) => {
                   const domain = domains[item.domain_id];
                   const domainLabel = item.domain_url || domain?.url || item.domain_id;
                   return (
                     <tr key={item.id}>
                       <td className="py-3 pr-4">
                         {domain || item.domain_url ? (
-                          <Link href={`/domains/${domain?.id || item.domain_id}`} className="text-indigo-600 hover:underline">
+                          <Link href={{ pathname: `/domains/${domain?.id || item.domain_id}` }} className="text-indigo-600 hover:underline">
                             {domainLabel}
                           </Link>
                         ) : (
@@ -285,7 +710,59 @@ export default function ProjectQueuePage() {
             </table>
           </div>
         )}
+        {filtered.length > 0 && (
+          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+            <span>Страница {genPage}</span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setGenPage((p) => Math.max(1, p - 1))}
+                disabled={genPage <= 1}
+                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              >
+                Назад
+              </button>
+              <button
+                onClick={() => setGenPage((p) => p + 1)}
+                disabled={!genHasNext}
+                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              >
+                Вперёд
+              </button>
+            </div>
+          </div>
+        )}
       </div>
+      )}
     </div>
+  );
+}
+
+function LinkTaskStatusBadge({ status }: { status: string }) {
+  const map: Record<string, { text: string; tone: "amber" | "blue" | "orange" | "sky" | "green" | "yellow" | "slate" | "red"; icon: ReactNode }> = {
+    pending: { text: "Ожидает", tone: "amber", icon: <FiClock /> },
+    searching: { text: "Поиск", tone: "blue", icon: <FiRefreshCw /> },
+    removing: { text: "Удаление", tone: "orange", icon: <FiRefreshCw /> },
+    found: { text: "Найдено", tone: "sky", icon: <FiCheck /> },
+    inserted: { text: "Вставлено", tone: "green", icon: <FiCheck /> },
+    generated: { text: "Вставлено (ген. текст)", tone: "yellow", icon: <FiCheck /> },
+    removed: { text: "Удалено", tone: "slate", icon: <FiCheck /> },
+    failed: { text: "Ошибка", tone: "red", icon: <FiAlertTriangle /> }
+  };
+  const cfg = map[status] || { text: status, tone: "slate" as const, icon: <FiClock /> };
+  return <Badge label={cfg.text} tone={cfg.tone} icon={cfg.icon} className="text-xs" />;
+}
+
+type LinkHref = Parameters<typeof Link>[0]["href"];
+
+function TabLink({ href, label, active }: { href: LinkHref; label: string; active: boolean }) {
+  return (
+    <Link
+      href={href}
+      className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold border ${
+        active ? "bg-indigo-600 text-white border-indigo-600" : "border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200"
+      }`}
+    >
+      {label}
+    </Link>
   );
 }

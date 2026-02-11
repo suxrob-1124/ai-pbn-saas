@@ -34,6 +34,8 @@ type LinkTaskFilters struct {
 	ScheduledAfter  *time.Time
 	ScheduledBefore *time.Time
 	Limit           int
+	Offset          int
+	Search          *string
 }
 
 // LinkTaskUpdates описывает изменения задачи.
@@ -306,7 +308,8 @@ func buildLinkTaskQuery(table string, baseClause string, baseArgs []interface{},
 	idx := 1
 	colPrefix := ""
 	selectPrefix := ""
-	if strings.Contains(table, "link_tasks lt") {
+	fromTable := table
+	if strings.Contains(fromTable, "link_tasks lt") {
 		colPrefix = "lt."
 		selectPrefix = "lt."
 	}
@@ -315,6 +318,18 @@ func buildLinkTaskQuery(table string, baseClause string, baseArgs []interface{},
 		clauses = append(clauses, baseClause)
 		args = append(args, baseArgs...)
 		idx += len(baseArgs)
+	}
+	if filters.Search != nil {
+		if term := strings.TrimSpace(*filters.Search); term != "" {
+			if !strings.Contains(fromTable, "JOIN domains") {
+				fromTable = "link_tasks lt JOIN domains d ON d.id = lt.domain_id"
+				colPrefix = "lt."
+				selectPrefix = "lt."
+			}
+			clauses = append(clauses, fmt.Sprintf("(LOWER(COALESCE(d.url, '')) LIKE $%d OR LOWER(%sdomain_id) LIKE $%d)", idx, colPrefix, idx))
+			args = append(args, "%"+strings.ToLower(term)+"%")
+			idx++
+		}
 	}
 	if filters.Status != nil {
 		clauses = append(clauses, fmt.Sprintf("%sstatus=$%d", colPrefix, idx))
@@ -349,7 +364,7 @@ func buildLinkTaskQuery(table string, baseClause string, baseArgs []interface{},
 		selectPrefix,
 		selectPrefix,
 		selectPrefix,
-		table,
+		fromTable,
 	)
 	if len(clauses) > 0 {
 		query += " WHERE " + strings.Join(clauses, " AND ")
@@ -358,6 +373,11 @@ func buildLinkTaskQuery(table string, baseClause string, baseArgs []interface{},
 	if filters.Limit > 0 {
 		query += fmt.Sprintf(" LIMIT $%d", idx)
 		args = append(args, filters.Limit)
+		idx++
+	}
+	if filters.Offset > 0 {
+		query += fmt.Sprintf(" OFFSET $%d", idx)
+		args = append(args, filters.Offset)
 	}
 
 	return query, args

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { authFetch, del, patch } from "../../../lib/http";
@@ -11,6 +11,7 @@ import { ArtifactsViewer, LogsViewer } from "../../../components/ArtifactsViewer
 import { GenerationResultActions } from "../../../components/GenerationResultActions";
 import { computeDisplayProgress } from "../../../lib/pipelineProgress";
 import { AuditReport } from "../../../components/AuditReport";
+import { Badge } from "../../../components/Badge";
 
 type Generation = {
   id: string;
@@ -231,20 +232,16 @@ export default function QueueItemPage() {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, { text: string; color: string; icon: React.ReactNode }> = {
-    pending: { text: "В очереди", color: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200", icon: <FiClock /> },
-    processing: { text: "В работе", color: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200", icon: <FiPlay /> },
-    pause_requested: { text: "Пауза запрошена", color: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-200", icon: <FiPause /> },
-    paused: { text: "Приостановлено", color: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200", icon: <FiPause /> },
-    cancelling: { text: "Отмена...", color: "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-200", icon: <FiX /> },
-    cancelled: { text: "Отменено", color: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-200", icon: <FiX /> },
-    success: { text: "Готово", color: "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-200", icon: <FiCheck /> },
-    error: { text: "Ошибка", color: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-200", icon: <FiAlertTriangle /> },
+  const map: Record<string, { text: string; tone: "amber" | "yellow" | "slate" | "orange" | "red" | "green"; icon: ReactNode }> = {
+    pending: { text: "В очереди", tone: "amber", icon: <FiClock /> },
+    processing: { text: "В работе", tone: "amber", icon: <FiPlay /> },
+    pause_requested: { text: "Пауза запрошена", tone: "yellow", icon: <FiPause /> },
+    paused: { text: "Приостановлено", tone: "slate", icon: <FiPause /> },
+    cancelling: { text: "Отмена...", tone: "orange", icon: <FiX /> },
+    cancelled: { text: "Отменено", tone: "red", icon: <FiX /> },
+    success: { text: "Готово", tone: "green", icon: <FiCheck /> },
+    error: { text: "Ошибка", tone: "red", icon: <FiAlertTriangle /> },
   };
-  const cfg = map[status] || { text: status, color: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200", icon: <FiClock /> };
-  return (
-    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold ${cfg.color}`}>
-      {cfg.icon} {cfg.text}
-    </span>
-  );
+  const cfg = map[status] || { text: status, tone: "slate" as const, icon: <FiClock /> };
+  return <Badge label={cfg.text} tone={cfg.tone} icon={cfg.icon} className="text-xs" />;
 }

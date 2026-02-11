@@ -9,6 +9,7 @@ export type LinkTaskDTO = {
   found_location?: string;
   generated_content?: string;
   error_message?: string;
+  log_lines?: string[];
   attempts: number;
   created_by: string;
   created_at: string;
@@ -37,6 +38,8 @@ export type LinkTaskFilters = {
   scheduledFrom?: string | Date;
   scheduledTo?: string | Date;
   limit?: number;
+  page?: number;
+  search?: string;
 };
 
 export type LinkTaskListParams = LinkTaskFilters & {

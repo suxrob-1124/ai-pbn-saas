@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useParams } from "next/navigation";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import type { UrlObject } from "url";
+import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { authFetch, authFetchCached, post, patch, del } from "../../../lib/http";
 import { useAuthGuard } from "../../../lib/useAuth";
 import { FiPlay, FiRefreshCw, FiList, FiClock, FiPauseCircle, FiCheck, FiTrash2, FiUsers, FiX, FiKey, FiAlertCircle, FiLink, FiInfo } from "react-icons/fi";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { showToast } from "../../../lib/toastStore";
 import { createSchedule, deleteSchedule, listSchedules, triggerSchedule, updateSchedule } from "../../../lib/schedulesApi";
@@ -16,6 +16,7 @@ import type { QueueItemDTO } from "../../../types/queue";
 import { ScheduleForm } from "../../../components/ScheduleForm";
 import { ScheduleList } from "../../../components/ScheduleList";
 import type { ScheduleFormValue } from "../../../lib/scheduleFormValidation";
+import { Badge } from "../../../components/Badge";
 
 type Project = {
   id: string;
@@ -41,6 +42,7 @@ type Domain = {
   link_acceptor_url?: string;
   link_status?: string;
   link_last_task_id?: string;
+  link_ready_at?: string;
   updated_at?: string;
 };
 
@@ -63,6 +65,9 @@ type ProjectSummary = {
   members: Array<{ email: string; role: string; createdAt: string }>;
 };
 
+type ProjectTab = "domains" | "members" | "schedules" | "queue" | "errors" | "settings";
+const PROJECT_TABS: ProjectTab[] = ["domains", "members", "schedules", "queue", "errors", "settings"];
+
 const QUEUE_STATUS_LABELS: Record<string, string> = {
   pending: "Ожидает",
   queued: "В очереди",
@@ -74,9 +79,12 @@ export default function ProjectDetailPage() {
   const { me } = useAuthGuard();
   const params = useParams();
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const projectId = params?.id as string;
   const [project, setProject] = useState<Project | null>(null);
   const [domains, setDomains] = useState<Domain[]>([]);
+  const [domainSearch, setDomainSearch] = useState("");
   const domainById = useMemo(() => {
     const map: Record<string, Domain> = {};
     domains.forEach((domain) => {
@@ -129,7 +137,7 @@ export default function ProjectDetailPage() {
   const [importText, setImportText] = useState("");
   const [keywordEdits, setKeywordEdits] = useState<Record<string, string>>({});
   const [linkEdits, setLinkEdits] = useState<Record<string, { anchor: string; acceptor: string }>>({});
-  const [activeTab, setActiveTab] = useState<"domains" | "members" | "schedules" | "queue" | "errors" | "settings">("domains");
+  const [activeTab, setActiveTab] = useState<ProjectTab>("domains");
   const [members, setMembers] = useState<Array<{ email: string; role: string; createdAt: string }>>([]);
   const [newMemberEmail, setNewMemberEmail] = useState("");
   const [newMemberRole, setNewMemberRole] = useState("editor");
@@ -176,6 +184,49 @@ export default function ProjectDetailPage() {
   const [projectErrors, setProjectErrors] = useState<Generation[]>([]);
   const [projectErrorsLoading, setProjectErrorsLoading] = useState(false);
   const [projectErrorsError, setProjectErrorsError] = useState<string | null>(null);
+
+  const buildTabHref = (tab: ProjectTab): UrlObject => {
+    const params = new URLSearchParams(searchParams);
+    params.set("tab", tab);
+    const qs = params.toString();
+    return {
+      pathname: projectId ? `/projects/${projectId}` : pathname,
+      search: qs ? `?${qs}` : undefined
+    };
+  };
+  const setTab = (tab: ProjectTab) => {
+    setActiveTab(tab);
+    if (!projectId) {
+      return;
+    }
+    const params = new URLSearchParams(searchParams);
+    params.set("tab", tab);
+    const qs = params.toString();
+    const nextUrl = qs ? `${pathname}?${qs}` : pathname;
+    if (typeof window !== "undefined") {
+      window.history.replaceState(null, "", nextUrl);
+    } else {
+      router.replace(nextUrl as unknown as never, { scroll: false });
+    }
+  };
+
+  const filteredDomains = useMemo(() => {
+    const term = domainSearch.trim().toLowerCase();
+    if (!term) {
+      return domains;
+    }
+    return domains.filter((d) => {
+      const label = (d.url || d.id || "").toLowerCase();
+      return label.includes(term);
+    });
+  }, [domains, domainSearch]);
+
+  useEffect(() => {
+    const tab = searchParams.get("tab");
+    if (tab && PROJECT_TABS.includes(tab as ProjectTab) && tab !== activeTab) {
+      setActiveTab(tab as ProjectTab);
+    }
+  }, [searchParams, activeTab]);
 
   const load = async (force = false) => {
     setLoading(true);
@@ -368,6 +419,23 @@ export default function ProjectDetailPage() {
       }
     }
     return date.toLocaleString();
+  };
+
+  const formatRelativeTime = (target: Date) => {
+    const diffMs = target.getTime() - Date.now();
+    if (!Number.isFinite(diffMs) || diffMs <= 0) return "сейчас";
+    const totalMinutes = Math.ceil(diffMs / 60000);
+    if (totalMinutes < 60) {
+      return `${totalMinutes} мин`;
+    }
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    if (hours < 24) {
+      return minutes ? `${hours} ч ${minutes} мин` : `${hours} ч`;
+    }
+    const days = Math.floor(hours / 24);
+    const remHours = hours % 24;
+    return remHours ? `${days} д ${remHours} ч` : `${days} д`;
   };
 
   const loadSchedules = async () => {
@@ -647,7 +715,7 @@ export default function ProjectDetailPage() {
   const handleEditSchedule = (schedule: ScheduleDTO) => {
     applyScheduleToForm(schedule);
     if (activeTab !== "schedules") {
-      setActiveTab("schedules");
+      setTab("schedules");
     }
   };
 
@@ -777,7 +845,7 @@ export default function ProjectDetailPage() {
   const handleEditLinkSchedule = (schedule: ScheduleDTO) => {
     applyLinkScheduleToForm(schedule);
     if (activeTab !== "schedules") {
-      setActiveTab("schedules");
+      setTab("schedules");
     }
   };
 
@@ -1250,8 +1318,8 @@ export default function ProjectDetailPage() {
       {/* Tabs */}
       <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow">
         <div className="flex gap-2 border-b border-slate-200 dark:border-slate-800 mb-4">
-          <button
-            onClick={() => setActiveTab("domains")}
+          <Link
+            href={buildTabHref("domains")}
             className={`px-4 py-2 text-sm font-semibold border-b-2 transition-colors ${
               activeTab === "domains"
                 ? "border-indigo-600 text-indigo-600 dark:border-indigo-400 dark:text-indigo-400"
@@ -1259,9 +1327,9 @@ export default function ProjectDetailPage() {
             }`}
           >
             Домены
-          </button>
-          <button
-            onClick={() => setActiveTab("schedules")}
+          </Link>
+          <Link
+            href={buildTabHref("schedules")}
             className={`px-4 py-2 text-sm font-semibold border-b-2 transition-colors ${
               activeTab === "schedules"
                 ? "border-indigo-600 text-indigo-600 dark:border-indigo-400 dark:text-indigo-400"
@@ -1269,9 +1337,9 @@ export default function ProjectDetailPage() {
             }`}
           >
             Расписания
-          </button>
-          <button
-            onClick={() => setActiveTab("queue")}
+          </Link>
+          <Link
+            href={buildTabHref("queue")}
             className={`px-4 py-2 text-sm font-semibold border-b-2 transition-colors ${
               activeTab === "queue"
                 ? "border-indigo-600 text-indigo-600 dark:border-indigo-400 dark:text-indigo-400"
@@ -1279,9 +1347,9 @@ export default function ProjectDetailPage() {
             }`}
           >
             Очередь
-          </button>
-          <button
-            onClick={() => setActiveTab("errors")}
+          </Link>
+          <Link
+            href={buildTabHref("errors")}
             className={`px-4 py-2 text-sm font-semibold border-b-2 transition-colors ${
               activeTab === "errors"
                 ? "border-indigo-600 text-indigo-600 dark:border-indigo-400 dark:text-indigo-400"
@@ -1289,9 +1357,9 @@ export default function ProjectDetailPage() {
             }`}
           >
             Ошибки
-          </button>
-          <button
-            onClick={() => setActiveTab("settings")}
+          </Link>
+          <Link
+            href={buildTabHref("settings")}
             className={`px-4 py-2 text-sm font-semibold border-b-2 transition-colors ${
               activeTab === "settings"
                 ? "border-indigo-600 text-indigo-600 dark:border-indigo-400 dark:text-indigo-400"
@@ -1299,9 +1367,9 @@ export default function ProjectDetailPage() {
             }`}
           >
             Настройки
-          </button>
-          <button
-            onClick={() => setActiveTab("members")}
+          </Link>
+          <Link
+            href={buildTabHref("members")}
             className={`px-4 py-2 text-sm font-semibold border-b-2 transition-colors ${
               activeTab === "members"
                 ? "border-indigo-600 text-indigo-600 dark:border-indigo-400 dark:text-indigo-400"
@@ -1309,7 +1377,7 @@ export default function ProjectDetailPage() {
             }`}
           >
             <FiUsers className="inline mr-1" /> Участники
-          </button>
+          </Link>
         </div>
 
         {activeTab === "domains" && (
@@ -1381,15 +1449,35 @@ export default function ProjectDetailPage() {
       </div>
 
       <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <h3 className="font-semibold">Домены</h3>
-          <span className="text-xs text-slate-500 dark:text-slate-400">Всего: {domains.length}</span>
+          <span className="text-xs text-slate-500 dark:text-slate-400">
+            Показано: {filteredDomains.length} из {domains.length}
+          </span>
         </div>
+        <input
+          type="search"
+          value={domainSearch}
+          onChange={(e) => setDomainSearch(e.target.value)}
+          placeholder="Поиск по домену"
+          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
+        />
+        {filteredDomains.length === 0 && (
+          <div className="text-sm text-slate-500 dark:text-slate-400">Домены не найдены.</div>
+        )}
         <div className="space-y-3">
-          {domains.map((d) => {
+          {filteredDomains.map((d) => {
             const linkStatus = (d.link_status || "").toLowerCase();
             const hasActiveLink = ["inserted", "generated"].includes(linkStatus);
             const canRemoveLink = hasActiveLink;
+            const linkReadyAtDate = d.link_ready_at ? new Date(d.link_ready_at) : null;
+            const linkReadyValid = linkReadyAtDate && !Number.isNaN(linkReadyAtDate.getTime());
+            const linkReadyFuture = Boolean(linkReadyValid && linkReadyAtDate!.getTime() > Date.now());
+            const linkReadyBadge = !linkReadyValid
+              ? { label: "не задано", tone: "slate" as const }
+              : linkReadyFuture
+                ? { label: "ожидает", tone: "amber" as const }
+                : { label: "готово", tone: "green" as const };
             return (
               <div
                 key={d.id}
@@ -1406,6 +1494,17 @@ export default function ProjectDetailPage() {
                   </div>
                   <div className="text-xs text-slate-500 dark:text-slate-400">
                     Обновлено: {formatDateTime(d.updated_at)}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                    <span>
+                      Готовность ссылок: {linkReadyValid ? formatDateTime(d.link_ready_at) : "не задано"}
+                    </span>
+                    <Badge label={linkReadyBadge.label} tone={linkReadyBadge.tone} className="text-[11px]" />
+                    {linkReadyFuture && linkReadyAtDate && (
+                      <span className="text-amber-600 dark:text-amber-300">
+                        через {formatRelativeTime(linkReadyAtDate)}
+                      </span>
+                    )}
                   </div>
                   <div className="text-xs text-slate-400">
                     Страна: {d.target_country || "—"} · Язык: {d.target_language || "—"}
@@ -1672,7 +1771,16 @@ export default function ProjectDetailPage() {
         {activeTab === "queue" && (
           <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3">
             <div className="flex items-center justify-between">
-              <h3 className="font-semibold">Очередь проекта</h3>
+              <div>
+                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                  <Badge label="Проектная" tone="emerald" />
+                  <Badge label="Кратко" tone="amber" />
+                </div>
+                <h3 className="font-semibold">Очередь проекта (кратко)</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Короткий список активных задач. Полная очередь — на отдельной странице.
+                </p>
+              </div>
               <button
                 onClick={loadQueue}
                 disabled={queueLoading}
@@ -1756,9 +1864,17 @@ export default function ProjectDetailPage() {
                   </table>
                 </div>
               )}
-            <Link href="/queue" className="text-xs text-indigo-600 hover:underline">
-              Открыть общую очередь →
-            </Link>
+            <div className="flex flex-wrap items-center gap-3 text-xs">
+              <Link
+                href={projectId ? `/projects/${projectId}/queue?tab=domains` : "/projects"}
+                className="text-indigo-600 hover:underline"
+              >
+                Открыть подробную очередь проекта →
+              </Link>
+              <Link href="/queue?tab=domains" className="text-indigo-600 hover:underline">
+                Открыть общую очередь →
+              </Link>
+            </div>
           </div>
         )}
 
@@ -2084,54 +2200,42 @@ function RunsList({ runs }: { runs: Generation[] }) {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, { text: string; color: string; icon: React.ReactNode }> = {
-    waiting: { text: "Ожидает генерацию", color: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200", icon: <FiClock /> },
-    processing: { text: "Генерация", color: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200", icon: <FiPlay /> },
-    published: { text: "Опубликован", color: "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-200", icon: <FiPlay /> },
-    draft: { text: "Черновик", color: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200", icon: <FiPauseCircle /> },
-    active: { text: "Активен", color: "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-200", icon: <FiPlay /> },
-    paused: { text: "Приостановлено", color: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200", icon: <FiPauseCircle /> },
-    pause_requested: { text: "Пауза запрошена", color: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-200", icon: <FiPauseCircle /> },
-    cancelling: { text: "Отмена...", color: "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-200", icon: <FiPauseCircle /> },
-    cancelled: { text: "Отменено", color: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-200", icon: <FiPauseCircle /> },
-    pending: { text: "В очереди", color: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200", icon: <FiClock /> },
-    success: { text: "Готово", color: "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-200", icon: <FiCheck /> },
-    error: { text: "Ошибка", color: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-200", icon: <FiPauseCircle /> },
-    running: { text: "В работе", color: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200", icon: <FiPlay /> }
+  const map: Record<string, { text: string; tone: "slate" | "amber" | "green" | "yellow" | "orange" | "red"; icon: ReactNode }> = {
+    waiting: { text: "Ожидает генерацию", tone: "slate", icon: <FiClock /> },
+    processing: { text: "Генерация", tone: "amber", icon: <FiPlay /> },
+    published: { text: "Опубликован", tone: "green", icon: <FiPlay /> },
+    draft: { text: "Черновик", tone: "slate", icon: <FiPauseCircle /> },
+    active: { text: "Активен", tone: "green", icon: <FiPlay /> },
+    paused: { text: "Приостановлено", tone: "slate", icon: <FiPauseCircle /> },
+    pause_requested: { text: "Пауза запрошена", tone: "yellow", icon: <FiPauseCircle /> },
+    cancelling: { text: "Отмена...", tone: "orange", icon: <FiPauseCircle /> },
+    cancelled: { text: "Отменено", tone: "red", icon: <FiPauseCircle /> },
+    pending: { text: "В очереди", tone: "amber", icon: <FiClock /> },
+    success: { text: "Готово", tone: "green", icon: <FiCheck /> },
+    error: { text: "Ошибка", tone: "red", icon: <FiPauseCircle /> },
+    running: { text: "В работе", tone: "amber", icon: <FiPlay /> },
   };
-  const cfg = map[status] || { text: status, color: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200", icon: <FiPauseCircle /> };
-  return (
-    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold ${cfg.color}`}>
-      {cfg.icon} {cfg.text}
-    </span>
-  );
+  const cfg = map[status] || { text: status, tone: "slate" as const, icon: <FiPauseCircle /> };
+  return <Badge label={cfg.text} tone={cfg.tone} icon={cfg.icon} className="text-xs" />;
 }
 
 function LinkStatusBadge({ domain }: { domain: { link_anchor_text?: string; link_acceptor_url?: string; link_status?: string; link_last_task_id?: string } }) {
   const hasSettings = Boolean((domain.link_anchor_text || "").trim()) && Boolean((domain.link_acceptor_url || "").trim());
   if (!hasSettings) {
-    return (
-      <span className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200">
-        <FiClock /> Ожидает настройки
-      </span>
-    );
+    return <Badge label="Ожидает настройки" tone="slate" icon={<FiClock />} className="text-xs" />;
   }
   const status = domain.link_status || (domain.link_last_task_id ? "pending" : "ready");
-  const map: Record<string, { text: string; color: string; icon: React.ReactNode }> = {
-    ready: { text: "Готово к запуску", color: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200", icon: <FiClock /> },
-    pending: { text: "Ожидает добавления", color: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200", icon: <FiClock /> },
-    searching: { text: "Поиск места", color: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-200", icon: <FiRefreshCw /> },
-    removing: { text: "Удаление", color: "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-200", icon: <FiRefreshCw /> },
-    found: { text: "Место найдено", color: "bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-200", icon: <FiCheck /> },
-    inserted: { text: "Ссылка вставлена", color: "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-200", icon: <FiCheck /> },
-    generated: { text: "Текст сгенерирован", color: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-200", icon: <FiCheck /> },
-    removed: { text: "Ссылка удалена", color: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200", icon: <FiCheck /> },
-    failed: { text: "Ошибка ссылки", color: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-200", icon: <FiPauseCircle /> }
+  const map: Record<string, { text: string; tone: "slate" | "amber" | "blue" | "orange" | "sky" | "green" | "yellow" | "red"; icon: ReactNode }> = {
+    ready: { text: "Готово к запуску", tone: "slate", icon: <FiClock /> },
+    pending: { text: "Ожидает добавления", tone: "amber", icon: <FiClock /> },
+    searching: { text: "Поиск места", tone: "blue", icon: <FiRefreshCw /> },
+    removing: { text: "Удаление", tone: "orange", icon: <FiRefreshCw /> },
+    found: { text: "Место найдено", tone: "sky", icon: <FiCheck /> },
+    inserted: { text: "Ссылка вставлена", tone: "green", icon: <FiCheck /> },
+    generated: { text: "Вставлено (ген. текст)", tone: "yellow", icon: <FiCheck /> },
+    removed: { text: "Ссылка удалена", tone: "slate", icon: <FiCheck /> },
+    failed: { text: "Ошибка ссылки", tone: "red", icon: <FiPauseCircle /> },
   };
   const cfg = map[status] || map.ready;
-  return (
-    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold ${cfg.color}`}>
-      {cfg.icon} {cfg.text}
-    </span>
-  );
+  return <Badge label={cfg.text} tone={cfg.tone} icon={cfg.icon} className="text-xs" />;
 }

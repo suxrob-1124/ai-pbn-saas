@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useAuthGuard } from "../../lib/useAuth";
 import { authFetchCached, post } from "../../lib/http";
 import { FiFolder, FiPlay, FiPauseCircle, FiPlus, FiRefreshCw, FiClock, FiAlertCircle } from "react-icons/fi";
+import { Badge } from "../../components/Badge";
 
 type GenerationDTO = {
   id: string;
@@ -251,19 +252,15 @@ export default function ProjectsPage() {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, { text: string; color: string; icon: React.ReactNode }> = {
-    Активен: { text: "Активен", color: "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-200", icon: <FiPlay /> },
-    active: { text: "Активен", color: "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-200", icon: <FiPlay /> },
-    Черновик: { text: "В подготовке", color: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200", icon: <FiClock /> },
-    draft: { text: "В подготовке", color: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200", icon: <FiClock /> },
-    "В разработке": { text: "В работе", color: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200", icon: <FiPauseCircle /> },
-    wip: { text: "В работе", color: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200", icon: <FiPauseCircle /> },
-    paused: { text: "Пауза", color: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200", icon: <FiPauseCircle /> }
+  const map: Record<string, { text: string; tone: "green" | "slate" | "amber"; icon: ReactNode }> = {
+    Активен: { text: "Активен", tone: "green", icon: <FiPlay /> },
+    active: { text: "Активен", tone: "green", icon: <FiPlay /> },
+    Черновик: { text: "В подготовке", tone: "slate", icon: <FiClock /> },
+    draft: { text: "В подготовке", tone: "slate", icon: <FiClock /> },
+    "В разработке": { text: "В работе", tone: "amber", icon: <FiPauseCircle /> },
+    wip: { text: "В работе", tone: "amber", icon: <FiPauseCircle /> },
+    paused: { text: "Пауза", tone: "slate", icon: <FiPauseCircle /> },
   };
-  const cfg = map[status] || { text: status, color: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200", icon: <FiPauseCircle /> };
-  return (
-    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold ${cfg.color}`}>
-      {cfg.icon} {cfg.text}
-    </span>
-  );
+  const cfg = map[status] || { text: status, tone: "slate" as const, icon: <FiPauseCircle /> };
+  return <Badge label={cfg.text} tone={cfg.tone} icon={cfg.icon} className="text-xs" />;
 }

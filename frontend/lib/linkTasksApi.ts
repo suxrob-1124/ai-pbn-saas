@@ -43,6 +43,12 @@ const buildFilters = (filters?: LinkTaskFilters) => {
   if (typeof filters.limit === "number") {
     params.set("limit", String(filters.limit));
   }
+  if (typeof filters.page === "number") {
+    params.set("page", String(filters.page));
+  }
+  if (filters.search && filters.search.trim()) {
+    params.set("search", filters.search.trim());
+  }
   const query = params.toString();
   return query ? `?${query}` : "";
 };
@@ -125,6 +131,12 @@ const buildListParams = (params?: LinkTaskListParams) => {
   }
   if (typeof params.limit === "number") {
     query.set("limit", String(params.limit));
+  }
+  if (typeof params.page === "number") {
+    query.set("page", String(params.page));
+  }
+  if (params.search && params.search.trim()) {
+    query.set("search", params.search.trim());
   }
   const queryString = query.toString();
   return queryString ? `?${queryString}` : "";

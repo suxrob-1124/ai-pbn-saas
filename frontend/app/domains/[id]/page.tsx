@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { authFetch, authFetchCached, patch, del } from "../../../lib/http";
@@ -11,6 +11,7 @@ import { ArtifactsViewer, LogsViewer } from "../../../components/ArtifactsViewer
 import PipelineSteps from "../../../components/PipelineSteps";
 import { computeDisplayProgress } from "../../../lib/pipelineProgress";
 import { AuditReport } from "../../../components/AuditReport";
+import { Badge } from "../../../components/Badge";
 
 type Domain = {
   id: string;
@@ -747,6 +748,7 @@ export default function DomainPage() {
                         <th className="py-2 pr-4">Запланировано</th>
                         <th className="py-2 pr-4">Попытки</th>
                         <th className="py-2 pr-4">Результат</th>
+                        <th className="py-2 pr-4">Детали</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
@@ -763,8 +765,13 @@ export default function DomainPage() {
                           <td className="py-2 pr-4 text-slate-500 dark:text-slate-400">
                             {task.error_message && <span className="text-red-500">Ошибка</span>}
                             {!task.error_message && task.found_location && <span>Вставлено</span>}
-                            {!task.error_message && !task.found_location && task.generated_content && <span>Сгенерировано</span>}
+                            {!task.error_message && !task.found_location && task.generated_content && <span>Вставлено (ген. текст)</span>}
                             {!task.error_message && !task.found_location && !task.generated_content && <span>—</span>}
+                          </td>
+                          <td className="py-2 pr-4">
+                            <Link href={{ pathname: `/links/${task.id}` }} className="text-indigo-600 hover:underline">
+                              Открыть
+                            </Link>
                           </td>
                         </tr>
                       ))}
@@ -844,21 +851,16 @@ export default function DomainPage() {
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       {steps.map((step) => (
-                        <span
+                        <Badge
                           key={step.id}
-                          className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold ${
-                            reached.has(step.id)
-                              ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200"
-                              : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"
-                          }`}
-                        >
-                          {reached.has(step.id) ? <FiCheck /> : <FiClock />} {step.label}
-                        </span>
+                          label={step.label}
+                          tone={reached.has(step.id) ? "emerald" : "slate"}
+                          icon={reached.has(step.id) ? <FiCheck /> : <FiClock />}
+                          className="text-xs"
+                        />
                       ))}
                       {task.status === "failed" && (
-                        <span className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-200">
-                          <FiAlertTriangle /> Ошибка
-                        </span>
+                        <Badge label="Ошибка" tone="red" icon={<FiAlertTriangle />} className="text-xs" />
                       )}
                     </div>
                     {task.error_message && (
@@ -1065,39 +1067,31 @@ export default function DomainPage() {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, { text: string; color: string; icon: React.ReactNode }> = {
-    pending: { text: "В очереди", color: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200", icon: <FiClock /> },
-    processing: { text: "В работе", color: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200", icon: <FiPlay /> },
-    pause_requested: { text: "Пауза запрошена", color: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-200", icon: <FiPause /> },
-    paused: { text: "Приостановлено", color: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200", icon: <FiPause /> },
-    cancelling: { text: "Отмена...", color: "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-200", icon: <FiX /> },
-    cancelled: { text: "Отменено", color: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-200", icon: <FiX /> },
-    success: { text: "Готово", color: "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-200", icon: <FiCheck /> },
-    error: { text: "Ошибка", color: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-200", icon: <FiAlertTriangle /> },
+  const map: Record<string, { text: string; tone: "amber" | "yellow" | "slate" | "orange" | "red" | "green"; icon: ReactNode }> = {
+    pending: { text: "В очереди", tone: "amber", icon: <FiClock /> },
+    processing: { text: "В работе", tone: "amber", icon: <FiPlay /> },
+    pause_requested: { text: "Пауза запрошена", tone: "yellow", icon: <FiPause /> },
+    paused: { text: "Приостановлено", tone: "slate", icon: <FiPause /> },
+    cancelling: { text: "Отмена...", tone: "orange", icon: <FiX /> },
+    cancelled: { text: "Отменено", tone: "red", icon: <FiX /> },
+    success: { text: "Готово", tone: "green", icon: <FiCheck /> },
+    error: { text: "Ошибка", tone: "red", icon: <FiAlertTriangle /> },
   };
-  const cfg = map[status] || { text: status, color: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200", icon: <FiClock /> };
-  return (
-    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold ${cfg.color}`}>
-      {cfg.icon} {cfg.text}
-    </span>
-  );
+  const cfg = map[status] || { text: status, tone: "slate" as const, icon: <FiClock /> };
+  return <Badge label={cfg.text} tone={cfg.tone} icon={cfg.icon} className="text-xs" />;
 }
 
 function LinkTaskStatusBadge({ status }: { status: string }) {
-  const map: Record<string, { text: string; color: string; icon: React.ReactNode }> = {
-    pending: { text: "Ожидает", color: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200", icon: <FiClock /> },
-    searching: { text: "Поиск", color: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-200", icon: <FiRefreshCw /> },
-    removing: { text: "Удаление", color: "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-200", icon: <FiRefreshCw /> },
-    found: { text: "Найдено", color: "bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-200", icon: <FiCheck /> },
-    inserted: { text: "Вставлено", color: "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-200", icon: <FiCheck /> },
-    generated: { text: "Сгенерировано", color: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-200", icon: <FiCheck /> },
-    removed: { text: "Удалено", color: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200", icon: <FiCheck /> },
-    failed: { text: "Ошибка", color: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-200", icon: <FiAlertTriangle /> }
+  const map: Record<string, { text: string; tone: "amber" | "blue" | "orange" | "sky" | "green" | "yellow" | "slate" | "red"; icon: ReactNode }> = {
+    pending: { text: "Ожидает", tone: "amber", icon: <FiClock /> },
+    searching: { text: "Поиск", tone: "blue", icon: <FiRefreshCw /> },
+    removing: { text: "Удаление", tone: "orange", icon: <FiRefreshCw /> },
+    found: { text: "Найдено", tone: "sky", icon: <FiCheck /> },
+    inserted: { text: "Вставлено", tone: "green", icon: <FiCheck /> },
+    generated: { text: "Вставлено (ген. текст)", tone: "yellow", icon: <FiCheck /> },
+    removed: { text: "Удалено", tone: "slate", icon: <FiCheck /> },
+    failed: { text: "Ошибка", tone: "red", icon: <FiAlertTriangle /> },
   };
-  const cfg = map[status] || { text: status, color: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200", icon: <FiClock /> };
-  return (
-    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold ${cfg.color}`}>
-      {cfg.icon} {cfg.text}
-    </span>
-  );
+  const cfg = map[status] || { text: status, tone: "slate" as const, icon: <FiClock /> };
+  return <Badge label={cfg.text} tone={cfg.tone} icon={cfg.icon} className="text-xs" />;
 }

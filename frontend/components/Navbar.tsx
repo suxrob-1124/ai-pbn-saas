@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
-import { FiLogIn, FiUser, FiMoon, FiSun, FiUserPlus, FiGrid, FiShield } from "react-icons/fi";
+import { FiLogIn, FiUser, FiMoon, FiSun, FiUserPlus, FiGrid, FiShield, FiClock } from "react-icons/fi";
 import { useTheme } from "../lib/useTheme";
 import { apiBase, post } from "../lib/http";
 
@@ -60,9 +60,9 @@ export function Navbar() {
           Документация
         </Link>
         <Link
-          href="/docs/api"
+          href="/queue"
           className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100">
-          API
+          <FiClock /> Очередь
         </Link>
         {user.email ? (
           <>

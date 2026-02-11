@@ -17,10 +17,35 @@ const encodeQueueItemId = (itemId: string) => {
   return encodeURIComponent(trimmed);
 };
 
+type QueueListParams = {
+  limit?: number;
+  page?: number;
+  search?: string;
+};
+
+const buildQueueParams = (params?: QueueListParams) => {
+  if (!params) {
+    return "";
+  }
+  const query = new URLSearchParams();
+  if (typeof params.limit === "number") {
+    query.set("limit", String(params.limit));
+  }
+  if (typeof params.page === "number") {
+    query.set("page", String(params.page));
+  }
+  if (params.search && params.search.trim()) {
+    query.set("search", params.search.trim());
+  }
+  const qs = query.toString();
+  return qs ? `?${qs}` : "";
+};
+
 /** Получить очередь генераций проекта. */
-export async function listQueue(projectId: string): Promise<QueueItemDTO[]> {
+export async function listQueue(projectId: string, params?: QueueListParams): Promise<QueueItemDTO[]> {
   const encoded = encodeProjectId(projectId);
-  return authFetch<QueueItemDTO[]>(`/api/projects/${encoded}/queue`);
+  const query = buildQueueParams(params);
+  return authFetch<QueueItemDTO[]>(`/api/projects/${encoded}/queue${query}`);
 }
 
 /** Очистить устаревшие элементы очереди. */
