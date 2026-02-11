@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hibiken/asynq"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/robfig/cron/v3"
@@ -892,11 +893,17 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 	refresh := getRefreshFromCookie(r)
 	if refresh == "" {
+		if s.logger != nil {
+			s.logger.Warnw("refresh failed: missing refresh cookie", "ip", clientIP(r))
+		}
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	tokens, err := s.svc.Refresh(r.Context(), refresh)
 	if err != nil {
+		if s.logger != nil {
+			s.logger.Warnw("refresh failed", "ip", clientIP(r), "err", err)
+		}
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -1701,7 +1708,8 @@ func (s *Server) handleDomainGenerate(w http.ResponseWriter, r *http.Request, do
 		return
 	}
 	task := tasks.NewGenerateTask(genID, domainID, forceStep)
-	if _, err := s.tasks.Enqueue(r.Context(), task); err != nil {
+	queue := s.genQueueForProject(d.ProjectID)
+	if _, err := s.tasks.Enqueue(r.Context(), task, asynq.Queue(queue)); err != nil {
 		if s.logger != nil {
 			s.logger.Warnf("failed to enqueue generation: %v", err)
 		}
@@ -2465,6 +2473,10 @@ func (s *Server) handleGenerations(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func (s *Server) genQueueForProject(projectID string) string {
+	return tasks.QueueForProject(projectID, s.cfg.GenQueueShards)
+}
+
 func (s *Server) handleGenerationByID(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/generations/")
 	if id == "" {
@@ -2617,7 +2629,13 @@ func (s *Server) handleGenerationAction(w http.ResponseWriter, r *http.Request, 
 		// Перезапускаем задачу через очередь (если есть enqueuer)
 		if s.tasks != nil {
 			task := tasks.NewGenerateTask(id, gen.DomainID, "")
-			if _, err := s.tasks.Enqueue(r.Context(), task); err != nil {
+			queue := "default"
+			if s.domains != nil {
+				if d, err := s.domains.Get(r.Context(), gen.DomainID); err == nil {
+					queue = s.genQueueForProject(d.ProjectID)
+				}
+			}
+			if _, err := s.tasks.Enqueue(r.Context(), task, asynq.Queue(queue)); err != nil {
 				if s.logger != nil {
 					s.logger.Warnf("failed to enqueue resumed generation: %v", err)
 				}

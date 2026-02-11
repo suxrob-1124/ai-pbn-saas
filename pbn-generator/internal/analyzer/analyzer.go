@@ -135,7 +135,10 @@ func fetchSerp(ctx context.Context, keyword, country, lang string, limit int) ([
 		client := &http.Client{Timeout: timeout}
 		resp, err := client.Do(req)
 		if err != nil {
-			lastErr = err
+			lastErr = fmt.Errorf("serp request failed for keyword %q: %v", keyword, err)
+			if ue, ok := err.(*url.Error); ok && ue.Err != nil {
+				lastErr = fmt.Errorf("serp request failed for keyword %q: %v", keyword, ue.Err)
+			}
 			if isTimeoutErr(err) && attempt < retries {
 				backoff := time.Duration(2*(attempt+1)) * time.Second
 				select {
@@ -145,11 +148,11 @@ func fetchSerp(ctx context.Context, keyword, country, lang string, limit int) ([
 					return nil, nil, ctx.Err()
 				}
 			}
-			return nil, nil, err
+			return nil, nil, lastErr
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode >= 400 {
-			return nil, nil, fmt.Errorf("serp status %d", resp.StatusCode)
+			return nil, nil, fmt.Errorf("serp status %d for keyword %q", resp.StatusCode, keyword)
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
 			return nil, nil, err

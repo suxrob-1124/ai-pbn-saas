@@ -382,5 +382,58 @@ func isRetryableGenerationError(errMsg string) bool {
 	if strings.Contains(msg, "timeout") && strings.Contains(msg, "awaiting headers") {
 		return true
 	}
+	if strings.Contains(msg, "status 429") || strings.Contains(msg, "resource_exhausted") {
+		return true
+	}
+	if strings.Contains(msg, "unexpected eof") || strings.Contains(msg, "eof") {
+		return true
+	}
+	if strings.Contains(msg, "connection reset by peer") {
+		return true
+	}
+	if strings.Contains(msg, "connection refused") {
+		return true
+	}
+	if strings.Contains(msg, "tls handshake timeout") {
+		return true
+	}
+	if strings.Contains(msg, "i/o timeout") {
+		return true
+	}
+	if strings.Contains(msg, "server closed idle connection") {
+		return true
+	}
+	if code, ok := extractSerpStatusCode(msg); ok {
+		if code == 429 {
+			return true
+		}
+		if code >= 500 && code <= 599 {
+			return true
+		}
+		return false
+	}
 	return false
+}
+
+func extractSerpStatusCode(msg string) (int, bool) {
+	const prefix = "serp status "
+	idx := strings.Index(msg, prefix)
+	if idx == -1 {
+		return 0, false
+	}
+	rest := msg[idx+len(prefix):]
+	code := 0
+	i := 0
+	for i < len(rest) {
+		ch := rest[i]
+		if ch < '0' || ch > '9' {
+			break
+		}
+		code = code*10 + int(ch-'0')
+		i++
+	}
+	if i == 0 {
+		return 0, false
+	}
+	return code, true
 }

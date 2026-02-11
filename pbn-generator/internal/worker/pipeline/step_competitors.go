@@ -3,6 +3,9 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"os"
+	"strconv"
+	"strings"
 
 	"obzornik-pbn-generator/internal/llm"
 )
@@ -55,6 +58,15 @@ func (s *CompetitorAnalysisStep) Execute(ctx context.Context, state *PipelineSta
 		state.AppendLog("Предупреждение: contents_txt не найден")
 	}
 
+	analysisCSV, csvTruncated := truncateRunes(analysisCSV, envInt("COMPETITOR_ANALYSIS_MAX_CSV_CHARS", 120000))
+	if csvTruncated {
+		state.AppendLog("analysis_csv truncated to limit")
+	}
+	contentsTxt, contentsTruncated := truncateRunes(contentsTxt, envInt("COMPETITOR_ANALYSIS_MAX_CONTENT_CHARS", 200000))
+	if contentsTruncated {
+		state.AppendLog("contents_txt truncated to limit")
+	}
+
 	keyword := state.Domain.MainKeyword
 	country := state.Domain.TargetCountry
 	lang := state.Domain.TargetLanguage
@@ -86,9 +98,9 @@ func (s *CompetitorAnalysisStep) Execute(ctx context.Context, state *PipelineSta
 	analysisPrompt := llm.BuildPrompt(systemPrompt, "", variables)
 
 	// Логируем первые 500 символов промпта
-	promptPreview := analysisPrompt
-	if len(promptPreview) > 500 {
-		promptPreview = promptPreview[:500] + "..."
+	promptPreview, _ := truncateRunes(analysisPrompt, 500)
+	if len(promptPreview) < len(analysisPrompt) {
+		promptPreview += "..."
 	}
 	state.AppendLog(fmt.Sprintf("Промпт для анализа (первые 500 символов): %s", promptPreview))
 
@@ -101,9 +113,7 @@ func (s *CompetitorAnalysisStep) Execute(ctx context.Context, state *PipelineSta
 	// Выполняем запрос к LLM
 	llmAnalysis, err := state.LLMClient.Generate(ctx, "competitor_analysis", analysisPrompt, modelToUse)
 	if err != nil {
-		state.AppendLog(fmt.Sprintf("LLM анализ конкурентов failed: %v", err))
-		// Не прерываем процесс, возвращаем пустой результат
-		return make(map[string]any), nil
+		return nil, fmt.Errorf("LLM анализ конкурентов failed: %w", err)
 	}
 
 	state.AppendLog("LLM анализ конкурентов завершен")
@@ -122,4 +132,26 @@ func (s *CompetitorAnalysisStep) Execute(ctx context.Context, state *PipelineSta
 	}
 
 	return artifacts, nil
+}
+
+func envInt(key string, fallback int) int {
+	val := strings.TrimSpace(os.Getenv(key))
+	if val == "" {
+		return fallback
+	}
+	if n, err := strconv.Atoi(val); err == nil && n > 0 {
+		return n
+	}
+	return fallback
+}
+
+func truncateRunes(s string, max int) (string, bool) {
+	if max <= 0 || s == "" {
+		return s, false
+	}
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s, false
+	}
+	return string(runes[:max]), true
 }

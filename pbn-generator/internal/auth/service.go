@@ -495,17 +495,29 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (TokenPair, 
 		return s.jwtSecret, nil
 	})
 	if err != nil || claims.ID == "" || claims.Subject == "" {
+		if s.logger != nil {
+			s.logger.Warnw("refresh invalid token", "err", err, "has_jti", claims.ID != "", "has_sub", claims.Subject != "")
+		}
 		return TokenPair{}, ErrInvalidCredentials
 	}
 	if !containsAudience(claims, "refresh") {
+		if s.logger != nil {
+			s.logger.Warnw("refresh invalid audience", "jti", claims.ID, "sub", claims.Subject)
+		}
 		return TokenPair{}, ErrInvalidCredentials
 	}
 	if claims.ExpiresAt == nil || time.Now().After(claims.ExpiresAt.Time) {
+		if s.logger != nil {
+			s.logger.Warnw("refresh token expired", "jti", claims.ID, "sub", claims.Subject)
+		}
 		return TokenPair{}, ErrInvalidCredentials
 	}
 
 	sess, err := s.sessions.Get(ctx, claims.ID)
 	if err != nil || sess.Email != claims.Subject {
+		if s.logger != nil {
+			s.logger.Warnw("refresh session not found or email mismatch", "jti", claims.ID, "sub", claims.Subject, "err", err)
+		}
 		return TokenPair{}, ErrInvalidCredentials
 	}
 

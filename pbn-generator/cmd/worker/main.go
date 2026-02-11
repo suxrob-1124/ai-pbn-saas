@@ -41,7 +41,7 @@ func main() {
 	linkTaskStore := sqlstore.NewLinkTaskStore(dbConn)
 	auditStore := sqlstore.NewAuditStore(dbConn)
 
-	server := tasks.NewServer(cfg, 4)
+	server := tasks.NewServer(cfg, 4, true, true)
 	mux := asynq.NewServeMux()
 	mux.HandleFunc(tasks.TaskGenerate, func(ctx context.Context, t *asynq.Task) error {
 		payload, err := tasks.ParseGeneratePayload(t)

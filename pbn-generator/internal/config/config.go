@@ -72,6 +72,8 @@ type Config struct {
 	ArtifactRetentionDays    int // Количество дней хранения артефактов (по умолчанию 30)
 	BootstrapAdminEmail      string
 	AutoApproveUsers         bool
+	GenQueueShards           int
+	LinkQueueShards          int
 }
 
 func Load() Config {
@@ -139,6 +141,8 @@ func Load() Config {
 		ArtifactRetentionDays:    envInt("ARTIFACT_RETENTION_DAYS", 30),
 		BootstrapAdminEmail:      env("BOOTSTRAP_ADMIN_EMAIL", ""),
 		AutoApproveUsers:         envBool("AUTO_APPROVE_USERS", false),
+		GenQueueShards:           envInt("GEN_QUEUE_SHARDS", 8),
+		LinkQueueShards:          envInt("LINK_QUEUE_SHARDS", envInt("GEN_QUEUE_SHARDS", 8)),
 	}
 }
 

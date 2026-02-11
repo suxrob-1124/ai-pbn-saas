@@ -68,10 +68,10 @@ func main() {
 		}
 	}()
 
-	server := tasks.NewServer(cfg, 1)
+	server := tasks.NewServer(cfg, 1, false, false)
 	mux := asynq.NewServeMux()
 	mux.HandleFunc(tasks.TaskSchedulerTick, func(ctx context.Context, t *asynq.Task) error {
-		return runSchedulerTick(ctx, scheduleStore, linkScheduleStore, genQueueStore, linkTaskStore, domainStore, genStore, projectStore, taskClient, sugar)
+		return runSchedulerTick(ctx, scheduleStore, linkScheduleStore, genQueueStore, linkTaskStore, domainStore, genStore, projectStore, taskClient, cfg.GenQueueShards, cfg.LinkQueueShards, sugar)
 	})
 
 	sugar.Infof("starting scheduler on redis %s", cfg.RedisAddr)
@@ -127,21 +127,29 @@ func runSchedulerTick(
 	genStore GenerationStore,
 	projectStore ProjectStore,
 	taskClient tasks.Enqueuer,
+	genQueueShards int,
+	linkQueueShards int,
 	logger *zap.SugaredLogger,
 ) error {
+	if genQueueShards <= 0 {
+		genQueueShards = 1
+	}
+	if linkQueueShards <= 0 {
+		linkQueueShards = 1
+	}
 	if err := applySchedules(ctx, scheduleStore, genQueueStore, domainStore, logger); err != nil {
 		return err
 	}
 	if err := applyLinkSchedules(ctx, linkScheduleStore, linkTaskStore, domainStore, logger); err != nil {
 		return err
 	}
-	if err := processPendingQueue(ctx, scheduleStore, genQueueStore, domainStore, genStore, projectStore, taskClient, logger); err != nil {
+	if err := processPendingQueue(ctx, scheduleStore, genQueueStore, domainStore, genStore, projectStore, taskClient, genQueueShards, logger); err != nil {
 		return err
 	}
-	if err := processRetryableGenerations(ctx, genStore, taskClient, logger); err != nil {
+	if err := processRetryableGenerations(ctx, genStore, domainStore, taskClient, genQueueShards, logger); err != nil {
 		return err
 	}
-	if err := processPendingLinkTasks(ctx, linkTaskStore, taskClient, logger); err != nil {
+	if err := processPendingLinkTasks(ctx, linkTaskStore, domainStore, taskClient, linkQueueShards, logger); err != nil {
 		return err
 	}
 	return nil
@@ -338,6 +346,7 @@ func processPendingQueue(
 	genStore GenerationStore,
 	projectStore ProjectStore,
 	taskClient tasks.Enqueuer,
+	genQueueShards int,
 	logger *zap.SugaredLogger,
 ) error {
 	now := time.Now().UTC()
@@ -351,7 +360,7 @@ func processPendingQueue(
 		}
 
 		for _, item := range items {
-			if err := processQueueItem(ctx, scheduleStore, genQueueStore, domainStore, genStore, projectStore, taskClient, item, logger, now); err != nil {
+			if err := processQueueItem(ctx, scheduleStore, genQueueStore, domainStore, genStore, projectStore, taskClient, genQueueShards, item, logger, now); err != nil {
 				logger.Warnf("queue item %s failed: %v", item.ID, err)
 			}
 		}
@@ -366,6 +375,7 @@ func processQueueItem(
 	genStore GenerationStore,
 	projectStore ProjectStore,
 	taskClient tasks.Enqueuer,
+	genQueueShards int,
 	item sqlstore.QueueItem,
 	logger *zap.SugaredLogger,
 	now time.Time,
@@ -432,7 +442,8 @@ func processQueueItem(
 	_ = domainStore.UpdateStatus(ctx, domain.ID, "processing")
 
 	task := tasks.NewGenerateTask(genID, domain.ID, "")
-	if _, err := taskClient.Enqueue(ctx, task); err != nil {
+	queue := tasks.QueueForProject(domain.ProjectID, genQueueShards)
+	if _, err := taskClient.Enqueue(ctx, task, asynq.Queue(queue)); err != nil {
 		errMsg := fmt.Sprintf("enqueue failed: %v", err)
 		_ = genStore.UpdateStatus(ctx, genID, "error", 0, &errMsg)
 		_ = domainStore.UpdateStatus(ctx, domain.ID, "waiting")
@@ -465,7 +476,9 @@ func isDomainWaiting(d sqlstore.Domain) bool {
 func processRetryableGenerations(
 	ctx context.Context,
 	genStore GenerationStore,
+	domainStore DomainStore,
 	taskClient tasks.Enqueuer,
+	genQueueShards int,
 	logger *zap.SugaredLogger,
 ) error {
 	now := time.Now().UTC()
@@ -485,7 +498,13 @@ func processRetryableGenerations(
 				continue
 			}
 			task := tasks.NewGenerateTask(gen.ID, gen.DomainID, "")
-			if _, err := taskClient.Enqueue(ctx, task); err != nil {
+			queue := "default"
+			if domainStore != nil {
+				if d, err := domainStore.Get(ctx, gen.DomainID); err == nil {
+					queue = tasks.QueueForProject(d.ProjectID, genQueueShards)
+				}
+			}
+			if _, err := taskClient.Enqueue(ctx, task, asynq.Queue(queue)); err != nil {
 				if logger != nil {
 					logger.Warnf("failed to enqueue retry for %s: %v", gen.ID, err)
 				}
@@ -818,7 +837,14 @@ func listActiveLinkTasksByProject(ctx context.Context, linkTaskStore LinkTaskSto
 	return res, nil
 }
 
-func processPendingLinkTasks(ctx context.Context, linkTaskStore LinkTaskStore, taskClient tasks.Enqueuer, logger *zap.SugaredLogger) error {
+func processPendingLinkTasks(
+	ctx context.Context,
+	linkTaskStore LinkTaskStore,
+	domainStore DomainStore,
+	taskClient tasks.Enqueuer,
+	linkQueueShards int,
+	logger *zap.SugaredLogger,
+) error {
 	if linkTaskStore == nil {
 		return fmt.Errorf("link task store is nil")
 	}
@@ -835,7 +861,13 @@ func processPendingLinkTasks(ctx context.Context, linkTaskStore LinkTaskStore, t
 
 	for _, item := range items {
 		task := tasks.NewLinkTaskTask(item.ID)
-		if _, err := taskClient.Enqueue(ctx, task); err != nil {
+		queue := "default"
+		if domainStore != nil {
+			if d, err := domainStore.Get(ctx, item.DomainID); err == nil {
+				queue = tasks.QueueForLinkProject(d.ProjectID, linkQueueShards)
+			}
+		}
+		if _, err := taskClient.Enqueue(ctx, task, asynq.Queue(queue)); err != nil {
 			errMsg := fmt.Sprintf("enqueue failed: %v", err)
 			updateErr := linkTaskStore.Update(ctx, item.ID, sqlstore.LinkTaskUpdates{
 				ErrorMessage: &sql.NullString{String: errMsg, Valid: true},

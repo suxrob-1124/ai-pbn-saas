@@ -47,3 +47,6 @@ node_modules
 
 
 8n8-projects-example
+
+# Generated seed file
+pbn-generator/init/seed.sql

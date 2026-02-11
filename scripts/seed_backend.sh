@@ -34,6 +34,7 @@ TMP_DIR="${TMP_DIR:-/tmp}"
 ADMIN_COOKIE="${TMP_DIR}/obz_seed_admin.cookie"
 MANAGER_COOKIE="${TMP_DIR}/obz_seed_manager.cookie"
 MANAGER2_COOKIE="${TMP_DIR}/obz_seed_manager2.cookie"
+ENV_FILE="${ENV_FILE:-${WORK_DIR}/../.env}"
 
 log() {
   echo "[seed] $*"
@@ -79,6 +80,30 @@ get_status() {
 
 get_body() {
   echo "${1%$'\n'*}"
+}
+
+load_gemini_key() {
+  if [[ -n "${GEMINI_API_KEY:-}" ]]; then
+    return 0
+  fi
+  if [[ ! -f "$ENV_FILE" ]]; then
+    return 0
+  fi
+  local line value
+  line="$(grep -E '^[[:space:]]*GEMINI_API_KEY=' "$ENV_FILE" | tail -n 1 || true)"
+  if [[ -z "$line" ]]; then
+    return 0
+  fi
+  value="${line#*=}"
+  value="${value%$'\r'}"
+  if [[ "$value" == \"*\" && "$value" == *\" ]]; then
+    value="${value:1:${#value}-2}"
+  elif [[ "$value" == \'*\' && "$value" == *\' ]]; then
+    value="${value:1:${#value}-2}"
+  fi
+  if [[ -n "$value" ]]; then
+    GEMINI_API_KEY="$value"
+  fi
 }
 
 ensure_login() {
@@ -127,6 +152,21 @@ ensure_login() {
 
   log "login failed for ${email}: $(get_body "$resp")"
   return 1
+}
+
+save_api_key() {
+  local cookie="$1"
+  if [[ -z "${GEMINI_API_KEY:-}" ]]; then
+    return 0
+  fi
+  local payload
+  payload=$(printf '{"apiKey":"%s"}' "$GEMINI_API_KEY")
+  local resp
+  resp=$(request POST "/api/profile/api-key" "$payload" "" "$cookie")
+  if [[ "$(get_status "$resp")" != "200" ]]; then
+    log "api key save failed: $(get_body "$resp")"
+    return 1
+  fi
 }
 
 approve_user() {
@@ -233,6 +273,8 @@ main() {
   log "ensure admin user"
   ensure_login "$ADMIN_EMAIL" "$ADMIN_PASSWORD" "$ADMIN_COOKIE"
 
+  load_gemini_key
+
   log "ensure manager users"
   ensure_login "$MANAGER_EMAIL" "$MANAGER_PASSWORD" "$MANAGER_COOKIE"
   ensure_login "$MANAGER2_EMAIL" "$MANAGER2_PASSWORD" "$MANAGER2_COOKIE"
@@ -243,6 +285,16 @@ main() {
   approve_user "$MANAGER_EMAIL" "manager"
   approve_user "$MANAGER2_EMAIL" "manager"
   approve_user "$USER_EMAIL" "manager"
+
+  if [[ -n "${GEMINI_API_KEY:-}" ]]; then
+    log "save Gemini API key for users"
+    save_api_key "$ADMIN_COOKIE"
+    save_api_key "$MANAGER_COOKIE"
+    save_api_key "$MANAGER2_COOKIE"
+    save_api_key "${TMP_DIR}/obz_seed_user.cookie"
+  else
+    log "GEMINI_API_KEY is empty, skipping api key setup"
+  fi
 
   log "create projects"
   local surstrem_id

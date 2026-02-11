@@ -129,7 +129,18 @@ func TestProcessPendingLinkTasksEnqueue(t *testing.T) {
 	}
 	enq := &stubEnqueuer{}
 
-	if err := processPendingLinkTasks(context.Background(), store, enq, nil); err != nil {
+	domainStore := &stubDomainStore{
+		byProject: map[string][]sqlstore.Domain{
+			"project-1": {
+				{ID: "domain-a", ProjectID: "project-1"},
+				{ID: "domain-b", ProjectID: "project-1"},
+			},
+		},
+	}
+	store.tasks["task-1"] = sqlstore.LinkTask{ID: "task-1", Status: "pending", ScheduledFor: now, DomainID: "domain-a"}
+	store.tasks["task-2"] = sqlstore.LinkTask{ID: "task-2", Status: "pending", ScheduledFor: now, DomainID: "domain-b"}
+
+	if err := processPendingLinkTasks(context.Background(), store, domainStore, enq, 4, nil); err != nil {
 		t.Fatalf("process pending: %v", err)
 	}
 
@@ -153,7 +164,16 @@ func TestProcessPendingLinkTasksEnqueueError(t *testing.T) {
 	}
 	enq := &stubEnqueuer{errFor: map[string]error{"task-1": errors.New("boom")}}
 
-	if err := processPendingLinkTasks(context.Background(), store, enq, nil); err != nil {
+	domainStore := &stubDomainStore{
+		byProject: map[string][]sqlstore.Domain{
+			"project-1": {
+				{ID: "domain-a", ProjectID: "project-1"},
+			},
+		},
+	}
+	store.tasks["task-1"] = sqlstore.LinkTask{ID: "task-1", Status: "pending", ScheduledFor: now, DomainID: "domain-a"}
+
+	if err := processPendingLinkTasks(context.Background(), store, domainStore, enq, 4, nil); err != nil {
 		t.Fatalf("process pending: %v", err)
 	}
 
@@ -170,7 +190,7 @@ func TestProcessPendingLinkTasksListError(t *testing.T) {
 	store := &stubLinkTaskStore{listErr: errors.New("list failed")}
 	enq := &stubEnqueuer{}
 
-	if err := processPendingLinkTasks(context.Background(), store, enq, nil); err == nil {
+	if err := processPendingLinkTasks(context.Background(), store, nil, enq, 4, nil); err == nil {
 		t.Fatalf("expected error")
 	}
 }

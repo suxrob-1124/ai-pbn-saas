@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
+	"strings"
 
 	"github.com/hibiken/asynq"
 
@@ -14,6 +16,12 @@ const (
 	TaskGenerate      = "generate:domain"
 	TaskSchedulerTick = "scheduler:tick"
 	TaskProcessLink   = "link:process"
+)
+
+const (
+	genQueuePrefix  = "gen"
+	linkQueuePrefix = "link"
+	defaultQueue    = "default"
 )
 
 type GeneratePayload struct {
@@ -67,7 +75,28 @@ func NewClient(cfg config.Config) (*Client, error) {
 	return &Client{Client: asynq.NewClient(redisCfg)}, nil
 }
 
-func NewServer(cfg config.Config, concurrency int) *asynq.Server {
+func NewServer(cfg config.Config, concurrency int, includeGenQueues bool, includeLinkQueues bool) *asynq.Server {
+	genShards := cfg.GenQueueShards
+	if genShards < 1 {
+		genShards = 1
+	}
+	linkShards := cfg.LinkQueueShards
+	if linkShards < 1 {
+		linkShards = 1
+	}
+	queues := map[string]int{
+		defaultQueue: 1,
+	}
+	if includeGenQueues && genShards > 1 {
+		for i := 0; i < genShards; i++ {
+			queues[GenerationQueueName(i)] = 1
+		}
+	}
+	if includeLinkQueues && linkShards > 1 {
+		for i := 0; i < linkShards; i++ {
+			queues[LinkQueueName(i)] = 1
+		}
+	}
 	return asynq.NewServer(
 		asynq.RedisClientOpt{
 			Addr:     cfg.RedisAddr,
@@ -76,11 +105,42 @@ func NewServer(cfg config.Config, concurrency int) *asynq.Server {
 		},
 		asynq.Config{
 			Concurrency: concurrency,
-			Queues: map[string]int{
-				"default": 1,
-			},
+			Queues:      queues,
 		},
 	)
+}
+
+// GenerationQueueName возвращает имя очереди генерации по индексу.
+func GenerationQueueName(idx int) string {
+	return fmt.Sprintf("%s:%d", genQueuePrefix, idx)
+}
+
+// LinkQueueName возвращает имя очереди линкбилдинга по индексу.
+func LinkQueueName(idx int) string {
+	return fmt.Sprintf("%s:%d", linkQueuePrefix, idx)
+}
+
+// QueueForProject распределяет проекты по очередям генерации для более справедливой параллельности.
+func QueueForProject(projectID string, shards int) string {
+	return queueForProject(projectID, shards, genQueuePrefix)
+}
+
+// QueueForLinkProject распределяет link-задачи по очередям для более справедливой параллельности.
+func QueueForLinkProject(projectID string, shards int) string {
+	return queueForProject(projectID, shards, linkQueuePrefix)
+}
+
+func queueForProject(projectID string, shards int, prefix string) string {
+	if shards <= 1 || strings.TrimSpace(projectID) == "" {
+		return defaultQueue
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(projectID))
+	idx := int(h.Sum32() % uint32(shards))
+	if prefix == linkQueuePrefix {
+		return LinkQueueName(idx)
+	}
+	return GenerationQueueName(idx)
 }
 
 func ParseGeneratePayload(task *asynq.Task) (GeneratePayload, error) {

@@ -130,11 +130,7 @@ services:
     volumes:
       - .:/work
     command: >
-      psql
-      -h db
-      -U ${POSTGRES_USER}
-      -d ${POSTGRES_DB}
-      -f /work/pbn-generator/init/seed.sql
+      /bin/sh -c "apk add --no-cache bash && /work/pbn-generator/scripts/build_seed.sh && psql -h db -U ${POSTGRES_USER} -d ${POSTGRES_DB} -f /work/pbn-generator/init/seed.sql"
     restart: "no"
 
   seed_backend:
