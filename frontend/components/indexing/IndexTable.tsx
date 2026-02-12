@@ -70,11 +70,11 @@ export function IndexTable({
               <SortableTh label="Домен" sort={sort} sortKey="domain" onSort={handleSort} />
               <SortableTh label="Дата" sort={sort} sortKey="check_date" onSort={handleSort} />
               <SortableTh label="Статус" sort={sort} sortKey="status" onSort={handleSort} />
-              <SortableTh label="Attempts" sort={sort} sortKey="attempts" onSort={handleSort} />
-              <SortableTh label="Indexed" sort={sort} sortKey="is_indexed" onSort={handleSort} />
-              <SortableTh label="Last attempt" sort={sort} sortKey="last_attempt_at" onSort={handleSort} />
-              <SortableTh label="Next retry" sort={sort} sortKey="next_retry_at" onSort={handleSort} />
-              <th className="text-left py-2 pr-3">Actions</th>
+              <SortableTh label="Попытки" sort={sort} sortKey="attempts" onSort={handleSort} />
+              <SortableTh label="В индексе" sort={sort} sortKey="is_indexed" onSort={handleSort} />
+              <SortableTh label="Последняя попытка" sort={sort} sortKey="last_attempt_at" onSort={handleSort} />
+              <SortableTh label="Следующий ретрай" sort={sort} sortKey="next_retry_at" onSort={handleSort} />
+              <th className="text-left py-2 pr-3">Действия</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
@@ -101,7 +101,7 @@ export function IndexTable({
                     <tr className="align-top">
                       <td className="py-2 pr-3">
                         <Link href={`/domains/${check.domain_id}`} className="text-indigo-600 hover:underline">
-                          {check.domain_url || check.domain_id}
+                          {check.domain_url || "Домен"}
                         </Link>
                         {check.error_message && (
                           <div className="mt-1 text-[11px] text-red-600" title={check.error_message}>
@@ -116,8 +116,8 @@ export function IndexTable({
                         {check.is_indexed === null || check.is_indexed === undefined
                           ? "—"
                           : check.is_indexed
-                            ? "true"
-                            : "false"}
+                            ? "Да"
+                            : "Нет"}
                       </td>
                       <td className="py-2 pr-3 whitespace-nowrap">{formatDateTime(check.last_attempt_at)}</td>
                       <td className="py-2 pr-3 whitespace-nowrap">{formatDateTime(check.next_retry_at)}</td>
@@ -129,7 +129,7 @@ export function IndexTable({
                               onClick={() => onRunNow(check.domain_id)}
                               className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                             >
-                              Run now
+                              Запустить
                             </button>
                           )}
                           <button

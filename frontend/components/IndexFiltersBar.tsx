@@ -48,8 +48,6 @@ export function IndexFiltersBar({
   onReset,
   onRefresh,
   onSearchChange,
-  domainOptions,
-  showDomain,
   disabled
 }: IndexFiltersBarProps) {
   const resolvedDefault = defaultValue ?? buildDefaultValue();
@@ -143,9 +141,9 @@ export function IndexFiltersBar({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         <div>
-          <label className="text-xs text-slate-500 dark:text-slate-400">Поиск (URL/ID)</label>
+          <label className="text-xs text-slate-500 dark:text-slate-400">Поиск (URL)</label>
           <input
             type="text"
             value={draft.search}
@@ -159,29 +157,6 @@ export function IndexFiltersBar({
             disabled={disabled}
           />
         </div>
-        {showDomain && (
-          <div>
-            <label className="text-xs text-slate-500 dark:text-slate-400">Домен</label>
-            <input
-              list="index-domain-options"
-              type="text"
-              value={draft.domainId}
-              onChange={(e) => setDraft((prev) => ({ ...prev, domainId: e.target.value }))}
-              placeholder="domain-123"
-              className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-800 dark:bg-slate-950"
-              disabled={disabled}
-            />
-            {domainOptions && domainOptions.length > 0 && (
-              <datalist id="index-domain-options">
-                {domainOptions.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.label || option.id}
-                  </option>
-                ))}
-              </datalist>
-            )}
-          </div>
-        )}
         <div className="flex items-end gap-2">
           <button
             type="button"

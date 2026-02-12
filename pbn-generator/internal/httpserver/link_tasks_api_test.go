@@ -149,3 +149,126 @@ func TestLinkTasksUpdateAndRetry(t *testing.T) {
 		t.Fatalf("expected scheduled_for updated, got %s", updated.ScheduledFor.Format(time.RFC3339))
 	}
 }
+
+func TestLinksListGlobalScope(t *testing.T) {
+	s := setupServer(t)
+	linkStore := s.linkTasks.(*stubLinkTaskStore)
+
+	now := time.Now().UTC()
+	linkStore.tasks["task-1"] = sqlstore.LinkTask{
+		ID:           "task-1",
+		DomainID:     "domain-1",
+		AnchorText:   "A",
+		TargetURL:    "https://example.com/a",
+		ScheduledFor: now,
+		Action:       "insert",
+		Status:       "pending",
+		CreatedBy:    "owner@example.com",
+		CreatedAt:    now,
+	}
+	linkStore.tasks["task-2"] = sqlstore.LinkTask{
+		ID:           "task-2",
+		DomainID:     "domain-2",
+		AnchorText:   "B",
+		TargetURL:    "https://example.com/b",
+		ScheduledFor: now,
+		Action:       "insert",
+		Status:       "pending",
+		CreatedBy:    "owner@example.com",
+		CreatedAt:    now,
+	}
+	linkStore.tasks["task-3"] = sqlstore.LinkTask{
+		ID:           "task-3",
+		DomainID:     "domain-3",
+		AnchorText:   "C",
+		TargetURL:    "https://example.com/c",
+		ScheduledFor: now,
+		Action:       "insert",
+		Status:       "pending",
+		CreatedBy:    "owner@example.com",
+		CreatedAt:    now,
+	}
+	linkStore.domainToProject["domain-1"] = "project-1"
+	linkStore.domainToProject["domain-2"] = "project-2"
+	linkStore.domainToProject["domain-3"] = "project-3"
+	linkStore.userProjects["manager@example.com"] = map[string]bool{
+		"project-1": true,
+		"project-2": true,
+	}
+
+	t.Run("non-admin gets only accessible projects", func(t *testing.T) {
+		ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+			Email:      "manager@example.com",
+			Role:       "manager",
+			IsApproved: true,
+		})
+		req := httptest.NewRequest(http.MethodGet, "/api/links", nil).WithContext(ctx)
+		rec := httptest.NewRecorder()
+
+		s.handleLinks(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var list []linkTaskDTO
+		if err := json.NewDecoder(rec.Body).Decode(&list); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if len(list) != 2 {
+			t.Fatalf("expected 2 tasks, got %d", len(list))
+		}
+		got := map[string]bool{}
+		for _, task := range list {
+			got[task.DomainID] = true
+		}
+		if !got["domain-1"] || !got["domain-2"] || got["domain-3"] {
+			t.Fatalf("unexpected domains in response: %#v", got)
+		}
+	})
+
+	t.Run("non-admin without access gets empty list", func(t *testing.T) {
+		ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+			Email:      "viewer@example.com",
+			Role:       "manager",
+			IsApproved: true,
+		})
+		req := httptest.NewRequest(http.MethodGet, "/api/links", nil).WithContext(ctx)
+		rec := httptest.NewRecorder()
+
+		s.handleLinks(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var list []linkTaskDTO
+		if err := json.NewDecoder(rec.Body).Decode(&list); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if len(list) != 0 {
+			t.Fatalf("expected 0 tasks, got %d", len(list))
+		}
+	})
+
+	t.Run("admin gets all tasks", func(t *testing.T) {
+		ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+			Email:      "admin@example.com",
+			Role:       "admin",
+			IsApproved: true,
+		})
+		req := httptest.NewRequest(http.MethodGet, "/api/links", nil).WithContext(ctx)
+		rec := httptest.NewRecorder()
+
+		s.handleLinks(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var list []linkTaskDTO
+		if err := json.NewDecoder(rec.Body).Decode(&list); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if len(list) != 3 {
+			t.Fatalf("expected 3 tasks, got %d", len(list))
+		}
+	})
+}

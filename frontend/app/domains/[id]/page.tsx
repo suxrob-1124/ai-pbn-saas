@@ -452,7 +452,7 @@ export default function DomainPage() {
               <>
                 <div className="mt-1 text-lg font-semibold">{domain.url}</div>
                 <div className="text-sm text-slate-500 dark:text-slate-400">
-                  Проект: {projectName || domain.project_id} · Статус: <StatusBadge status={domain.status} />
+                  Проект: {projectName || "—"} · Статус: <StatusBadge status={domain.status} />
                 </div>
                 <div className="text-sm text-slate-500 dark:text-slate-400 mt-1">Ключевое слово: {domain.main_keyword || "—"}</div>
                 <div className="text-xs text-slate-500 dark:text-slate-400">
@@ -743,7 +743,7 @@ export default function DomainPage() {
                   <table className="min-w-full text-sm">
                     <thead>
                       <tr className="text-left text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
-                        <th className="py-2 pr-4">ID</th>
+                        <th className="py-2 pr-4">№</th>
                         <th className="py-2 pr-4">Статус</th>
                         <th className="py-2 pr-4">Запланировано</th>
                         <th className="py-2 pr-4">Попытки</th>
@@ -752,9 +752,9 @@ export default function DomainPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                      {visibleLinkTasks.map((task) => (
+                      {visibleLinkTasks.map((task, idx) => (
                         <tr key={task.id}>
-                          <td className="py-2 pr-4 font-mono text-xs">{task.id.slice(0, 8)}</td>
+                          <td className="py-2 pr-4 text-xs text-slate-500 dark:text-slate-400">{idx + 1}</td>
                           <td className="py-2 pr-4">
                             <LinkTaskStatusBadge status={task.status} />
                           </td>
@@ -806,7 +806,7 @@ export default function DomainPage() {
             {linkTasks.length === 0 ? (
               <div className="text-sm text-slate-500 dark:text-slate-400">Нет задач для отображения.</div>
             ) : (
-              visibleLinkTasks.map((task) => {
+              visibleLinkTasks.map((task, idx) => {
                 const isRemove = (task.action || "insert") === "remove";
                 const steps = isRemove
                   ? [
@@ -838,9 +838,7 @@ export default function DomainPage() {
                 return (
                   <div key={task.id} className="rounded-lg border border-slate-200 dark:border-slate-800 p-3 bg-slate-50/60 dark:bg-slate-900/60 space-y-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="text-sm font-semibold">
-                        Задача {task.id.slice(0, 8)}
-                      </div>
+                      <div className="text-sm font-semibold">Задача №{idx + 1}</div>
                       <LinkTaskStatusBadge status={task.status} />
                     </div>
                     <div className="grid gap-2 md:grid-cols-2 text-xs text-slate-500 dark:text-slate-400">
@@ -945,7 +943,7 @@ export default function DomainPage() {
           <table className="min-w-full text-sm">
             <thead>
               <tr className="text-left text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
-                <th className="py-2 pr-4">ID</th>
+                <th className="py-2 pr-4">№</th>
                 <th className="py-2 pr-4">Статус</th>
                 <th className="py-2 pr-4">Прогресс</th>
                 <th className="py-2 pr-4">Обновлено</th>
@@ -953,11 +951,11 @@ export default function DomainPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-              {gens.slice(0, visibleGens).map((g) => {
+              {gens.slice(0, visibleGens).map((g, idx) => {
                 const rowProgress = computeDisplayProgress(g.artifacts, g.progress, g.status);
                 return (
                 <tr key={g.id}>
-                  <td className="py-3 pr-4 font-mono text-xs">{g.id.slice(0, 8)}</td>
+                  <td className="py-3 pr-4 text-xs text-slate-500 dark:text-slate-400">{idx + 1}</td>
                   <td className="py-3 pr-4">
                     <StatusBadge status={g.status} />
                   </td>
@@ -1050,7 +1048,7 @@ export default function DomainPage() {
             <div>
               <h3 className="font-semibold">Последний запуск</h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                ID: {gens[0].id} · Статус: <StatusBadge status={gens[0].status} /> · Прогресс: {latestDisplayProgress}%
+                Статус: <StatusBadge status={gens[0].status} /> · Прогресс: {latestDisplayProgress}%
               </p>
             </div>
             <Link href={`/queue/${gens[0].id}`} className="text-sm text-indigo-600 hover:underline">

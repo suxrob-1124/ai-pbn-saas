@@ -2622,12 +2622,14 @@ type stubLinkTaskStore struct {
 	mu              sync.Mutex
 	tasks           map[string]sqlstore.LinkTask
 	domainToProject map[string]string
+	userProjects    map[string]map[string]bool
 }
 
 func newStubLinkTaskStore() *stubLinkTaskStore {
 	return &stubLinkTaskStore{
 		tasks:           make(map[string]sqlstore.LinkTask),
 		domainToProject: make(map[string]string),
+		userProjects:    make(map[string]map[string]bool),
 	}
 }
 
@@ -2681,6 +2683,21 @@ func (s *stubLinkTaskStore) ListByProject(ctx context.Context, projectID string,
 	var res []sqlstore.LinkTask
 	for _, task := range s.tasks {
 		if s.domainToProject[task.DomainID] != projectID {
+			continue
+		}
+		res = append(res, task)
+	}
+	return filterLinkTasks(res, filters), nil
+}
+
+func (s *stubLinkTaskStore) ListByUser(ctx context.Context, email string, filters sqlstore.LinkTaskFilters) ([]sqlstore.LinkTask, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var res []sqlstore.LinkTask
+	projects := s.userProjects[email]
+	for _, task := range s.tasks {
+		projectID := s.domainToProject[task.DomainID]
+		if projectID == "" || !projects[projectID] {
 			continue
 		}
 		res = append(res, task)

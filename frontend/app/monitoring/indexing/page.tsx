@@ -9,7 +9,7 @@ import { IndexFiltersBar } from "../../../components/indexing/IndexFiltersBar";
 import { IndexStats, type PeriodKey } from "../../../components/indexing/IndexStats";
 import { IndexTable, type IndexCheckSort, type IndexCheckSortKey } from "../../../components/indexing/IndexTable";
 import { useAuthGuard } from "../../../lib/useAuth";
-import { invalidateAuthCache } from "../../../lib/http";
+import { authFetchCached, invalidateAuthCache } from "../../../lib/http";
 import { useDebouncedValue } from "../../../lib/useDebouncedValue";
 import {
   listAdmin,
@@ -68,6 +68,8 @@ function IndexingMonitoringContent() {
   const [totalChecks, setTotalChecks] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [projectName, setProjectName] = useState("");
+  const [domainLabel, setDomainLabel] = useState("");
   const [failedChecks, setFailedChecks] = useState<IndexCheckDTO[]>([]);
   const [failedTotal, setFailedTotal] = useState(0);
   const [failedLoading, setFailedLoading] = useState(false);
@@ -109,6 +111,61 @@ function IndexingMonitoringContent() {
   const domainScope = domainFilter.trim();
   const permissionDenied = !authLoading && !isAdmin && !projectId && !domainScope;
   const querySnapshot = searchParams.toString();
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!projectId) {
+      setProjectName("");
+      return;
+    }
+    setProjectName("");
+    authFetchCached<{ project?: { name?: string } }>(
+      `/api/projects/${projectId}/summary`,
+      undefined,
+      { ttlMs: 15000, key: `project-summary:${projectId}` }
+    )
+      .then((data) => {
+        if (!cancelled) {
+          setProjectName((data?.project?.name || "").trim());
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setProjectName("");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!domainScope) {
+      setDomainLabel("");
+      return;
+    }
+    setDomainLabel("");
+    authFetchCached<{ domain?: { url?: string } }>(
+      `/api/domains/${domainScope}/summary?gen_limit=1&link_limit=1`,
+      undefined,
+      { ttlMs: 15000, key: `domain-summary:${domainScope}` }
+    )
+      .then((data) => {
+        const label = (data?.domain?.url || "").trim();
+        if (!cancelled) {
+          setDomainLabel(label);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDomainLabel("");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [domainScope]);
 
   const sortParam = useMemo(() => sortToParam(sort), [sort]);
 
@@ -532,9 +589,13 @@ function IndexingMonitoringContent() {
             <h2 className="text-xl font-semibold">Мониторинг · Индексация</h2>
             <p className="text-sm text-slate-500 dark:text-slate-400">
             {domainScope
-                ? `Доменные проверки: ${domainScope}`
+                ? domainLabel
+                  ? `Доменные проверки: ${domainLabel}`
+                  : "Доменные проверки"
                 : projectId
-                  ? `Проектные проверки: ${projectId}`
+                  ? projectName
+                    ? `Проектные проверки: ${projectName}`
+                    : "Проектные проверки"
                   : "Глобальный список проверок"}
             </p>
           </div>

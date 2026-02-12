@@ -149,7 +149,7 @@ function QueuePageContent() {
       if (!term) {
         return true;
       }
-      const label = (i.domain_url || i.domain_id || "").toLowerCase();
+      const label = (i.domain_url || "").toLowerCase();
       return label.includes(term);
     });
   }, [filter, items, search]);
@@ -171,7 +171,7 @@ function QueuePageContent() {
       if (!term) {
         return true;
       }
-      const label = (linkDomains[task.domain_id] || task.domain_id || "").toLowerCase();
+      const label = (linkDomains[task.domain_id] || "").toLowerCase();
       return label.includes(term);
     });
   }, [linkFilter, linkTasks, linkSearch, linkDomains]);
@@ -196,9 +196,12 @@ function QueuePageContent() {
   const linkHasNext = linkTasks.length === linkPageSize;
   const visibleGenerations = filtered;
   const visibleLinks = filteredLinks;
+  const genIndexBase = (genPage - 1) * genPageSize;
+  const linkIndexBase = (linkPage - 1) * linkPageSize;
 
   const handleLinkRetry = async (task: LinkTaskDTO) => {
-    if (!confirm(`Повторить задачу ссылки: ${task.id}?`)) return;
+    const domainLabel = linkDomains[task.domain_id] || "домен";
+    if (!confirm(`Повторить задачу ссылки для домена ${domainLabel}?`)) return;
     setLinkLoading(true);
     setLinkError(null);
     try {
@@ -206,7 +209,7 @@ function QueuePageContent() {
       showToast({
         type: "success",
         title: "Повтор поставлен в очередь",
-        message: task.id
+        message: domainLabel
       });
       await loadLinks();
     } catch (err: any) {
@@ -219,7 +222,8 @@ function QueuePageContent() {
   };
 
   const handleLinkDelete = async (task: LinkTaskDTO) => {
-    if (!confirm(`Удалить задачу ссылки: ${task.id}?`)) return;
+    const domainLabel = linkDomains[task.domain_id] || "домен";
+    if (!confirm(`Удалить задачу ссылки для домена ${domainLabel}?`)) return;
     setLinkLoading(true);
     setLinkError(null);
     try {
@@ -227,7 +231,7 @@ function QueuePageContent() {
       showToast({
         type: "success",
         title: "Задача ссылки удалена",
-        message: task.id
+        message: domainLabel
       });
       await loadLinks();
     } catch (err: any) {
@@ -321,7 +325,7 @@ function QueuePageContent() {
           <table className="min-w-full text-sm">
             <thead>
               <tr className="text-left text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
-                <th className="py-2 pr-4">ID</th>
+                <th className="py-2 pr-4">№</th>
                 <th className="py-2 pr-4">Домен</th>
                 <th className="py-2 pr-4">Статус</th>
                 <th className="py-2 pr-4">Прогресс</th>
@@ -330,9 +334,11 @@ function QueuePageContent() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-              {visibleGenerations.map((g) => (
+                {visibleGenerations.map((g, idx) => (
                 <tr key={g.id}>
-                  <td className="py-3 pr-4 font-mono text-xs">{g.id.slice(0, 8)}</td>
+                  <td className="py-3 pr-4 text-xs text-slate-500 dark:text-slate-400">
+                    {genIndexBase + idx + 1}
+                  </td>
                   <td className="py-3 pr-4">
                     {g.domain_url ? (
                       <Link href={{ pathname: `/domains/${g.domain_id}` }} className="text-indigo-600 hover:underline">
@@ -422,7 +428,7 @@ function QueuePageContent() {
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="text-left text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
-                  <th className="py-2 pr-4">ID</th>
+                  <th className="py-2 pr-4">№</th>
                   <th className="py-2 pr-4">Домен</th>
                   <th className="py-2 pr-4">Действие</th>
                   <th className="py-2 pr-4">Запланировано</th>
@@ -433,14 +439,16 @@ function QueuePageContent() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                {visibleLinks.map((task) => {
+                {visibleLinks.map((task, idx) => {
                   const actionLabel = (task.action || "insert") === "remove" ? "Удаление" : "Вставка";
                   const lastLog = task.log_lines?.length ? task.log_lines[task.log_lines.length - 1] : "";
                   const eventText = task.error_message || lastLog || "—";
-                  const domainLabel = linkDomains[task.domain_id] || task.domain_id;
+                  const domainLabel = linkDomains[task.domain_id] || "Домен";
                   return (
                     <tr key={task.id}>
-                      <td className="py-3 pr-4 font-mono text-xs">{task.id.slice(0, 8)}</td>
+                      <td className="py-3 pr-4 text-xs text-slate-500 dark:text-slate-400">
+                        {linkIndexBase + idx + 1}
+                      </td>
                       <td className="py-3 pr-4">
                         <Link href={{ pathname: `/domains/${task.domain_id}` }} className="text-indigo-600 hover:underline">
                           {domainLabel}

@@ -59,6 +59,7 @@ type LinkTaskStore interface {
 	Get(ctx context.Context, taskID string) (*LinkTask, error)
 	ListByDomain(ctx context.Context, domainID string, filters LinkTaskFilters) ([]LinkTask, error)
 	ListByProject(ctx context.Context, projectID string, filters LinkTaskFilters) ([]LinkTask, error)
+	ListByUser(ctx context.Context, email string, filters LinkTaskFilters) ([]LinkTask, error)
 	ListAll(ctx context.Context, filters LinkTaskFilters) ([]LinkTask, error)
 	ListPending(ctx context.Context, limit int) ([]LinkTask, error)
 	Update(ctx context.Context, taskID string, updates LinkTaskUpdates) error
@@ -152,6 +153,20 @@ func (s *LinkTaskSQLStore) ListByDomain(ctx context.Context, domainID string, fi
 func (s *LinkTaskSQLStore) ListByProject(ctx context.Context, projectID string, filters LinkTaskFilters) ([]LinkTask, error) {
 	base := `link_tasks lt JOIN domains d ON d.id = lt.domain_id`
 	query, args := buildLinkTaskQuery(base, "d.project_id=$1", []interface{}{projectID}, filters)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return scanLinkTasks(rows)
+}
+
+// ListByUser возвращает задачи по проектам, доступным пользователю.
+func (s *LinkTaskSQLStore) ListByUser(ctx context.Context, email string, filters LinkTaskFilters) ([]LinkTask, error) {
+	base := `link_tasks lt JOIN domains d ON d.id = lt.domain_id JOIN projects p ON p.id = d.project_id`
+	clause := `(p.user_email = $1 OR EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = p.id AND pm.user_email = $1))`
+	query, args := buildLinkTaskQuery(base, clause, []interface{}{email}, filters)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err

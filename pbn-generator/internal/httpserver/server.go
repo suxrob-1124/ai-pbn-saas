@@ -130,6 +130,7 @@ type LinkTaskStore interface {
 	Get(ctx context.Context, taskID string) (*sqlstore.LinkTask, error)
 	ListByDomain(ctx context.Context, domainID string, filters sqlstore.LinkTaskFilters) ([]sqlstore.LinkTask, error)
 	ListByProject(ctx context.Context, projectID string, filters sqlstore.LinkTaskFilters) ([]sqlstore.LinkTask, error)
+	ListByUser(ctx context.Context, email string, filters sqlstore.LinkTaskFilters) ([]sqlstore.LinkTask, error)
 	ListAll(ctx context.Context, filters sqlstore.LinkTaskFilters) ([]sqlstore.LinkTask, error)
 	ListPending(ctx context.Context, limit int) ([]sqlstore.LinkTask, error)
 	Update(ctx context.Context, taskID string, updates sqlstore.LinkTaskUpdates) error
@@ -4661,11 +4662,11 @@ func (s *Server) handleLinks(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	default:
-		if !strings.EqualFold(user.Role, "admin") {
-			writeError(w, http.StatusForbidden, "admin only")
-			return
+		if strings.EqualFold(user.Role, "admin") {
+			list, err = s.linkTasks.ListAll(r.Context(), filters)
+		} else {
+			list, err = s.linkTasks.ListByUser(r.Context(), user.Email, filters)
 		}
-		list, err = s.linkTasks.ListAll(r.Context(), filters)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "could not list link tasks")
 			return

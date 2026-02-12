@@ -62,6 +62,7 @@ export default function ProjectQueuePage() {
 
   const [items, setItems] = useState<QueueItemDTO[]>([]);
   const [domains, setDomains] = useState<Record<string, Domain>>({});
+  const [projectName, setProjectName] = useState("");
   const [loading, setLoading] = useState(false);
   const [cleaning, setCleaning] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -89,6 +90,28 @@ export default function ProjectQueuePage() {
   const linkPageSize = 20;
   const tabParam = (searchParams.get("tab") || "domains").toLowerCase();
   const activeTab = tabParam === "links" ? "links" : "domains";
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!projectId) {
+      setProjectName("");
+      return;
+    }
+    authFetch<{ project?: { name?: string } }>(`/api/projects/${projectId}/summary`)
+      .then((data) => {
+        if (!cancelled) {
+          setProjectName((data?.project?.name || "").trim());
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setProjectName("");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
 
   const load = async (opts?: { silent?: boolean }) => {
     if (!projectId) return;
@@ -240,7 +263,8 @@ export default function ProjectQueuePage() {
   const visibleLinks = filteredLinks;
 
   const handleRemove = async (item: QueueItemDTO) => {
-    if (!confirm(`Удалить из очереди: ${item.id}?`)) return;
+    const domainLabel = item.domain_url || domains[item.domain_id]?.url || "домен";
+    if (!confirm(`Удалить из очереди домен ${domainLabel}?`)) return;
     setLoading(true);
     setError(null);
     try {
@@ -248,7 +272,7 @@ export default function ProjectQueuePage() {
       showToast({
         type: "success",
         title: "Удалено из очереди",
-        message: item.id
+        message: domainLabel
       });
       await load();
     } catch (err: any) {
@@ -261,7 +285,8 @@ export default function ProjectQueuePage() {
   };
 
   const handleLinkRetry = async (task: LinkTaskDTO) => {
-    if (!confirm(`Повторить задачу ссылки: ${task.id}?`)) return;
+    const domainLabel = domains[task.domain_id]?.url || "домен";
+    if (!confirm(`Повторить задачу ссылки для домена ${domainLabel}?`)) return;
     setLinkLoading(true);
     setLinkError(null);
     try {
@@ -269,7 +294,7 @@ export default function ProjectQueuePage() {
       showToast({
         type: "success",
         title: "Повтор поставлен в очередь",
-        message: task.id
+        message: domainLabel
       });
       await loadLinkTasks();
     } catch (err: any) {
@@ -282,7 +307,8 @@ export default function ProjectQueuePage() {
   };
 
   const handleLinkDelete = async (task: LinkTaskDTO) => {
-    if (!confirm(`Удалить задачу ссылки: ${task.id}?`)) return;
+    const domainLabel = domains[task.domain_id]?.url || "домен";
+    if (!confirm(`Удалить задачу ссылки для домена ${domainLabel}?`)) return;
     setLinkLoading(true);
     setLinkError(null);
     try {
@@ -290,7 +316,7 @@ export default function ProjectQueuePage() {
       showToast({
         type: "success",
         title: "Задача ссылки удалена",
-        message: task.id
+        message: domainLabel
       });
       await loadLinkTasks();
     } catch (err: any) {
@@ -366,7 +392,9 @@ export default function ProjectQueuePage() {
             <p className="text-sm text-slate-500 dark:text-slate-400">
               Полная очередь доменов и ссылок по проекту.
             </p>
-            <p className="text-xs text-slate-500 dark:text-slate-400">ID проекта: {projectId}</p>
+            {projectName && (
+              <p className="text-xs text-slate-500 dark:text-slate-400">Проект: {projectName}</p>
+            )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Link
@@ -564,20 +592,17 @@ export default function ProjectQueuePage() {
               <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
                 {visibleLinks.map((task) => {
                   const domain = domains[task.domain_id];
-                  const domainLabel = domain?.url || task.domain_id;
+                  const domainLabel = domain?.url || task.domain_url || "Домен";
+                  const domainHref = `/domains/${domain?.id || task.domain_id}`;
                   const actionLabel = (task.action || "insert") === "remove" ? "Удаление" : "Вставка";
                   const lastLog = task.log_lines?.length ? task.log_lines[task.log_lines.length - 1] : "";
                   const eventText = task.error_message || lastLog || "—";
                   return (
                     <tr key={task.id}>
                       <td className="py-3 pr-4">
-                        {domain ? (
-                          <Link href={{ pathname: `/domains/${domain.id}` }} className="text-indigo-600 hover:underline">
-                            {domainLabel}
-                          </Link>
-                        ) : (
-                          <span className="text-slate-500 dark:text-slate-400">{domainLabel}</span>
-                        )}
+                        <Link href={{ pathname: domainHref }} className="text-indigo-600 hover:underline">
+                          {domainLabel}
+                        </Link>
                       </td>
                       <td className="py-3 pr-4">{actionLabel}</td>
                       <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">
@@ -673,17 +698,16 @@ export default function ProjectQueuePage() {
               <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
                 {visibleItems.map((item) => {
                   const domain = domains[item.domain_id];
-                  const domainLabel = item.domain_url || domain?.url || item.domain_id;
+                  const domainLabel = item.domain_url || domain?.url || "Домен";
                   return (
                     <tr key={item.id}>
                       <td className="py-3 pr-4">
-                        {domain || item.domain_url ? (
-                          <Link href={{ pathname: `/domains/${domain?.id || item.domain_id}` }} className="text-indigo-600 hover:underline">
-                            {domainLabel}
-                          </Link>
-                        ) : (
-                          <span className="text-slate-500 dark:text-slate-400">{item.domain_id}</span>
-                        )}
+                        <Link
+                          href={{ pathname: `/domains/${domain?.id || item.domain_id}` }}
+                          className="text-indigo-600 hover:underline"
+                        >
+                          {domainLabel}
+                        </Link>
                       </td>
                       <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">
                         {new Date(item.scheduled_for).toLocaleString()}

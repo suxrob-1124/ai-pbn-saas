@@ -216,7 +216,7 @@ export default function ProjectsPage() {
         )}
         <div className="mt-3 space-y-3">
           {recentErrors.map((g) => {
-            const label = g.domain_url || g.domain_id || "Неизвестный домен";
+            const label = g.domain_url || "Неизвестный домен";
             const when = g.updated_at || g.finished_at || g.started_at;
             const timeLabel = when ? new Date(when).toLocaleString() : "—";
             const message = (g.error || "Ошибка не указана").trim();

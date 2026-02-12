@@ -1207,11 +1207,7 @@ export default function ProjectDetailPage() {
           </div>
           <div className="flex gap-2">
             <Link
-              href={
-                projectId
-                  ? ({ pathname: "/projects/[id]/queue", query: { id: projectId, tab: "domains" } } as UrlObject)
-                  : "/projects"
-              }
+              href={projectId ? `/projects/${projectId}/queue?tab=domains` : "/projects"}
               className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
             >
               <FiList /> Очередь проекта
@@ -1221,7 +1217,7 @@ export default function ProjectDetailPage() {
                 href={`/monitoring/indexing?projectId=${encodeURIComponent(projectId)}`}
                 className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
               >
-                <FiActivity /> Indexing
+                <FiActivity /> Индексация
               </Link>
             )}
             <button
@@ -1780,7 +1776,7 @@ export default function ProjectDetailPage() {
               <div className="space-y-3">
                 {projectErrors.map((g) => {
                   const domain = g.domain_id ? domainById[g.domain_id] : undefined;
-                  const label = domain?.url || g.domain_url || g.domain_id || "Неизвестный домен";
+                  const label = domain?.url || g.domain_url || "Неизвестный домен";
                   const when = g.updated_at || g.finished_at || g.started_at || g.created_at;
                   const timeLabel = formatDateTime(when);
                   const message = (g.error || "Ошибка не указана").trim();
@@ -2062,20 +2058,23 @@ function RunsList({ runs }: { runs: Generation[] }) {
   const displayRuns = runs.slice(0, 4);
   return (
     <div className="mt-2 text-left text-xs bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-lg p-2 space-y-1">
-      {displayRuns.map((r) => (
+      {displayRuns.map((r) => {
+        const when = r.updated_at || r.created_at || r.started_at || r.finished_at;
+        const label = when ? new Date(when).toLocaleString() : "Запуск";
+        return (
         <Link
           key={r.id}
           href={`/queue/${r.id}`}
           className="flex items-center justify-between rounded-lg px-2 py-1 hover:bg-slate-100 dark:hover:bg-slate-700/60"
         >
-          <span className="font-semibold">{r.id.slice(0, 8)}</span>
+          <span className="font-semibold">{label}</span>
           <div className="flex items-center gap-2">
             <StatusBadge status={r.status} />
             <span className="text-slate-500 dark:text-slate-400">{r.progress}%</span>
             {r.error && <span className="text-red-500">ошибка</span>}
           </div>
         </Link>
-      ))}
+      )})}
       {runs.length > 4 && (
         <div className="text-xs text-slate-500 dark:text-slate-400 px-2 py-1">
           ... и еще {runs.length - 4} запусков

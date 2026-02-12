@@ -47,9 +47,9 @@ export default function QueueItemPage() {
       if (g?.domain_id) {
         try {
           const d = await authFetch<any>(`/api/domains/${g.domain_id}`);
-          setDomainUrl(d?.url || g.domain_id);
+          setDomainUrl(d?.url || "");
         } catch {
-          setDomainUrl(g.domain_id);
+          setDomainUrl("");
         }
       }
     } catch (err: any) {
@@ -137,15 +137,16 @@ export default function QueueItemPage() {
           <div>
             <h1 className="text-2xl font-bold">Задача генерации</h1>
             <p className="text-sm text-slate-500 dark:text-slate-400">Статус конкретного запуска.</p>
-            <div className="mt-3 text-slate-700 dark:text-slate-200 font-mono text-sm">ID: {id}</div>
-            {domainUrl && (
-              <div className="mt-1 text-sm">
-                Домен:{" "}
+            <div className="mt-1 text-sm">
+              Домен:{" "}
+              {domainUrl ? (
                 <Link href={`/domains/${item?.domain_id || ""}`} className="text-indigo-600 hover:underline">
                   {domainUrl}
                 </Link>
-              </div>
-            )}
+              ) : (
+                <span className="text-slate-500 dark:text-slate-400">—</span>
+              )}
+            </div>
           </div>
           <div className="flex gap-2">
             {canResume && (

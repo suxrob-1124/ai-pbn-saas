@@ -320,6 +320,95 @@ func TestLinkTaskStoreListByProject(t *testing.T) {
 	})
 }
 
+func TestLinkTaskStoreListByUser(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to create sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	store := NewLinkTaskStore(db)
+	ctx := context.Background()
+
+	scheduled := time.Date(2026, 2, 4, 10, 0, 0, 0, time.UTC)
+	created := scheduled.Add(-time.Minute)
+	rows := sqlmock.NewRows([]string{
+		"id",
+		"domain_id",
+		"anchor_text",
+		"target_url",
+		"scheduled_for",
+		"action",
+		"status",
+		"found_location",
+		"generated_content",
+		"error_message",
+		"attempts",
+		"created_by",
+		"created_at",
+		"completed_at",
+		"log_lines",
+	}).AddRow(
+		"task-1",
+		"domain-1",
+		"anchor",
+		"https://example.com",
+		scheduled,
+		"insert",
+		"pending",
+		sql.NullString{},
+		sql.NullString{},
+		sql.NullString{},
+		0,
+		"admin@example.com",
+		created,
+		sql.NullTime{},
+		nil,
+	)
+
+	status := "pending"
+	search := "exaMple"
+	filters := LinkTaskFilters{
+		Status: &status,
+		Search: &search,
+		Limit:  10,
+		Offset: 5,
+	}
+	expected := `(?s)SELECT lt.id, lt.domain_id, lt.anchor_text, lt.target_url, lt.scheduled_for, lt.action, lt.status, lt.found_location, lt.generated_content, lt.error_message, lt.attempts, lt.created_by, lt.created_at, lt.completed_at, lt.log_lines\s+FROM link_tasks lt JOIN domains d ON d.id = lt.domain_id JOIN projects p ON p.id = d.project_id\s+WHERE \(p.user_email = \$1 OR EXISTS \(SELECT 1 FROM project_members pm WHERE pm.project_id = p.id AND pm.user_email = \$1\)\) AND \(LOWER\(COALESCE\(d.url, ''\)\) LIKE \$2 OR LOWER\(lt.domain_id\) LIKE \$2\) AND lt.status=\$3\s+ORDER BY lt.scheduled_for ASC, lt.created_at ASC\s+LIMIT \$4 OFFSET \$5`
+
+	t.Run("success", func(t *testing.T) {
+		mock.ExpectQuery(expected).
+			WithArgs("user@example.com", "%example%", status, 10, 5).
+			WillReturnRows(rows)
+
+		list, err := store.ListByUser(ctx, "user@example.com", filters)
+		if err != nil {
+			t.Fatalf("list failed: %v", err)
+		}
+		if len(list) != 1 {
+			t.Fatalf("expected 1 item, got %d", len(list))
+		}
+
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unmet expectations: %v", err)
+		}
+	})
+
+	t.Run("db error", func(t *testing.T) {
+		mock.ExpectQuery(expected).
+			WithArgs("user2@example.com", "%example%", status, 10, 5).
+			WillReturnError(errors.New("boom"))
+
+		if _, err := store.ListByUser(ctx, "user2@example.com", filters); err == nil {
+			t.Fatalf("expected error")
+		}
+
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unmet expectations: %v", err)
+		}
+	})
+}
+
 func TestLinkTaskStoreListPending(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

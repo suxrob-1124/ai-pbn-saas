@@ -224,17 +224,19 @@ export function IndexTable({
                   setDomainFilter(e.target.value);
                   setPage(1);
                 }}
-                placeholder="domain-123"
+                placeholder="example.com"
                 className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-800 dark:bg-slate-950"
                 disabled={loading}
               />
               {domainOptions && domainOptions.length > 0 && (
                 <datalist id="index-table-domain-options">
-                  {domainOptions.map((option) => (
-                    <option key={option.id} value={option.id}>
-                      {option.label || option.id}
-                    </option>
-                  ))}
+                  {domainOptions
+                    .filter((option) => option.label)
+                    .map((option) => (
+                      <option key={option.id} value={option.label as string}>
+                        {option.label}
+                      </option>
+                    ))}
                 </datalist>
               )}
             </div>
@@ -287,7 +289,7 @@ export function IndexTable({
               </tr>
             ) : (
               visible.map((check) => {
-                const label = check.domain_url || check.domain_id;
+                const label = check.domain_url || "Домен";
                 const errorOpen = expandedError[check.id];
                 return (
                   <tr key={check.id} className="align-top">

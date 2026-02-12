@@ -40,7 +40,7 @@ export default function LinkTaskPage() {
           const d = await authFetch<Domain>(`/api/domains/${current.domain_id}`);
           setDomain(d);
         } catch {
-          setDomain({ id: current.domain_id, url: current.domain_id, project_id: "" });
+          setDomain({ id: current.domain_id, url: "", project_id: "" });
         }
       }
     } catch (err: any) {
@@ -64,7 +64,8 @@ export default function LinkTaskPage() {
 
   const handleRetry = async () => {
     if (!task) return;
-    if (!confirm(`Повторить задачу ссылки: ${task.id}?`)) return;
+    const domainLabel = domain?.url || "домен";
+    if (!confirm(`Повторить задачу ссылки для домена ${domainLabel}?`)) return;
     setLoading(true);
     setError(null);
     try {
@@ -72,7 +73,7 @@ export default function LinkTaskPage() {
       showToast({
         type: "success",
         title: "Повтор поставлен в очередь",
-        message: task.id
+        message: domainLabel
       });
       await load();
     } catch (err: any) {
@@ -94,7 +95,7 @@ export default function LinkTaskPage() {
       showToast({
         type: "success",
         title: "Задача ссылки удалена",
-        message: task.id
+        message: domain?.url || "Домен"
       });
       if (domain?.project_id) {
         router.push(`/projects/${domain.project_id}/queue`);
@@ -121,15 +122,16 @@ export default function LinkTaskPage() {
           <div>
             <h1 className="text-2xl font-bold">Задача ссылки</h1>
             <p className="text-sm text-slate-500 dark:text-slate-400">Статус обработки линкбилдинга.</p>
-            <div className="mt-3 text-slate-700 dark:text-slate-200 font-mono text-sm">ID: {id}</div>
-            {domain?.url && (
-              <div className="mt-1 text-sm">
-                Домен:{" "}
+            <div className="mt-1 text-sm">
+              Домен:{" "}
+              {domain?.url ? (
                 <Link href={{ pathname: `/domains/${domain.id}` }} className="text-indigo-600 hover:underline">
                   {domain.url}
                 </Link>
-              </div>
-            )}
+              ) : (
+                <span className="text-slate-500 dark:text-slate-400">—</span>
+              )}
+            </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button
