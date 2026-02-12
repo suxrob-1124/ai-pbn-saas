@@ -12,7 +12,10 @@ export function Footer() {
           <span>Мониторинг и генерации</span>
         </div>
         <div className="flex flex-wrap items-center gap-4">
-          <Link href="/docs" className="hover:text-slate-700 dark:hover:text-slate-200">
+          <Link
+            href="/docs"
+            className="font-semibold text-slate-700 underline underline-offset-4 hover:text-slate-900 dark:text-slate-200 dark:hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+          >
             Документация
           </Link>
           <span className="text-xs">© 2026</span>
