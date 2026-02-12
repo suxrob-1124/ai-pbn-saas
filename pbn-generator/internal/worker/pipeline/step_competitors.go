@@ -113,7 +113,8 @@ func (s *CompetitorAnalysisStep) Execute(ctx context.Context, state *PipelineSta
 	// Выполняем запрос к LLM
 	llmAnalysis, err := state.LLMClient.Generate(ctx, "competitor_analysis", analysisPrompt, modelToUse)
 	if err != nil {
-		return nil, fmt.Errorf("LLM анализ конкурентов failed: %w", err)
+		state.AppendLog(fmt.Sprintf("Предупреждение: LLM анализ конкурентов не выполнен: %v", err))
+		return map[string]any{}, nil
 	}
 
 	state.AppendLog("LLM анализ конкурентов завершен")

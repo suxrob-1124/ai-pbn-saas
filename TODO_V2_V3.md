@@ -356,7 +356,7 @@
 
 ### Sprint 3: Index Checker
 
-- [ ] **Создать модуль indexchecker**
+- [x] **Создать модуль indexchecker**
   - Файл: `internal/indexchecker/checker.go`
   - Интерфейс `IndexChecker`:
     - `Check(ctx, domain string, geo string) (indexed bool, err error)`
@@ -368,7 +368,7 @@
       - Таймаут/ретраи: использовать общие настройки SERP (как в analyzer)
       - **Без чтения файлов с диска** (главная страница хранится в БД)
 
-- [ ] **Создать Store для index_checks**
+- [x] **Создать Store для index_checks**
   - Файл: `internal/store/sqlstore/index_checks.go`
   - Интерфейс `IndexCheckStore`:
     - `Create(ctx, check) error`
@@ -380,11 +380,11 @@
     - `IncrementAttempts(ctx, checkID) error`
     - `SetNextRetry(ctx, checkID, nextRetry time.Time) error`
 
-- [ ] **Создать Store для check_history**
+- [x] **Создать Store для check_history**
   - Файл: `internal/store/sqlstore/check_history.go`
   - Методы для логирования каждой попытки
 
-- [ ] **Retry Logic**
+- [x] **Retry Logic**
   - Файл: `internal/indexchecker/retry.go`
   - Функция `CalculateNextRetry(attempts int) time.Duration`:
     - Attempt 1: 30 min
@@ -396,7 +396,7 @@
     - Проверить количество попыток
     - Проверить время с момента создания (< 24 часа)
 
-- [ ] **Index Checker Worker**
+- [x] **Index Checker Worker**
   - Файл: `cmd/indexchecker/main.go` или расширить worker
   - Cron задача: каждый час
   - Логика:
@@ -418,7 +418,7 @@
            - Статус: `failed_investigation`
            - Алерт администратору
 
-- [ ] **API для Index Checks**
+- [x] **API для Index Checks**
   - `GET /api/domains/:id/index-checks` - история проверок
   - `POST /api/domains/:id/index-checks` - запустить вручную
   - `GET /api/admin/index-checks` - все проверки
@@ -512,7 +512,7 @@
     - `LinkTaskForm` - форма добавления
     - `CSVImport` - drag & drop CSV
 
-- [ ] **Логи ссылок на странице домена**
+- [x] **Логи ссылок на странице домена**
   - Вкладка «Логи ссылок» с детальными шагами
   - Diff‑вставка (до/после) на основе `found_location`
   - Кнопка «Открыть файл» и «Открыть в редакторе» (когда появится file‑editor маршрут)
@@ -540,14 +540,6 @@
   - Кнопки для каждого task: Retry, Edit, Delete
   - Массовые действия: Bulk Retry, Bulk Delete
 
-- [x] **Компонент: CSVImport**
-  - Файл: `components/CSVImport.tsx`
-  - Drag & drop зона
-  - Парсинг CSV:
-    - Формат: `anchor_text,target_url,scheduled_for`
-    - Валидация каждой строки
-  - Preview перед импортом
-  - Кнопка "Import All"
 
 ### Sprint 3: Index Monitoring UI
 

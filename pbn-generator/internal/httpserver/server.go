@@ -136,6 +136,21 @@ type LinkTaskStore interface {
 	Delete(ctx context.Context, taskID string) error
 }
 
+type IndexCheckStore interface {
+	Create(ctx context.Context, check sqlstore.IndexCheck) error
+	Get(ctx context.Context, checkID string) (*sqlstore.IndexCheck, error)
+	GetByDomainAndDate(ctx context.Context, domainID string, date time.Time) (*sqlstore.IndexCheck, error)
+	ListByDomain(ctx context.Context, domainID string, filters sqlstore.IndexCheckFilters) ([]sqlstore.IndexCheck, error)
+	ListByProject(ctx context.Context, projectID string, filters sqlstore.IndexCheckFilters) ([]sqlstore.IndexCheck, error)
+	ListAll(ctx context.Context, filters sqlstore.IndexCheckFilters) ([]sqlstore.IndexCheck, error)
+	ListFailed(ctx context.Context, filters sqlstore.IndexCheckFilters) ([]sqlstore.IndexCheck, error)
+	ResetForManual(ctx context.Context, checkID string, nextRetry time.Time) error
+}
+
+type CheckHistoryStore interface {
+	ListByCheck(ctx context.Context, checkID string, limit int) ([]sqlstore.CheckHistory, error)
+}
+
 type Server struct {
 	cfg            config.Config
 	svc            *auth.Service
@@ -151,6 +166,8 @@ type Server struct {
 	fileEdits      FileEditStore
 	linkTasks      LinkTaskStore
 	genQueue       GenQueueStore
+	indexChecks    IndexCheckStore
+	checkHistory   CheckHistoryStore
 	tasks          tasks.Enqueuer
 	reqDuration    *prometheus.HistogramVec
 	reqCounter     *prometheus.CounterVec
@@ -159,7 +176,7 @@ type Server struct {
 	logger         *zap.SugaredLogger
 }
 
-func New(cfg config.Config, svc *auth.Service, logger *zap.SugaredLogger, projects ProjectStore, projectMembers *sqlstore.ProjectMemberStore, domains DomainStore, generations GenerationStore, prompts PromptStore, schedules ScheduleStore, linkSchedules LinkScheduleStore, auditRules *sqlstore.AuditStore, siteFiles SiteFileStore, fileEdits FileEditStore, linkTasks LinkTaskStore, genQueue GenQueueStore, tq tasks.Enqueuer) *Server {
+func New(cfg config.Config, svc *auth.Service, logger *zap.SugaredLogger, projects ProjectStore, projectMembers *sqlstore.ProjectMemberStore, domains DomainStore, generations GenerationStore, prompts PromptStore, schedules ScheduleStore, linkSchedules LinkScheduleStore, auditRules *sqlstore.AuditStore, siteFiles SiteFileStore, fileEdits FileEditStore, linkTasks LinkTaskStore, genQueue GenQueueStore, indexChecks IndexCheckStore, checkHistory CheckHistoryStore, tq tasks.Enqueuer) *Server {
 	if logger == nil {
 		logger = zap.NewNop().Sugar()
 	}
@@ -197,6 +214,8 @@ func New(cfg config.Config, svc *auth.Service, logger *zap.SugaredLogger, projec
 		fileEdits:      fileEdits,
 		linkTasks:      linkTasks,
 		genQueue:       genQueue,
+		indexChecks:    indexChecks,
+		checkHistory:   checkHistory,
 		tasks:          tq,
 		reqDuration:    reqDuration,
 		reqCounter:     reqCounter,
@@ -236,6 +255,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("/api/links", s.withAuth(http.HandlerFunc(s.handleLinks)))
 	mux.Handle("/api/links/", s.withAuth(http.HandlerFunc(s.handleLinkByID)))
 	mux.Handle("/api/queue/", s.withAuth(http.HandlerFunc(s.handleQueueItem)))
+	mux.Handle("/api/admin/index-checks", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminIndexChecks))))
+	mux.Handle("/api/admin/index-checks/", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminIndexCheckRoute))))
+	mux.Handle("/api/admin/index-checks/failed", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminIndexChecksFailed))))
 	mux.Handle("/api/admin/users", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminUsers))))
 	mux.Handle("/api/admin/users/", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminUserRoute))))
 	mux.Handle("/api/admin/prompts", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminPrompts))))
@@ -1106,6 +1128,10 @@ func (s *Server) handleProjectByID(w http.ResponseWriter, r *http.Request) {
 		s.handleProjectQueue(w, r, projectID)
 		return
 	}
+	if len(parts) > 1 && parts[1] == "index-checks" {
+		s.handleProjectIndexChecks(w, r, projectID, parts[2:])
+		return
+	}
 
 	user, ok := currentUserFromContext(r.Context())
 	if !ok || user.Email == "" {
@@ -1540,6 +1566,8 @@ func (s *Server) handleDomainActions(w http.ResponseWriter, r *http.Request) {
 		s.handleDomainLinkRun(w, r, domainID, parts[2:])
 	case "files":
 		s.handleDomainFiles(w, r, domainID, parts[2:])
+	case "index-checks":
+		s.handleDomainIndexChecks(w, r, domainID, parts[2:])
 	case "":
 		s.handleDomainBase(w, r, domainID)
 	default:
@@ -2128,6 +2156,187 @@ func (s *Server) handleDomainLinks(w http.ResponseWriter, r *http.Request, domai
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+func (s *Server) handleDomainIndexChecks(w http.ResponseWriter, r *http.Request, domainID string, parts []string) {
+	user, ok := currentUserFromContext(r.Context())
+	if !ok || user.Email == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if s.indexChecks == nil {
+		writeError(w, http.StatusInternalServerError, "index checks not configured")
+		return
+	}
+
+	domain, project, err := s.authorizeDomain(r.Context(), domainID)
+	if err != nil {
+		respondAuthzError(w, err, "domain not found")
+		return
+	}
+
+	memberRole := ""
+	if !strings.EqualFold(user.Role, "admin") {
+		role, err := s.getProjectMemberRole(r.Context(), project.ID, user.Email)
+		if err != nil {
+			writeError(w, http.StatusForbidden, "access denied")
+			return
+		}
+		memberRole = role
+	}
+
+	if len(parts) > 0 {
+		if len(parts) > 1 && parts[1] == "history" {
+			s.handleDomainIndexCheckHistory(w, r, domainID, parts[0], memberRole)
+			return
+		}
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		if !hasProjectPermission(user.Role, memberRole, "viewer") {
+			writeError(w, http.StatusForbidden, "insufficient permissions: viewer role required")
+			return
+		}
+		filters := parseIndexCheckFilters(r, 50, 200)
+		list, err := s.indexChecks.ListByDomain(r.Context(), domainID, filters)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not list index checks")
+			return
+		}
+		resp := make([]indexCheckDTO, 0, len(list))
+		for _, check := range list {
+			dto := toIndexCheckDTO(check)
+			url := strings.TrimSpace(domain.URL)
+			if url != "" {
+				dto.DomainURL = &url
+			}
+			pid := project.ID
+			dto.ProjectID = &pid
+			resp = append(resp, dto)
+		}
+		writeJSON(w, http.StatusOK, resp)
+	case http.MethodPost:
+		if err := requireApprovedUser(user); err != nil {
+			writeError(w, http.StatusForbidden, err.Error())
+			return
+		}
+		if !hasProjectPermission(user.Role, memberRole, "editor") {
+			writeError(w, http.StatusForbidden, "insufficient permissions: editor role required")
+			return
+		}
+		now := time.Now().UTC()
+		check, created, err := s.upsertManualIndexCheck(r.Context(), domainID, now)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not start index check")
+			return
+		}
+		dto := toIndexCheckDTO(check)
+		if url := strings.TrimSpace(domain.URL); url != "" {
+			dto.DomainURL = &url
+		}
+		pid := project.ID
+		dto.ProjectID = &pid
+		status := http.StatusOK
+		if created {
+			status = http.StatusCreated
+		}
+		writeJSON(w, status, dto)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) handleDomainIndexCheckHistory(w http.ResponseWriter, r *http.Request, domainID, checkID, memberRole string) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if s.checkHistory == nil || s.indexChecks == nil {
+		writeError(w, http.StatusInternalServerError, "index check history not configured")
+		return
+	}
+	user, ok := currentUserFromContext(r.Context())
+	if !ok || user.Email == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if !hasProjectPermission(user.Role, memberRole, "viewer") {
+		writeError(w, http.StatusForbidden, "insufficient permissions: viewer role required")
+		return
+	}
+	checkID = strings.TrimSpace(checkID)
+	if checkID == "" {
+		writeError(w, http.StatusBadRequest, "missing check id")
+		return
+	}
+	check, err := s.indexChecks.Get(r.Context(), checkID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "check not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not load check")
+		return
+	}
+	if check.DomainID != domainID {
+		writeError(w, http.StatusNotFound, "check not found")
+		return
+	}
+
+	limit := parseLimitParam(r, 50, 200)
+	list, err := s.checkHistory.ListByCheck(r.Context(), checkID, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not load check history")
+		return
+	}
+	resp := make([]indexCheckHistoryDTO, 0, len(list))
+	for _, item := range list {
+		resp = append(resp, toIndexCheckHistoryDTO(item))
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) upsertManualIndexCheck(ctx context.Context, domainID string, now time.Time) (sqlstore.IndexCheck, bool, error) {
+	if s.indexChecks == nil {
+		return sqlstore.IndexCheck{}, false, errors.New("index checks not configured")
+	}
+	today := dateOnlyUTC(now)
+	check, err := s.indexChecks.GetByDomainAndDate(ctx, domainID, today)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			newCheck := sqlstore.IndexCheck{
+				ID:        uuid.NewString(),
+				DomainID:  domainID,
+				CheckDate: today,
+				Status:    "pending",
+				Attempts:  0,
+				NextRetryAt: sql.NullTime{
+					Time:  now,
+					Valid: true,
+				},
+				CreatedAt: now,
+			}
+			if err := s.indexChecks.Create(ctx, newCheck); err != nil {
+				return sqlstore.IndexCheck{}, false, err
+			}
+			return newCheck, true, nil
+		}
+		return sqlstore.IndexCheck{}, false, err
+	}
+	if err := s.indexChecks.ResetForManual(ctx, check.ID, now); err != nil {
+		return sqlstore.IndexCheck{}, false, err
+	}
+	check.Status = "pending"
+	check.Attempts = 0
+	check.IsIndexed = sql.NullBool{}
+	check.ErrorMessage = sql.NullString{}
+	check.LastAttemptAt = sql.NullTime{}
+	check.CompletedAt = sql.NullTime{}
+	check.NextRetryAt = sql.NullTime{Time: now, Valid: true}
+	return *check, false, nil
 }
 
 func (s *Server) handleDomainLinkRun(w http.ResponseWriter, r *http.Request, domainID string, parts []string) {
@@ -3955,6 +4164,170 @@ func (s *Server) handleProjectQueueCleanup(w http.ResponseWriter, r *http.Reques
 	})
 }
 
+func (s *Server) handleProjectIndexChecks(w http.ResponseWriter, r *http.Request, projectID string, parts []string) {
+	user, ok := currentUserFromContext(r.Context())
+	if !ok || user.Email == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if s.indexChecks == nil {
+		writeError(w, http.StatusInternalServerError, "index checks not configured")
+		return
+	}
+
+	project, err := s.authorizeProject(r.Context(), projectID)
+	if err != nil {
+		respondAuthzError(w, err, "project not found")
+		return
+	}
+
+	memberRole := ""
+	if !strings.EqualFold(user.Role, "admin") {
+		role, err := s.getProjectMemberRole(r.Context(), projectID, user.Email)
+		if err != nil {
+			writeError(w, http.StatusForbidden, "access denied")
+			return
+		}
+		memberRole = role
+	}
+
+	if len(parts) > 0 {
+		if len(parts) > 1 && parts[1] == "history" {
+			s.handleProjectIndexCheckHistory(w, r, projectID, parts[0], memberRole)
+			return
+		}
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		if !hasProjectPermission(user.Role, memberRole, "viewer") {
+			writeError(w, http.StatusForbidden, "insufficient permissions: viewer role required")
+			return
+		}
+		filters := parseIndexCheckFilters(r, 100, 500)
+		list, err := s.indexChecks.ListByProject(r.Context(), projectID, filters)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not list index checks")
+			return
+		}
+		domainMap := map[string]string{}
+		if domains, err := s.domains.ListByProject(r.Context(), projectID); err == nil {
+			for _, d := range domains {
+				domainMap[d.ID] = d.URL
+			}
+		}
+		resp := make([]indexCheckDTO, 0, len(list))
+		for _, check := range list {
+			dto := toIndexCheckDTO(check)
+			if url, ok := domainMap[check.DomainID]; ok && strings.TrimSpace(url) != "" {
+				dto.DomainURL = &url
+			}
+			pid := project.ID
+			dto.ProjectID = &pid
+			resp = append(resp, dto)
+		}
+		writeJSON(w, http.StatusOK, resp)
+	case http.MethodPost:
+		if err := requireApprovedUser(user); err != nil {
+			writeError(w, http.StatusForbidden, err.Error())
+			return
+		}
+		if !hasProjectPermission(user.Role, memberRole, "editor") {
+			writeError(w, http.StatusForbidden, "insufficient permissions: editor role required")
+			return
+		}
+		domains, err := s.domains.ListByProject(r.Context(), projectID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not list domains")
+			return
+		}
+		now := time.Now().UTC()
+		created := 0
+		updated := 0
+		skipped := 0
+		for _, d := range domains {
+			if strings.TrimSpace(d.URL) == "" {
+				skipped++
+				continue
+			}
+			_, wasCreated, err := s.upsertManualIndexCheck(r.Context(), d.ID, now)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "could not start index checks")
+				return
+			}
+			if wasCreated {
+				created++
+			} else {
+				updated++
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"created": created,
+			"updated": updated,
+			"skipped": skipped,
+		})
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) handleProjectIndexCheckHistory(w http.ResponseWriter, r *http.Request, projectID, checkID, memberRole string) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if s.checkHistory == nil || s.indexChecks == nil {
+		writeError(w, http.StatusInternalServerError, "index check history not configured")
+		return
+	}
+	user, ok := currentUserFromContext(r.Context())
+	if !ok || user.Email == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if !hasProjectPermission(user.Role, memberRole, "viewer") {
+		writeError(w, http.StatusForbidden, "insufficient permissions: viewer role required")
+		return
+	}
+	checkID = strings.TrimSpace(checkID)
+	if checkID == "" {
+		writeError(w, http.StatusBadRequest, "missing check id")
+		return
+	}
+	check, err := s.indexChecks.Get(r.Context(), checkID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "check not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not load check")
+		return
+	}
+	domain, err := s.domains.Get(r.Context(), check.DomainID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "check not found")
+		return
+	}
+	if domain.ProjectID != projectID {
+		writeError(w, http.StatusNotFound, "check not found")
+		return
+	}
+
+	limit := parseLimitParam(r, 50, 200)
+	list, err := s.checkHistory.ListByCheck(r.Context(), checkID, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not load check history")
+		return
+	}
+	resp := make([]indexCheckHistoryDTO, 0, len(list))
+	for _, item := range list {
+		resp = append(resp, toIndexCheckHistoryDTO(item))
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
 func (s *Server) handleQueueItem(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -4594,6 +4967,91 @@ func (s *Server) handleAdminAuditRules(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) handleAdminIndexChecks(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if s.indexChecks == nil {
+		writeError(w, http.StatusInternalServerError, "index checks not configured")
+		return
+	}
+	filters := parseIndexCheckFilters(r, 200, 500)
+	list, err := s.indexChecks.ListAll(r.Context(), filters)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not list index checks")
+		return
+	}
+	resp := s.buildIndexCheckResponse(r.Context(), list)
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleAdminIndexChecksFailed(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if s.indexChecks == nil {
+		writeError(w, http.StatusInternalServerError, "index checks not configured")
+		return
+	}
+	filters := parseIndexCheckFilters(r, 200, 500)
+	list, err := s.indexChecks.ListFailed(r.Context(), filters)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not list index checks")
+		return
+	}
+	resp := s.buildIndexCheckResponse(r.Context(), list)
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleAdminIndexCheckRoute(w http.ResponseWriter, r *http.Request) {
+	rest := strings.TrimPrefix(r.URL.Path, "/api/admin/index-checks/")
+	rest = strings.TrimSpace(rest)
+	if rest == "" {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	parts := strings.Split(rest, "/")
+	if len(parts) < 2 {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	checkID := strings.TrimSpace(parts[0])
+	if checkID == "" {
+		writeError(w, http.StatusBadRequest, "missing check id")
+		return
+	}
+	switch parts[1] {
+	case "history":
+		s.handleAdminIndexCheckHistory(w, r, checkID)
+	default:
+		writeError(w, http.StatusNotFound, "not found")
+	}
+}
+
+func (s *Server) handleAdminIndexCheckHistory(w http.ResponseWriter, r *http.Request, checkID string) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if s.checkHistory == nil {
+		writeError(w, http.StatusInternalServerError, "index check history not configured")
+		return
+	}
+	limit := parseLimitParam(r, 50, 200)
+	list, err := s.checkHistory.ListByCheck(r.Context(), checkID, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not load check history")
+		return
+	}
+	resp := make([]indexCheckHistoryDTO, 0, len(list))
+	for _, item := range list {
+		resp = append(resp, toIndexCheckHistoryDTO(item))
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
 func (s *Server) handleAdminAuditRuleByCode(w http.ResponseWriter, r *http.Request) {
 	if s.auditRules == nil {
 		writeError(w, http.StatusInternalServerError, "audit store not configured")
@@ -4796,6 +5254,33 @@ type linkTaskDTO struct {
 	CreatedBy        string     `json:"created_by"`
 	CreatedAt        time.Time  `json:"created_at"`
 	CompletedAt      *time.Time `json:"completed_at,omitempty"`
+}
+
+type indexCheckDTO struct {
+	ID            string     `json:"id"`
+	DomainID      string     `json:"domain_id"`
+	ProjectID     *string    `json:"project_id,omitempty"`
+	DomainURL     *string    `json:"domain_url,omitempty"`
+	CheckDate     time.Time  `json:"check_date"`
+	Status        string     `json:"status"`
+	IsIndexed     *bool      `json:"is_indexed,omitempty"`
+	Attempts      int        `json:"attempts"`
+	LastAttemptAt *time.Time `json:"last_attempt_at,omitempty"`
+	NextRetryAt   *time.Time `json:"next_retry_at,omitempty"`
+	ErrorMessage  *string    `json:"error_message,omitempty"`
+	CompletedAt   *time.Time `json:"completed_at,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+}
+
+type indexCheckHistoryDTO struct {
+	ID            string          `json:"id"`
+	CheckID       string          `json:"check_id"`
+	AttemptNumber int             `json:"attempt_number"`
+	Result        *string         `json:"result,omitempty"`
+	ResponseData  json.RawMessage `json:"response_data,omitempty"`
+	ErrorMessage  *string         `json:"error_message,omitempty"`
+	DurationMS    *int64          `json:"duration_ms,omitempty"`
+	CreatedAt     time.Time       `json:"created_at"`
 }
 
 type generationDTO struct {
@@ -5002,6 +5487,63 @@ func toDomainDTOs(list []sqlstore.Domain) []domainDTO {
 	return out
 }
 
+func toIndexCheckDTO(check sqlstore.IndexCheck) indexCheckDTO {
+	dto := indexCheckDTO{
+		ID:        check.ID,
+		DomainID:  check.DomainID,
+		CheckDate: check.CheckDate,
+		Status:    check.Status,
+		Attempts:  check.Attempts,
+		CreatedAt: check.CreatedAt,
+	}
+	if check.IsIndexed.Valid {
+		val := check.IsIndexed.Bool
+		dto.IsIndexed = &val
+	}
+	if check.LastAttemptAt.Valid {
+		val := check.LastAttemptAt.Time
+		dto.LastAttemptAt = &val
+	}
+	if check.NextRetryAt.Valid {
+		val := check.NextRetryAt.Time
+		dto.NextRetryAt = &val
+	}
+	if check.ErrorMessage.Valid {
+		val := check.ErrorMessage.String
+		dto.ErrorMessage = &val
+	}
+	if check.CompletedAt.Valid {
+		val := check.CompletedAt.Time
+		dto.CompletedAt = &val
+	}
+	return dto
+}
+
+func toIndexCheckHistoryDTO(item sqlstore.CheckHistory) indexCheckHistoryDTO {
+	dto := indexCheckHistoryDTO{
+		ID:            item.ID,
+		CheckID:       item.CheckID,
+		AttemptNumber: item.AttemptNumber,
+		CreatedAt:     item.CreatedAt,
+	}
+	if item.Result.Valid {
+		val := item.Result.String
+		dto.Result = &val
+	}
+	if len(item.ResponseData) > 0 {
+		dto.ResponseData = json.RawMessage(item.ResponseData)
+	}
+	if item.ErrorMessage.Valid {
+		val := item.ErrorMessage.String
+		dto.ErrorMessage = &val
+	}
+	if item.DurationMS.Valid {
+		val := item.DurationMS.Int64
+		dto.DurationMS = &val
+	}
+	return dto
+}
+
 func toGenerationDTO(g sqlstore.Generation) generationDTO {
 	return generationDTO{
 		ID:         g.ID,
@@ -5031,6 +5573,45 @@ func toGenerationDTOWithDomain(g sqlstore.Generation, domainURL *string) generat
 	dto := toGenerationDTO(g)
 	dto.DomainURL = domainURL
 	return dto
+}
+
+func (s *Server) buildIndexCheckResponse(ctx context.Context, list []sqlstore.IndexCheck) []indexCheckDTO {
+	resp := make([]indexCheckDTO, 0, len(list))
+	if len(list) == 0 {
+		return resp
+	}
+
+	domainIDs := make([]string, 0, len(list))
+	seen := make(map[string]struct{})
+	for _, check := range list {
+		if _, ok := seen[check.DomainID]; ok {
+			continue
+		}
+		seen[check.DomainID] = struct{}{}
+		domainIDs = append(domainIDs, check.DomainID)
+	}
+
+	domainMap := map[string]sqlstore.Domain{}
+	if s.domains != nil && len(domainIDs) > 0 {
+		if domains, err := s.domains.ListByIDs(ctx, domainIDs); err == nil {
+			for _, d := range domains {
+				domainMap[d.ID] = d
+			}
+		}
+	}
+
+	for _, check := range list {
+		dto := toIndexCheckDTO(check)
+		if domain, ok := domainMap[check.DomainID]; ok {
+			if url := strings.TrimSpace(domain.URL); url != "" {
+				dto.DomainURL = &url
+			}
+			pid := domain.ProjectID
+			dto.ProjectID = &pid
+		}
+		resp = append(resp, dto)
+	}
+	return resp
 }
 
 func toAdminUserDTO(u auth.User) adminUserDTO {
@@ -5840,6 +6421,53 @@ func hasProjectPermission(userRole string, memberRole string, requiredRole strin
 	requiredLevel := roleHierarchy[requiredRole]
 
 	return userLevel >= requiredLevel
+}
+
+func parseLimitParam(r *http.Request, fallback int, max int) int {
+	limit := fallback
+	if v := strings.TrimSpace(r.URL.Query().Get("limit")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			if max > 0 && n > max {
+				n = max
+			}
+			limit = n
+		}
+	}
+	return limit
+}
+
+func parsePageParam(r *http.Request, fallback int) int {
+	page := fallback
+	if v := strings.TrimSpace(r.URL.Query().Get("page")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			page = n
+		}
+	}
+	return page
+}
+
+func parseIndexCheckFilters(r *http.Request, fallbackLimit int, maxLimit int) sqlstore.IndexCheckFilters {
+	limit := parseLimitParam(r, fallbackLimit, maxLimit)
+	page := parsePageParam(r, 1)
+	offset := (page - 1) * limit
+	status := strings.TrimSpace(r.URL.Query().Get("status"))
+	search := strings.TrimSpace(r.URL.Query().Get("search"))
+	filters := sqlstore.IndexCheckFilters{
+		Limit:  limit,
+		Offset: offset,
+	}
+	if status != "" {
+		filters.Status = &status
+	}
+	if search != "" {
+		filters.Search = &search
+	}
+	return filters
+}
+
+func dateOnlyUTC(t time.Time) time.Time {
+	utc := t.UTC()
+	return time.Date(utc.Year(), utc.Month(), utc.Day(), 0, 0, 0, 0, time.UTC)
 }
 
 func joinURLPath(parts []string) (string, error) {

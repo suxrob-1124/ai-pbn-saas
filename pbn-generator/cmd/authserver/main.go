@@ -47,6 +47,8 @@ func main() {
 	fileEditStore := sqlstore.NewFileEditStore(database)
 	linkTaskStore := sqlstore.NewLinkTaskStore(database)
 	genQueueStore := sqlstore.NewGenQueueStore(database)
+	indexCheckStore := sqlstore.NewIndexCheckStore(database)
+	checkHistoryStore := sqlstore.NewCheckHistoryStore(database)
 	mailer := buildMailer(cfg, logger)
 	taskClient, err := tasks.NewClient(cfg)
 	if err != nil {
@@ -66,7 +68,7 @@ func main() {
 		Logger:             logger,
 	})
 
-	srv := httpserver.New(cfg, svc, logger, projectStore, projectMemberStore, domainStore, generationStore, promptStore, scheduleStore, linkScheduleStore, auditStore, siteFileStore, fileEditStore, linkTaskStore, genQueueStore, taskClient)
+	srv := httpserver.New(cfg, svc, logger, projectStore, projectMemberStore, domainStore, generationStore, promptStore, scheduleStore, linkScheduleStore, auditStore, siteFileStore, fileEditStore, linkTaskStore, genQueueStore, indexCheckStore, checkHistoryStore, taskClient)
 	handler := srv.Handler()
 
 	go startSessionCleanup(svc, cfg.SessionCleanInterval)

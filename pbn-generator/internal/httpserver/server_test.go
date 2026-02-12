@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -63,7 +64,9 @@ func setupServer(t *testing.T) *Server {
 	fileEdits := newStubFileEditStore()
 	linkTasks := newStubLinkTaskStore()
 	genQueue := newStubGenQueueStore()
-	return New(cfg, svc, logger, proj, nil, dom, gen, prompts, schedules, linkSchedules, nil, siteFiles, fileEdits, linkTasks, genQueue, newStubEnqueuer())
+	indexChecks := newStubIndexCheckStore()
+	checkHistory := newStubCheckHistoryStore()
+	return New(cfg, svc, logger, proj, nil, dom, gen, prompts, schedules, linkSchedules, nil, siteFiles, fileEdits, linkTasks, genQueue, indexChecks, checkHistory, newStubEnqueuer())
 }
 
 func TestRegisterAndLogin(t *testing.T) {
@@ -2109,6 +2112,242 @@ func (s *stubGenQueueStore) Delete(ctx context.Context, itemID string) error {
 	}
 	delete(s.items, itemID)
 	return nil
+}
+
+type stubIndexCheckStore struct {
+	mu              sync.Mutex
+	checks          map[string]sqlstore.IndexCheck
+	domainToProject map[string]string
+	domainURL       map[string]string
+	errGetByDomain  error
+	errCreate       error
+	errReset        error
+	errListDomain   error
+	errListProject  error
+	errListAll      error
+	errListFailed   error
+}
+
+func newStubIndexCheckStore() *stubIndexCheckStore {
+	return &stubIndexCheckStore{
+		checks:          make(map[string]sqlstore.IndexCheck),
+		domainToProject: make(map[string]string),
+		domainURL:       make(map[string]string),
+	}
+}
+
+func (s *stubIndexCheckStore) Create(ctx context.Context, check sqlstore.IndexCheck) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.errCreate != nil {
+		return s.errCreate
+	}
+	if check.CreatedAt.IsZero() {
+		check.CreatedAt = time.Now().UTC()
+	}
+	if check.Status == "" {
+		check.Status = "pending"
+	}
+	s.checks[check.ID] = check
+	return nil
+}
+
+func (s *stubIndexCheckStore) Get(ctx context.Context, checkID string) (*sqlstore.IndexCheck, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	check, ok := s.checks[checkID]
+	if !ok {
+		return nil, sql.ErrNoRows
+	}
+	out := check
+	return &out, nil
+}
+
+func (s *stubIndexCheckStore) GetByDomainAndDate(ctx context.Context, domainID string, date time.Time) (*sqlstore.IndexCheck, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.errGetByDomain != nil {
+		return nil, s.errGetByDomain
+	}
+	for _, check := range s.checks {
+		if check.DomainID != domainID {
+			continue
+		}
+		if check.CheckDate.Equal(date) {
+			out := check
+			return &out, nil
+		}
+	}
+	return nil, sql.ErrNoRows
+}
+
+func (s *stubIndexCheckStore) ListByDomain(ctx context.Context, domainID string, filters sqlstore.IndexCheckFilters) ([]sqlstore.IndexCheck, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.errListDomain != nil {
+		return nil, s.errListDomain
+	}
+	res := make([]sqlstore.IndexCheck, 0)
+	for _, check := range s.checks {
+		if check.DomainID != domainID {
+			continue
+		}
+		if !filterIndexCheck(check, filters, s.domainURL) {
+			continue
+		}
+		res = append(res, check)
+	}
+	sortIndexChecks(res)
+	res = applyIndexCheckPagination(res, filters)
+	return res, nil
+}
+
+func (s *stubIndexCheckStore) ListByProject(ctx context.Context, projectID string, filters sqlstore.IndexCheckFilters) ([]sqlstore.IndexCheck, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.errListProject != nil {
+		return nil, s.errListProject
+	}
+	res := make([]sqlstore.IndexCheck, 0)
+	for _, check := range s.checks {
+		if s.domainToProject[check.DomainID] != projectID {
+			continue
+		}
+		if !filterIndexCheck(check, filters, s.domainURL) {
+			continue
+		}
+		res = append(res, check)
+	}
+	sortIndexChecks(res)
+	res = applyIndexCheckPagination(res, filters)
+	return res, nil
+}
+
+func (s *stubIndexCheckStore) ListAll(ctx context.Context, filters sqlstore.IndexCheckFilters) ([]sqlstore.IndexCheck, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.errListAll != nil {
+		return nil, s.errListAll
+	}
+	res := make([]sqlstore.IndexCheck, 0, len(s.checks))
+	for _, check := range s.checks {
+		if !filterIndexCheck(check, filters, s.domainURL) {
+			continue
+		}
+		res = append(res, check)
+	}
+	sortIndexChecks(res)
+	res = applyIndexCheckPagination(res, filters)
+	return res, nil
+}
+
+func (s *stubIndexCheckStore) ListFailed(ctx context.Context, filters sqlstore.IndexCheckFilters) ([]sqlstore.IndexCheck, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.errListFailed != nil {
+		return nil, s.errListFailed
+	}
+	status := "failed_investigation"
+	filters.Status = &status
+	res := make([]sqlstore.IndexCheck, 0)
+	for _, check := range s.checks {
+		if !filterIndexCheck(check, filters, s.domainURL) {
+			continue
+		}
+		res = append(res, check)
+	}
+	sortIndexChecks(res)
+	res = applyIndexCheckPagination(res, filters)
+	return res, nil
+}
+
+func (s *stubIndexCheckStore) ResetForManual(ctx context.Context, checkID string, nextRetry time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.errReset != nil {
+		return s.errReset
+	}
+	check, ok := s.checks[checkID]
+	if !ok {
+		return sql.ErrNoRows
+	}
+	check.Status = "pending"
+	check.Attempts = 0
+	check.IsIndexed = sql.NullBool{}
+	check.ErrorMessage = sql.NullString{}
+	check.LastAttemptAt = sql.NullTime{}
+	check.CompletedAt = sql.NullTime{}
+	check.NextRetryAt = sql.NullTime{Time: nextRetry, Valid: true}
+	s.checks[checkID] = check
+	return nil
+}
+
+type stubCheckHistoryStore struct {
+	mu      sync.Mutex
+	history map[string][]sqlstore.CheckHistory
+	errList error
+}
+
+func newStubCheckHistoryStore() *stubCheckHistoryStore {
+	return &stubCheckHistoryStore{
+		history: make(map[string][]sqlstore.CheckHistory),
+	}
+}
+
+func (s *stubCheckHistoryStore) ListByCheck(ctx context.Context, checkID string, limit int) ([]sqlstore.CheckHistory, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.errList != nil {
+		return nil, s.errList
+	}
+	list := append([]sqlstore.CheckHistory(nil), s.history[checkID]...)
+	if limit > 0 && len(list) > limit {
+		list = list[:limit]
+	}
+	return list, nil
+}
+
+func filterIndexCheck(check sqlstore.IndexCheck, filters sqlstore.IndexCheckFilters, domainURL map[string]string) bool {
+	if filters.Status != nil && strings.TrimSpace(*filters.Status) != "" {
+		if check.Status != *filters.Status {
+			return false
+		}
+	}
+	if filters.Search != nil && strings.TrimSpace(*filters.Search) != "" {
+		term := strings.ToLower(strings.TrimSpace(*filters.Search))
+		match := strings.Contains(strings.ToLower(check.DomainID), term)
+		if url := strings.TrimSpace(domainURL[check.DomainID]); url != "" {
+			if strings.Contains(strings.ToLower(url), term) {
+				match = true
+			}
+		}
+		if !match {
+			return false
+		}
+	}
+	return true
+}
+
+func applyIndexCheckPagination(list []sqlstore.IndexCheck, filters sqlstore.IndexCheckFilters) []sqlstore.IndexCheck {
+	if filters.Offset > 0 {
+		if filters.Offset >= len(list) {
+			return []sqlstore.IndexCheck{}
+		}
+		list = list[filters.Offset:]
+	}
+	if filters.Limit > 0 && len(list) > filters.Limit {
+		list = list[:filters.Limit]
+	}
+	return list
+}
+
+func sortIndexChecks(list []sqlstore.IndexCheck) {
+	sort.Slice(list, func(i, j int) bool {
+		if list[i].CheckDate.Equal(list[j].CheckDate) {
+			return list[i].CreatedAt.After(list[j].CreatedAt)
+		}
+		return list[i].CheckDate.After(list[j].CheckDate)
+	})
 }
 
 type stubLinkTaskStore struct {
