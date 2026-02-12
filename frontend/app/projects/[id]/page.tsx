@@ -5,7 +5,21 @@ import type { UrlObject } from "url";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { authFetch, authFetchCached, post, patch, del } from "../../../lib/http";
 import { useAuthGuard } from "../../../lib/useAuth";
-import { FiPlay, FiRefreshCw, FiList, FiClock, FiPauseCircle, FiCheck, FiTrash2, FiX, FiKey, FiAlertCircle, FiLink, FiInfo } from "react-icons/fi";
+import {
+  FiPlay,
+  FiRefreshCw,
+  FiList,
+  FiClock,
+  FiPauseCircle,
+  FiCheck,
+  FiTrash2,
+  FiX,
+  FiKey,
+  FiAlertCircle,
+  FiLink,
+  FiInfo,
+  FiActivity
+} from "react-icons/fi";
 import Link from "next/link";
 import { showToast } from "../../../lib/toastStore";
 import { createSchedule, deleteSchedule, listSchedules, triggerSchedule, updateSchedule } from "../../../lib/schedulesApi";
@@ -1487,6 +1501,20 @@ export default function ProjectDetailPage() {
                   >
                     <FiList />
                   </button>
+                  <Link
+                    href={`/monitoring/indexing?domainId=${encodeURIComponent(d.id)}`}
+                    className="hidden sm:inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  >
+                    <FiActivity /> Index checks
+                  </Link>
+                  <Link
+                    href={`/monitoring/indexing?domainId=${encodeURIComponent(d.id)}`}
+                    className="inline-flex sm:hidden items-center justify-center rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    title="Index checks"
+                    aria-label="Index checks"
+                  >
+                    <FiActivity />
+                  </Link>
                   <button
                     onClick={() => deleteDomain(d.id)}
                     disabled={loading}

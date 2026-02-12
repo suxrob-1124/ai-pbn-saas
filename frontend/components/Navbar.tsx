@@ -3,7 +3,18 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
-import { FiLogIn, FiUser, FiMoon, FiSun, FiUserPlus, FiGrid, FiShield, FiClock } from "react-icons/fi";
+import {
+  FiLogIn,
+  FiUser,
+  FiMoon,
+  FiSun,
+  FiUserPlus,
+  FiGrid,
+  FiShield,
+  FiClock,
+  FiActivity,
+  FiChevronDown
+} from "react-icons/fi";
 import { useTheme } from "../lib/useTheme";
 import { apiBase, post } from "../lib/http";
 
@@ -72,11 +83,29 @@ export function Navbar() {
               <FiGrid /> Проекты
             </Link>
             {user.role && user.role.toLowerCase() === "admin" && (
-              <Link
-                href="/admin"
-                className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 dark:border-indigo-500/50 dark:bg-indigo-500/10 dark:text-indigo-100">
-                <FiShield /> Админ
-              </Link>
+              <>
+                <div className="relative group">
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  >
+                    <FiActivity /> Monitoring <FiChevronDown className="text-xs" />
+                  </button>
+                  <div className="absolute left-0 mt-2 min-w-[160px] rounded-xl border border-slate-200 bg-white shadow-lg opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition dark:border-slate-800 dark:bg-slate-900">
+                    <Link
+                      href="/monitoring/indexing"
+                      className="block px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-100 dark:hover:bg-slate-800"
+                    >
+                      Indexing
+                    </Link>
+                  </div>
+                </div>
+                <Link
+                  href="/admin"
+                  className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 dark:border-indigo-500/50 dark:bg-indigo-500/10 dark:text-indigo-100">
+                  <FiShield /> Админ
+                </Link>
+              </>
             )}
             {/* <button
               onClick={logout}

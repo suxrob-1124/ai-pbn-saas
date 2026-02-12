@@ -543,7 +543,7 @@
 
 ### Sprint 3: Index Monitoring UI
 
-- [ ] **API клиент для Index Checks**
+- [x] **API клиент для Index Checks**
   - Файл: `lib/indexChecksApi.ts`
   - Методы:
     - `listByDomain(domainId, filters)` → `GET /api/domains/:id/index-checks`
@@ -554,7 +554,7 @@
     - `status`, `isIndexed`, `from`, `to`, `limit`, `offset`
     - `domainId` (только для admin списка)
 
-- [ ] **Типы DTO для Index Checks**
+- [x] **Типы DTO для Index Checks**
   - Файл: `types/indexChecks.ts` (или общий `types/api.ts`)
   - `IndexCheckStatus`: `pending | checking | success | failed_investigation`
   - `IndexCheck`:
@@ -564,18 +564,18 @@
     - `completedAt`, `createdAt`
   - `IndexChecksFilters`, `IndexChecksResponse`
 
-- [ ] **Навигация Monitoring**
+- [x] **Навигация Monitoring**
   - Добавить пункт в меню: `Monitoring → Indexing`
   - Права: admin-only для глобального списка
   - Ссылки в домене: "Index checks" → фильтр по домену
 
-- [ ] **UI состояния для Index Monitoring**
+- [x] **UI состояния для Index Monitoring**
   - Loading/empty/error/permission denied
   - Skeleton для таблицы и статистики
 
 #### Index Monitoring Dashboard
 
-- [ ] **Страница: /monitoring/indexing**
+- [x] **Страница: /monitoring/indexing**
   - Файл: `app/monitoring/indexing/page.tsx`
   - URL query синхронизация:
     - `status`, `from`, `to`, `domainId`, `isIndexed`
@@ -586,7 +586,7 @@
     - `IndexStats` - статистика и графики
     - `FailedChecksAlert` - алерты
 
-- [ ] **Компонент: IndexFiltersBar**
+- [x] **Компонент: IndexFiltersBar**
   - Файл: `components/IndexFiltersBar.tsx`
   - Поля:
     - Статус (multi-select)
@@ -595,7 +595,7 @@
     - Флаг `isIndexed` (all/true/false)
   - Кнопки: `Apply`, `Reset`, `Refresh`
 
-- [ ] **Компонент: IndexCalendar**
+- [x] **Компонент: IndexCalendar**
   - Файл: `components/IndexCalendar.tsx`
   - Библиотека: react-calendar или кастомный
   - День = ячейка с индикатором:
@@ -606,7 +606,7 @@
   - Tooltip при hover: детали проверки
   - Click по дню → фильтр таблицы по дате
 
-- [ ] **Компонент: IndexTable**
+- [x] **Компонент: IndexTable**
   - Файл: `components/IndexTable.tsx`
   - Таблица:
     - Домен, дата, статус, attempts, isIndexed, lastAttemptAt, nextRetryAt
@@ -621,7 +621,7 @@
     - `Run now` (POST manual)
     - `Open domain` (ссылка на домен)
 
-- [ ] **Компонент: IndexStats**
+- [x] **Компонент: IndexStats**
   - Файл: `components/IndexStats.tsx`
   - Метрики:
     - Процент индексации за последние 30 дней
@@ -632,7 +632,7 @@
     - Bar chart: количество проверок в день
   - Переключатель периода: 7d / 30d / 90d
 
-- [ ] **Компонент: FailedChecksAlert**
+- [x] **Компонент: FailedChecksAlert**
   - Файл: `components/FailedChecksAlert.tsx`
   - Alert banner вверху страницы
   - Показывать количество failed_investigation
