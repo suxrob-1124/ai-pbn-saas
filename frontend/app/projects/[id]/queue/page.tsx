@@ -592,7 +592,7 @@ export default function ProjectQueuePage() {
               <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
                 {visibleLinks.map((task) => {
                   const domain = domains[task.domain_id];
-                  const domainLabel = domain?.url || task.domain_url || "Домен";
+                  const domainLabel = domain?.url || "Домен";
                   const domainHref = `/domains/${domain?.id || task.domain_id}`;
                   const actionLabel = (task.action || "insert") === "remove" ? "Удаление" : "Вставка";
                   const lastLog = task.log_lines?.length ? task.log_lines[task.log_lines.length - 1] : "";

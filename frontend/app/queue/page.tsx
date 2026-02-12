@@ -29,8 +29,10 @@ export default function QueuePage() {
   );
 }
 
+type ProjectDTO = { id: string; name?: string | null };
+
 function QueuePageContent() {
-  useAuthGuard();
+  const { me } = useAuthGuard();
   const [items, setItems] = useState<Generation[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -75,13 +77,50 @@ function QueuePageContent() {
     setLinkLoading(true);
     setLinkError(null);
     try {
-      const res = await listLinkTasks({
+      const params = {
         limit: linkPageSize,
         page: linkPage,
         status: linkFilter !== "all" ? linkFilter : undefined,
         search: linkSearch.trim() ? linkSearch.trim() : undefined
-      });
-      const list = Array.isArray(res) ? res : [];
+      };
+      let list: LinkTaskDTO[] = [];
+      try {
+        const res = await listLinkTasks(params);
+        list = Array.isArray(res) ? res : [];
+      } catch (err: any) {
+        const msg = String(err?.message || "");
+        const isAdminOnly = msg.toLowerCase().includes("admin only");
+        const isAdmin = (me?.role || "").toLowerCase() === "admin";
+        if (!isAdmin && isAdminOnly) {
+          const projects = await authFetch<ProjectDTO[]>("/api/projects");
+          const ids = (Array.isArray(projects) ? projects : [])
+            .map((project) => project.id)
+            .filter((id) => id);
+          const perProjectLimit = Math.max(200, linkPageSize * linkPage);
+          const allTasks: LinkTaskDTO[] = [];
+          for (const projectId of ids) {
+            const res = await listLinkTasks({
+              ...params,
+              projectId,
+              limit: perProjectLimit,
+              page: 1
+            });
+            if (Array.isArray(res)) {
+              allTasks.push(...res);
+            }
+          }
+          allTasks.sort((a, b) => {
+            const aTime = new Date(a.scheduled_for).getTime();
+            const bTime = new Date(b.scheduled_for).getTime();
+            return aTime - bTime;
+          });
+          const offset = (linkPage - 1) * linkPageSize;
+          const slice = allTasks.slice(offset, offset + linkPageSize + 1);
+          list = slice.slice(0, linkPageSize);
+        } else {
+          throw err;
+        }
+      }
       setLinkTasks(list);
       const ids = Array.from(new Set(list.map((task) => task.domain_id).filter(Boolean))).slice(0, 200);
       if (ids.length === 0) {
@@ -107,7 +146,7 @@ function QueuePageContent() {
     } finally {
       setLinkLoading(false);
     }
-  }, [linkFilter, linkPage, linkPageSize, linkSearch]);
+  }, [linkFilter, linkPage, linkPageSize, linkSearch, me]);
 
   const handleRefresh = useCallback(async () => {
     await Promise.all([load(), loadLinks()]);
