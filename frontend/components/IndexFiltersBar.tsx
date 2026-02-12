@@ -189,7 +189,7 @@ export function IndexFiltersBar({
             className="inline-flex items-center gap-2 rounded-lg bg-slate-800 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-700 disabled:opacity-50"
             disabled={disabled || !dirty}
           >
-            Apply
+            Применить
           </button>
           <button
             type="button"
@@ -197,7 +197,7 @@ export function IndexFiltersBar({
             className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
             disabled={disabled || !dirty}
           >
-            Reset
+            Сбросить
           </button>
           <button
             type="button"
@@ -205,7 +205,7 @@ export function IndexFiltersBar({
             className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
             disabled={disabled}
           >
-            Refresh
+            Обновить
           </button>
         </div>
       </div>

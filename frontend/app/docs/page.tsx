@@ -30,6 +30,10 @@ export default function DocsPage() {
             text: "Планируйте генерации и вставку ссылок. Ручные запуски не блокируют авто‑расписание.",
           },
           {
+            title: "Мониторинг индексации",
+            text: "Проверки индексации, статистика и календарь по доменам и проектам.",
+          },
+          {
             title: "Очередь",
             text: "В очереди отображаются только домены, которые реально ожидают запуск.",
           },
@@ -52,6 +56,7 @@ export default function DocsPage() {
           <li>Заполните анкор и акцептор для ссылок.</li>
           <li>Настройте расписания генерации и ссылок.</li>
           <li>Запустите генерацию и следите за очередью и логами.</li>
+          <li>Подключите мониторинг индексации и проверяйте статус доменов.</li>
         </ol>
         <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-200">
           <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Пример</p>

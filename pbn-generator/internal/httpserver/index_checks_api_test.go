@@ -35,7 +35,7 @@ func TestDomainIndexChecksList(t *testing.T) {
 		ID:        "domain-1",
 		ProjectID: project.ID,
 		URL:       "example.com",
-		Status:    "waiting",
+		Status:    "published",
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),
 	}
@@ -98,7 +98,7 @@ func TestDomainIndexChecksListStoreError(t *testing.T) {
 		ID:        "domain-1",
 		ProjectID: project.ID,
 		URL:       "example.com",
-		Status:    "waiting",
+		Status:    "published",
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),
 	}
@@ -137,7 +137,7 @@ func TestDomainIndexChecksManualRun(t *testing.T) {
 		ID:        "domain-1",
 		ProjectID: project.ID,
 		URL:       "example.com",
-		Status:    "waiting",
+		Status:    "published",
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),
 	}
@@ -179,6 +179,44 @@ func TestDomainIndexChecksManualRun(t *testing.T) {
 	}
 }
 
+func TestDomainIndexChecksManualRunUnpublished(t *testing.T) {
+	s := setupServer(t)
+
+	projStore := s.projects.(*stubProjectStore)
+	domStore := s.domains.(*stubDomainStore)
+
+	project := sqlstore.Project{
+		ID:        "project-1",
+		UserEmail: "owner@example.com",
+		Name:      "Demo",
+		Status:    "draft",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+	projStore.projects[project.ID] = project
+	domStore.domains["domain-1"] = sqlstore.Domain{
+		ID:        "domain-1",
+		ProjectID: project.ID,
+		URL:       "example.com",
+		Status:    "waiting",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+
+	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email:      "owner@example.com",
+		Role:       "manager",
+		IsApproved: true,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/domains/domain-1/index-checks", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	s.handleDomainActions(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestProjectIndexChecksManualRunStoreError(t *testing.T) {
 	s := setupServer(t)
 
@@ -199,7 +237,7 @@ func TestProjectIndexChecksManualRunStoreError(t *testing.T) {
 		ID:        "domain-1",
 		ProjectID: project.ID,
 		URL:       "example.com",
-		Status:    "waiting",
+		Status:    "published",
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),
 	}
@@ -450,7 +488,7 @@ func TestDomainIndexChecksHistory(t *testing.T) {
 		ID:        "domain-1",
 		ProjectID: project.ID,
 		URL:       "example.com",
-		Status:    "waiting",
+		Status:    "published",
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),
 	}

@@ -129,7 +129,7 @@ func TestRunIndexCheckerTickSuccess(t *testing.T) {
 	}
 	domainStore := &stubDomainStore{
 		byProject: map[string][]sqlstore.Domain{
-			"proj-1": {{ID: "dom-1", ProjectID: "proj-1", URL: "example.com"}},
+			"proj-1": {{ID: "dom-1", ProjectID: "proj-1", URL: "example.com", Status: "published"}},
 		},
 	}
 	checkStore := &stubIndexCheckStore{
@@ -181,7 +181,7 @@ func TestRunIndexCheckerTickNotIndexed(t *testing.T) {
 	}
 	domainStore := &stubDomainStore{
 		byProject: map[string][]sqlstore.Domain{
-			"proj-1": {{ID: "dom-1", ProjectID: "proj-1", URL: "example.com"}},
+			"proj-1": {{ID: "dom-1", ProjectID: "proj-1", URL: "example.com", Status: "published"}},
 		},
 	}
 	checkStore := &stubIndexCheckStore{
@@ -224,7 +224,7 @@ func TestRunIndexCheckerTickError(t *testing.T) {
 	}
 	domainStore := &stubDomainStore{
 		byProject: map[string][]sqlstore.Domain{
-			"proj-1": {{ID: "dom-1", ProjectID: "proj-1", URL: "example.com"}},
+			"proj-1": {{ID: "dom-1", ProjectID: "proj-1", URL: "example.com", Status: "published"}},
 		},
 	}
 	check := &sqlstore.IndexCheck{
@@ -275,5 +275,37 @@ func TestRunIndexCheckerTickError(t *testing.T) {
 	}
 	if checkStore.updateCalls[0].errMsg == nil || *checkStore.updateCalls[0].errMsg != "boom" {
 		t.Fatalf("expected error message to be propagated, got %#v", checkStore.updateCalls[0].errMsg)
+	}
+}
+
+func TestRunIndexCheckerTickSkipsUnpublished(t *testing.T) {
+	now := time.Now().UTC()
+	projectStore := &stubProjectStore{
+		projects: []sqlstore.Project{{ID: "proj-1", TargetCountry: "SE"}},
+	}
+	domainStore := &stubDomainStore{
+		byProject: map[string][]sqlstore.Domain{
+			"proj-1": {{ID: "dom-1", ProjectID: "proj-1", URL: "example.com", Status: "waiting"}},
+		},
+	}
+	checkStore := &stubIndexCheckStore{
+		getByDomainErr: sql.ErrNoRows,
+	}
+	historyStore := &stubHistoryStore{}
+	checker := &stubChecker{indexed: true}
+
+	logger := zap.NewNop().Sugar()
+	if err := RunIndexCheckerTick(context.Background(), now, projectStore, domainStore, checkStore, historyStore, checker, logger); err != nil {
+		t.Fatalf("tick failed: %v", err)
+	}
+
+	if checkStore.created != nil {
+		t.Fatalf("expected no check to be created, got %#v", checkStore.created)
+	}
+	if len(historyStore.created) != 0 {
+		t.Fatalf("expected no history entries, got %d", len(historyStore.created))
+	}
+	if len(checkStore.updateCalls) != 0 {
+		t.Fatalf("expected no status updates, got %#v", checkStore.updateCalls)
 	}
 }

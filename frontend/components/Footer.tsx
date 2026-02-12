@@ -9,7 +9,7 @@ export function Footer() {
         <div className="flex items-center gap-2">
           <span>SiteGen AI</span>
           <span className="text-slate-300 dark:text-slate-700">·</span>
-          <span>Monitoring & Gen</span>
+          <span>Мониторинг и генерации</span>
         </div>
         <div className="flex flex-wrap items-center gap-4">
           <Link href="/docs" className="hover:text-slate-700 dark:hover:text-slate-200">

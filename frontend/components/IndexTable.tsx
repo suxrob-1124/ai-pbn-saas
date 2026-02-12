@@ -133,7 +133,7 @@ export function IndexTable({
   return (
     <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="font-semibold">Index Checks</h3>
+        <h3 className="font-semibold">Проверки индексации</h3>
         <div className="flex items-center gap-2">
           {onRefresh && (
             <button
@@ -142,7 +142,7 @@ export function IndexTable({
               disabled={loading}
               className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
             >
-              Refresh
+              Обновить
             </button>
           )}
         </div>
@@ -265,11 +265,11 @@ export function IndexTable({
               <SortableTh label="Домен" sort={sort} sortKey="domain" onSort={handleSort} />
               <SortableTh label="Дата" sort={sort} sortKey="date" onSort={handleSort} />
               <SortableTh label="Статус" sort={sort} sortKey="status" onSort={handleSort} />
-              <SortableTh label="Attempts" sort={sort} sortKey="attempts" onSort={handleSort} />
-              <SortableTh label="Indexed" sort={sort} sortKey="isIndexed" onSort={handleSort} />
-              <SortableTh label="Last attempt" sort={sort} sortKey="lastAttempt" onSort={handleSort} />
-              <SortableTh label="Next retry" sort={sort} sortKey="nextRetry" onSort={handleSort} />
-              <th className="text-left py-2">Actions</th>
+              <SortableTh label="Попытки" sort={sort} sortKey="attempts" onSort={handleSort} />
+              <SortableTh label="В индексе" sort={sort} sortKey="isIndexed" onSort={handleSort} />
+              <SortableTh label="Последняя попытка" sort={sort} sortKey="lastAttempt" onSort={handleSort} />
+              <SortableTh label="Следующий ретрай" sort={sort} sortKey="nextRetry" onSort={handleSort} />
+              <th className="text-left py-2">Действия</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
@@ -319,8 +319,8 @@ export function IndexTable({
                       {check.is_indexed === null || check.is_indexed === undefined
                         ? "—"
                         : check.is_indexed
-                          ? "true"
-                          : "false"}
+                          ? "Да"
+                          : "Нет"}
                     </td>
                     <td className="py-2 pr-3 whitespace-nowrap">
                       {formatDateTime(check.last_attempt_at)}
@@ -336,13 +336,13 @@ export function IndexTable({
                           disabled={!onRunNow || loading}
                           className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                         >
-                          Run now
+                          Запустить
                         </button>
                         <Link
                           href={`/domains/${check.domain_id}`}
                           className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                         >
-                          Open domain
+                          Открыть домен
                         </Link>
                       </div>
                     </td>

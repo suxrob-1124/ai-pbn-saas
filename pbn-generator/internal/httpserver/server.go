@@ -2253,6 +2253,10 @@ func (s *Server) handleDomainIndexChecks(w http.ResponseWriter, r *http.Request,
 			writeError(w, http.StatusForbidden, "insufficient permissions: editor role required")
 			return
 		}
+		if !isDomainPublished(domain) {
+			writeError(w, http.StatusConflict, "domain is not published")
+			return
+		}
 		now := time.Now().UTC()
 		check, created, err := s.upsertManualIndexCheck(r.Context(), domainID, now)
 		if err != nil {
@@ -4362,6 +4366,10 @@ func (s *Server) handleProjectIndexChecks(w http.ResponseWriter, r *http.Request
 				skipped++
 				continue
 			}
+			if !isDomainPublished(d) {
+				skipped++
+				continue
+			}
 			_, wasCreated, err := s.upsertManualIndexCheck(r.Context(), d.ID, now)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "could not start index checks")
@@ -5232,6 +5240,10 @@ func (s *Server) handleAdminIndexChecksRun(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "could not load domain")
+		return
+	}
+	if !isDomainPublished(domain) {
+		writeError(w, http.StatusConflict, "domain is not published")
 		return
 	}
 	now := time.Now().UTC()

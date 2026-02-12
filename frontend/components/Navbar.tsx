@@ -116,7 +116,7 @@ export function Navbar() {
                     onClick={() => setMonitoringOpen((prev) => !prev)}
                     className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   >
-                    <FiActivity /> Monitoring <FiChevronDown className="text-xs" />
+                    <FiActivity /> Мониторинг <FiChevronDown className="text-xs" />
                   </button>
                   {monitoringOpen && (
                     <div className="absolute left-0 top-full pt-2 min-w-[180px]">
@@ -125,7 +125,7 @@ export function Navbar() {
                           href="/monitoring/indexing"
                           className="block px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-100 dark:hover:bg-slate-800"
                         >
-                          Indexing
+                          Индексация
                         </Link>
                       </div>
                     </div>

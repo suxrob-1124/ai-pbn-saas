@@ -1411,6 +1411,7 @@ export default function ProjectDetailPage() {
             const linkStatus = (d.link_status || "").toLowerCase();
             const hasActiveLink = ["inserted", "generated"].includes(linkStatus);
             const canRemoveLink = hasActiveLink;
+            const isPublished = (d.status || "").toLowerCase() === "published";
             const linkReadyAtDate = d.link_ready_at ? new Date(d.link_ready_at) : null;
             const linkReadyValid = linkReadyAtDate && !Number.isNaN(linkReadyAtDate.getTime());
             const linkReadyFuture = Boolean(linkReadyValid && linkReadyAtDate!.getTime() > Date.now());
@@ -1509,20 +1510,46 @@ export default function ProjectDetailPage() {
                   >
                     <FiList />
                   </button>
-                  <Link
-                    href={`/monitoring/indexing?domainId=${encodeURIComponent(d.id)}`}
-                    className="hidden sm:inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  >
-                    <FiActivity /> Index checks
-                  </Link>
-                  <Link
-                    href={`/monitoring/indexing?domainId=${encodeURIComponent(d.id)}`}
-                    className="inline-flex sm:hidden items-center justify-center rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                    title="Index checks"
-                    aria-label="Index checks"
-                  >
-                    <FiActivity />
-                  </Link>
+                  {isPublished ? (
+                    <>
+                      <Link
+                        href={`/monitoring/indexing?domainId=${encodeURIComponent(d.id)}`}
+                        className="hidden sm:inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                      >
+                        <FiActivity /> Проверки индексации
+                      </Link>
+                      <Link
+                        href={`/monitoring/indexing?domainId=${encodeURIComponent(d.id)}`}
+                        className="inline-flex sm:hidden items-center justify-center rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                        title="Проверки индексации"
+                        aria-label="Проверки индексации"
+                      >
+                        <FiActivity />
+                      </Link>
+                    </>
+                  ) : (
+                    <>
+                      <span
+                        title="Доступно после публикации сайта"
+                        className="hidden sm:inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400"
+                      >
+                        <FiActivity /> Проверки индексации
+                      </span>
+                      <span
+                        title="Доступно после публикации сайта"
+                        aria-label="Проверки индексации доступны после публикации"
+                        className="inline-flex sm:hidden items-center justify-center rounded-lg border border-slate-200 bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400"
+                      >
+                        <FiActivity />
+                      </span>
+                      <span
+                        title="Опубликуйте сайт, чтобы включить проверки индексации"
+                        className="hidden sm:inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400"
+                      >
+                        <FiInfo className="h-3 w-3" /> После публикации
+                      </span>
+                    </>
+                  )}
                   <button
                     onClick={() => deleteDomain(d.id)}
                     disabled={loading}

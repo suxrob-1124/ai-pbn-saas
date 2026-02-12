@@ -35,6 +35,8 @@ tags:
     description: Файлы домена
   - name: Admin
     description: Административные операции
+  - name: Index Checks
+    description: Мониторинг индексации и проверки
 paths:
   /api/register:
     post:
@@ -974,6 +976,516 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/LinkTask"
+  /api/domains/{domainId}/index-checks:
+    get:
+      tags: [Index Checks]
+      summary: История проверок индексации по домену
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+        - in: query
+          name: status
+          schema:
+            type: string
+          description: "Список статусов через запятую (pending,checking,success,failed_investigation)"
+        - in: query
+          name: is_indexed
+          schema:
+            type: boolean
+        - in: query
+          name: from
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: to
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: search
+          schema:
+            type: string
+          description: Поиск по domain_id или URL
+        - in: query
+          name: sort
+          schema:
+            type: string
+          description: "Например: check_date:desc"
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+        - in: query
+          name: page
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexCheckListResponse"
+    post:
+      tags: [Index Checks]
+      summary: Запустить проверку индексации вручную по домену
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexCheck"
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexCheck"
+  /api/domains/{domainId}/index-checks/{checkId}/history:
+    get:
+      tags: [Index Checks]
+      summary: История попыток проверки по домену
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+        - $ref: "#/components/parameters/CheckId"
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/IndexCheckHistory"
+  /api/domains/{domainId}/index-checks/stats:
+    get:
+      tags: [Index Checks]
+      summary: Агрегированная статистика по домену
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+        - in: query
+          name: status
+          schema:
+            type: string
+        - in: query
+          name: is_indexed
+          schema:
+            type: boolean
+        - in: query
+          name: from
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: to
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexCheckStats"
+  /api/domains/{domainId}/index-checks/calendar:
+    get:
+      tags: [Index Checks]
+      summary: Календарные агрегаты по домену
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+        - in: query
+          name: month
+          schema:
+            type: string
+          description: "YYYY-MM"
+        - in: query
+          name: from
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: to
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/IndexCheckCalendarDay"
+  /api/projects/{projectId}/index-checks:
+    get:
+      tags: [Index Checks]
+      summary: История проверок индексации по проекту
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - in: query
+          name: status
+          schema:
+            type: string
+        - in: query
+          name: is_indexed
+          schema:
+            type: boolean
+        - in: query
+          name: from
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: to
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: search
+          schema:
+            type: string
+        - in: query
+          name: sort
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+        - in: query
+          name: page
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexCheckListResponse"
+    post:
+      tags: [Index Checks]
+      summary: Запустить проверки индексации вручную по проекту
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexCheckBatchResponse"
+  /api/projects/{projectId}/index-checks/{checkId}/history:
+    get:
+      tags: [Index Checks]
+      summary: История попыток проверки по проекту
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - $ref: "#/components/parameters/CheckId"
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/IndexCheckHistory"
+  /api/projects/{projectId}/index-checks/stats:
+    get:
+      tags: [Index Checks]
+      summary: Агрегированная статистика по проекту
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - in: query
+          name: status
+          schema:
+            type: string
+        - in: query
+          name: is_indexed
+          schema:
+            type: boolean
+        - in: query
+          name: from
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: to
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexCheckStats"
+  /api/projects/{projectId}/index-checks/calendar:
+    get:
+      tags: [Index Checks]
+      summary: Календарные агрегаты по проекту
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - in: query
+          name: month
+          schema:
+            type: string
+          description: "YYYY-MM"
+        - in: query
+          name: from
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: to
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/IndexCheckCalendarDay"
+  /api/admin/index-checks:
+    get:
+      tags: [Index Checks]
+      summary: Глобальный список проверок индексации (admin)
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+        - in: query
+          name: is_indexed
+          schema:
+            type: boolean
+        - in: query
+          name: from
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: to
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: search
+          schema:
+            type: string
+        - in: query
+          name: sort
+          schema:
+            type: string
+        - in: query
+          name: domain_id
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+        - in: query
+          name: page
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexCheckListResponse"
+  /api/admin/index-checks/failed:
+    get:
+      tags: [Index Checks]
+      summary: Проблемные проверки индексации (admin)
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+        - in: query
+          name: is_indexed
+          schema:
+            type: boolean
+        - in: query
+          name: from
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: to
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: search
+          schema:
+            type: string
+        - in: query
+          name: sort
+          schema:
+            type: string
+        - in: query
+          name: domain_id
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+        - in: query
+          name: page
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexCheckListResponse"
+  /api/admin/index-checks/run:
+    post:
+      tags: [Index Checks]
+      summary: Запустить проверку индексации вручную (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IndexCheckRunRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexCheck"
+  /api/admin/index-checks/{checkId}/history:
+    get:
+      tags: [Index Checks]
+      summary: История попыток проверки (admin)
+      parameters:
+        - $ref: "#/components/parameters/CheckId"
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/IndexCheckHistory"
+  /api/admin/index-checks/stats:
+    get:
+      tags: [Index Checks]
+      summary: Агрегированная статистика (admin)
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+        - in: query
+          name: is_indexed
+          schema:
+            type: boolean
+        - in: query
+          name: from
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: to
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: domain_id
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexCheckStats"
+  /api/admin/index-checks/calendar:
+    get:
+      tags: [Index Checks]
+      summary: Календарные агрегаты (admin)
+      parameters:
+        - in: query
+          name: month
+          schema:
+            type: string
+          description: "YYYY-MM"
+        - in: query
+          name: from
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: to
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: domain_id
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/IndexCheckCalendarDay"
   /api/queue/{itemId}:
     delete:
       tags: [Queue]
@@ -1209,6 +1721,12 @@ components:
     DomainId:
       in: path
       name: domainId
+      required: true
+      schema:
+        type: string
+    CheckId:
+      in: path
+      name: checkId
       required: true
       schema:
         type: string
@@ -2153,3 +2671,167 @@ components:
           type: string
         isActive:
           type: boolean
+    IndexCheck:
+      type: object
+      properties:
+        id:
+          type: string
+        domain_id:
+          type: string
+        project_id:
+          type: string
+          nullable: true
+        domain_url:
+          type: string
+          nullable: true
+        check_date:
+          type: string
+          format: date
+        status:
+          type: string
+        is_indexed:
+          type: boolean
+          nullable: true
+        attempts:
+          type: integer
+        last_attempt_at:
+          type: string
+          format: date-time
+          nullable: true
+        next_retry_at:
+          type: string
+          format: date-time
+          nullable: true
+        error_message:
+          type: string
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+      required: [id, domain_id, check_date, status, attempts, created_at]
+    IndexCheckHistory:
+      type: object
+      properties:
+        id:
+          type: string
+        check_id:
+          type: string
+        attempt_number:
+          type: integer
+        result:
+          type: string
+          nullable: true
+        response_data:
+          type: object
+          nullable: true
+          additionalProperties: true
+        error_message:
+          type: string
+          nullable: true
+        duration_ms:
+          type: integer
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+      required: [id, check_id, attempt_number, created_at]
+    IndexCheckListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/IndexCheck"
+        total:
+          type: integer
+      required: [items, total]
+    IndexCheckBatchResponse:
+      type: object
+      properties:
+        created:
+          type: integer
+        updated:
+          type: integer
+        skipped:
+          type: integer
+      required: [created, updated, skipped]
+    IndexCheckRunRequest:
+      type: object
+      properties:
+        domain_id:
+          type: string
+      required: [domain_id]
+    IndexCheckCalendarDay:
+      type: object
+      properties:
+        date:
+          type: string
+          format: date
+        total:
+          type: integer
+        indexed_true:
+          type: integer
+        indexed_false:
+          type: integer
+        pending:
+          type: integer
+        checking:
+          type: integer
+        failed_investigation:
+          type: integer
+        success:
+          type: integer
+      required:
+        [
+          date,
+          total,
+          indexed_true,
+          indexed_false,
+          pending,
+          checking,
+          failed_investigation,
+          success
+        ]
+    IndexCheckStats:
+      type: object
+      properties:
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        total_checks:
+          type: integer
+        total_resolved:
+          type: integer
+        indexed_true:
+          type: integer
+        percent_indexed:
+          type: number
+          format: float
+        avg_attempts_to_success:
+          type: number
+          format: float
+        failed_investigation:
+          type: integer
+        daily:
+          type: array
+          items:
+            $ref: "#/components/schemas/IndexCheckCalendarDay"
+      required:
+        [
+          from,
+          to,
+          total_checks,
+          total_resolved,
+          indexed_true,
+          percent_indexed,
+          avg_attempts_to_success,
+          failed_investigation,
+          daily
+        ]

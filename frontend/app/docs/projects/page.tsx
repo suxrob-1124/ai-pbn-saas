@@ -22,6 +22,10 @@ export default function DocsProjectsPage() {
           API‑ключ берётся у владельца проекта. Если у владельца нет ключа, генерация
           не будет запущена.
         </p>
+        <p>
+          В проекте доступен вход в мониторинг индексации по проекту — это удобно,
+          когда нужно оценить статус доменов сразу по всей группе.
+        </p>
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white/80 p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950/60">

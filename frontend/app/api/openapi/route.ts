@@ -16,6 +16,12 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
+  const me = (await res.json().catch(() => null)) as { role?: string } | null;
+  const role = (me?.role || "").toLowerCase();
+  if (role !== "admin") {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
+
   const filePath = path.join(process.cwd(), "openapi.yaml");
   const body = await fs.readFile(filePath);
   return new NextResponse(body, {

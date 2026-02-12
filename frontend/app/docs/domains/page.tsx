@@ -22,6 +22,10 @@ export default function DocsDomainsPage() {
           В настройках домена находятся поля для ссылок: анкор и акцептор. Это позволяет
           запускать задачи вставки ссылок без отдельной вкладки.
         </p>
+        <p>
+          В карточке домена доступна ссылка на мониторинг индексации, чтобы быстро
+          проверить статус проверок по конкретному домену.
+        </p>
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white/80 p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950/60">

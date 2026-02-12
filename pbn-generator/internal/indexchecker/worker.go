@@ -86,6 +86,12 @@ func RunIndexCheckerTick(
 		}
 		for _, d := range domains {
 			domainByID[d.ID] = d
+			if !isDomainPublished(d) {
+				continue
+			}
+			if strings.TrimSpace(d.URL) == "" {
+				continue
+			}
 			check, err := checkStore.GetByDomainAndDate(ctx, d.ID, today)
 			if err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
@@ -126,6 +132,10 @@ func RunIndexCheckerTick(
 		domain, ok := domainByID[check.DomainID]
 		if !ok {
 			logger.Warnf("domain %s not found for check %s", check.DomainID, check.ID)
+			continue
+		}
+		if !isDomainPublished(domain) {
+			logger.Warnf("domain %s is not published for check %s", check.DomainID, check.ID)
 			continue
 		}
 		if strings.TrimSpace(domain.URL) == "" {
@@ -264,4 +274,11 @@ func classifyCheckError(err error) string {
 		return "timeout"
 	}
 	return "error"
+}
+
+func isDomainPublished(d sqlstore.Domain) bool {
+	if d.PublishedAt.Valid {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(d.Status), "published")
 }

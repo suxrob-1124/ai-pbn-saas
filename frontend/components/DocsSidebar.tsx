@@ -22,6 +22,10 @@ const sections = [
     ],
   },
   {
+    title: "Мониторинг",
+    items: [{ href: "/docs/indexing", label: "Индексация" }],
+  },
+  {
     title: "Ссылки и ошибки",
     items: [
       { href: "/docs/links", label: "Ссылки" },
@@ -30,14 +34,18 @@ const sections = [
   },
   {
     title: "API",
-    items: [{ href: "/docs/api", label: "Swagger UI" }],
+    items: [
+      { href: "/docs/api", label: "Swagger UI" },
+      { href: "/docs/indexing-api", label: "API индексации" },
+    ],
   },
 ];
 
 export function DocsSidebar() {
   const pathname = usePathname();
-  const { isAuthed } = useOptionalMe();
-  const visibleSections = isAuthed
+  const { me } = useOptionalMe();
+  const isAdmin = (me?.role || "").toLowerCase() === "admin";
+  const visibleSections = isAdmin
     ? sections
     : sections.filter((section) => section.title !== "API");
 

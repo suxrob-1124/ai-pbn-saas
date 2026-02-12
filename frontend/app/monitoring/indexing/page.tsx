@@ -529,7 +529,7 @@ function IndexingMonitoringContent() {
       <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-xl">
         <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div>
-            <h2 className="text-xl font-semibold">Monitoring · Indexing</h2>
+            <h2 className="text-xl font-semibold">Мониторинг · Индексация</h2>
             <p className="text-sm text-slate-500 dark:text-slate-400">
             {domainScope
                 ? `Доменные проверки: ${domainScope}`
