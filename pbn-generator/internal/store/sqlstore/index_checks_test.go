@@ -281,6 +281,54 @@ func TestIndexCheckStoreListByDomain(t *testing.T) {
 		}
 	})
 
+	t.Run("sorted by domain", func(t *testing.T) {
+		rowsSorted := sqlmock.NewRows([]string{
+			"id",
+			"domain_id",
+			"check_date",
+			"status",
+			"is_indexed",
+			"attempts",
+			"last_attempt_at",
+			"next_retry_at",
+			"error_message",
+			"completed_at",
+			"created_at",
+		}).AddRow(
+			"check-1",
+			"domain-1",
+			checkDate,
+			"pending",
+			sql.NullBool{},
+			0,
+			sql.NullTime{},
+			sql.NullTime{},
+			sql.NullString{},
+			sql.NullTime{},
+			createdAt,
+		)
+
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT c.id, c.domain_id, c.check_date, c.status, c.is_indexed, c.attempts, c.last_attempt_at, c.next_retry_at, c.error_message, c.completed_at, c.created_at FROM domain_index_checks c JOIN domains d ON d.id = c.domain_id WHERE c.domain_id=$1 ORDER BY COALESCE(d.url, c.domain_id) ASC, c.check_date DESC, c.created_at DESC LIMIT $2")).
+			WithArgs("domain-1", 10).
+			WillReturnRows(rowsSorted)
+
+		got, err := store.ListByDomain(ctx, "domain-1", IndexCheckFilters{
+			Limit:   10,
+			SortBy:  "domain",
+			SortDir: "asc",
+		})
+		if err != nil {
+			t.Fatalf("list by domain failed: %v", err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("expected 1 result, got %d", len(got))
+		}
+
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unmet expectations: %v", err)
+		}
+	})
+
 	t.Run("db error", func(t *testing.T) {
 		mock.ExpectQuery(regexp.QuoteMeta("SELECT c.id, c.domain_id, c.check_date, c.status, c.is_indexed, c.attempts, c.last_attempt_at, c.next_retry_at, c.error_message, c.completed_at, c.created_at FROM domain_index_checks c WHERE c.domain_id=$1 ORDER BY c.check_date DESC, c.created_at DESC LIMIT $2")).
 			WithArgs("domain-2", 5).
@@ -293,6 +341,76 @@ func TestIndexCheckStoreListByDomain(t *testing.T) {
 			t.Fatalf("unmet expectations: %v", err)
 		}
 	})
+}
+
+func TestIndexCheckStoreListAllFilters(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to create sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	store := NewIndexCheckStore(db)
+	ctx := context.Background()
+
+	from := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 2, 12, 0, 0, 0, 0, time.UTC)
+
+	rows := sqlmock.NewRows([]string{
+		"id",
+		"domain_id",
+		"check_date",
+		"status",
+		"is_indexed",
+		"attempts",
+		"last_attempt_at",
+		"next_retry_at",
+		"error_message",
+		"completed_at",
+		"created_at",
+	}).AddRow(
+		"check-1",
+		"domain-1",
+		from,
+		"success",
+		sql.NullBool{Bool: true, Valid: true},
+		1,
+		sql.NullTime{},
+		sql.NullTime{},
+		sql.NullString{},
+		sql.NullTime{},
+		from.Add(time.Hour),
+	)
+
+	search := "Example.COM"
+	isIndexed := true
+	filters := IndexCheckFilters{
+		Statuses:  []string{"success", "checking"},
+		Search:    &search,
+		IsIndexed: &isIndexed,
+		From:      &from,
+		To:        &to,
+		Limit:     10,
+	}
+
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT c.id, c.domain_id, c.check_date, c.status, c.is_indexed, c.attempts, c.last_attempt_at, c.next_retry_at, c.error_message, c.completed_at, c.created_at FROM domain_index_checks c JOIN domains d ON d.id = c.domain_id WHERE c.status IN ($1,$2) AND (LOWER(COALESCE(d.url, '')) LIKE $3 OR LOWER(c.domain_id) LIKE $3) AND c.is_indexed=$4 AND c.check_date >= $5 AND c.check_date <= $6 ORDER BY c.check_date DESC, c.created_at DESC LIMIT $7")).
+		WithArgs("success", "checking", "%example.com%", true, from, to, 10).
+		WillReturnRows(rows)
+
+	got, err := store.ListAll(ctx, filters)
+	if err != nil {
+		t.Fatalf("list all failed: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(got))
+	}
+	if got[0].ID != "check-1" {
+		t.Fatalf("unexpected id: %s", got[0].ID)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
 }
 
 func TestIndexCheckStoreListPendingRetries(t *testing.T) {

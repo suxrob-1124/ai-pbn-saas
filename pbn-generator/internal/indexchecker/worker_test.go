@@ -169,6 +169,9 @@ func TestRunIndexCheckerTickSuccess(t *testing.T) {
 	if checkStore.updateCalls[0].isIndexed == nil || !*checkStore.updateCalls[0].isIndexed {
 		t.Fatalf("expected is_indexed=true, got %#v", checkStore.updateCalls[0].isIndexed)
 	}
+	if len(checkStore.incremented) != 1 || checkStore.incremented[0] != checkStore.created.ID {
+		t.Fatalf("expected attempts increment for %s, got %#v", checkStore.created.ID, checkStore.incremented)
+	}
 }
 
 func TestRunIndexCheckerTickNotIndexed(t *testing.T) {
@@ -208,6 +211,9 @@ func TestRunIndexCheckerTickNotIndexed(t *testing.T) {
 	}
 	if checkStore.updateCalls[0].isIndexed == nil || *checkStore.updateCalls[0].isIndexed {
 		t.Fatalf("expected is_indexed=false, got %#v", checkStore.updateCalls[0].isIndexed)
+	}
+	if len(checkStore.incremented) != 1 || checkStore.incremented[0] != checkStore.created.ID {
+		t.Fatalf("expected attempts increment for %s, got %#v", checkStore.created.ID, checkStore.incremented)
 	}
 }
 

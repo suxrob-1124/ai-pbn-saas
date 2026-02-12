@@ -32,6 +32,29 @@ export type IndexCheckHistoryDTO = {
   created_at: string;
 };
 
+export type IndexCheckCalendarDayDTO = {
+  date: string;
+  total: number;
+  indexed_true: number;
+  indexed_false: number;
+  pending: number;
+  checking: number;
+  failed_investigation: number;
+  success: number;
+};
+
+export type IndexCheckStatsDTO = {
+  from: string;
+  to: string;
+  total_checks: number;
+  total_resolved: number;
+  indexed_true: number;
+  percent_indexed: number;
+  avg_attempts_to_success: number;
+  failed_investigation: number;
+  daily: IndexCheckCalendarDayDTO[];
+};
+
 export type IndexChecksFilters = {
   status?: IndexCheckStatus;
   isIndexed?: boolean;
@@ -41,10 +64,14 @@ export type IndexChecksFilters = {
   offset?: number;
   page?: number;
   search?: string;
+  sort?: string;
   domainId?: string;
 };
 
-export type IndexChecksResponse = IndexCheckDTO[];
+export type IndexChecksResponse = {
+  items: IndexCheckDTO[];
+  total: number;
+};
 
 export type IndexCheckHistoryResponse = IndexCheckHistoryDTO[];
 
@@ -53,5 +80,9 @@ export type IndexCheckBatchResponse = {
   updated: number;
   skipped: number;
 };
+
+export type IndexCheckCalendarResponse = IndexCheckCalendarDayDTO[];
+
+export type IndexCheckStatsResponse = IndexCheckStatsDTO;
 
 export type IndexCheck = IndexCheckDTO;

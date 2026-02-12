@@ -1,9 +1,9 @@
 "use client";
 
-import type { IndexCheckDTO } from "../types/indexChecks";
+import type { IndexCheckCalendarDayDTO } from "../types/indexChecks";
 
 export type IndexCalendarProps = {
-  checks: IndexCheckDTO[];
+  days: IndexCheckCalendarDayDTO[];
   selectedDate?: string;
   onSelectDate?: (date: string) => void;
   baseDate?: string;
@@ -16,14 +16,14 @@ type DaySummary = {
   indexedFalse: number;
   pending: number;
   failed: number;
-  domains: string[];
+  checking: number;
 };
 
 const WEEK_DAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 
 /** Календарь проверок индексации с индикаторами и подсказкой. */
 export function IndexCalendar({
-  checks,
+  days,
   selectedDate,
   onSelectDate,
   baseDate,
@@ -37,7 +37,7 @@ export function IndexCalendar({
   const startOffset = (firstDay.getDay() + 6) % 7;
   const daysInMonth = new Date(year, month + 1, 0).getDate();
 
-  const summaries = buildSummaries(checks, year, month);
+  const summaries = buildSummaries(days, year, month);
 
   const cells = Array.from({ length: startOffset + daysInMonth }, (_, index) => {
     if (index < startOffset) {
@@ -51,7 +51,10 @@ export function IndexCalendar({
   return (
     <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/60 p-4 shadow">
       <div className="flex items-center justify-between">
-        <h3 className="font-semibold">Календарь проверок</h3>
+        <div>
+          <h3 className="font-semibold">Календарь проверок</h3>
+          <div className="text-xs text-slate-500 dark:text-slate-400">Агрегаты по дням.</div>
+        </div>
         <span className="text-xs text-slate-500 dark:text-slate-400">
           {reference.toLocaleString("ru-RU", { month: "long", year: "numeric" })}
         </span>
@@ -98,14 +101,14 @@ function dayKey(year: number, month: number, day: number) {
   return `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
-function buildSummaries(checks: IndexCheckDTO[], year: number, month: number) {
+function buildSummaries(days: IndexCheckCalendarDayDTO[], year: number, month: number) {
   const summaries: Record<string, DaySummary> = {};
-  for (const check of checks) {
-    const dateKey = toDateKey(check.check_date);
+  for (const day of days) {
+    const dateKey = toDateKey(day.date);
     if (!dateKey) {
       continue;
     }
-    const date = new Date(check.check_date);
+    const date = new Date(day.date);
     if (Number.isNaN(date.getTime())) {
       continue;
     }
@@ -119,33 +122,23 @@ function buildSummaries(checks: IndexCheckDTO[], year: number, month: number) {
         indexedFalse: 0,
         pending: 0,
         failed: 0,
-        domains: []
+        checking: 0
       };
     }
     const summary = summaries[dateKey];
-    summary.total += 1;
-    if (check.status === "failed_investigation") {
-      summary.failed += 1;
-    } else if (check.status === "checking" || check.status === "pending") {
-      summary.pending += 1;
-    } else if (check.status === "success") {
-      if (check.is_indexed === true) {
-        summary.indexedTrue += 1;
-      } else if (check.is_indexed === false) {
-        summary.indexedFalse += 1;
-      }
-    }
-    const label = check.domain_url || check.domain_id;
-    if (label && summary.domains.length < 4 && !summary.domains.includes(label)) {
-      summary.domains.push(label);
-    }
+    summary.total += day.total;
+    summary.indexedTrue += day.indexed_true;
+    summary.indexedFalse += day.indexed_false;
+    summary.pending += day.pending;
+    summary.checking += day.checking;
+    summary.failed += day.failed_investigation;
   }
   return summaries;
 }
 
 function toneForSummary(summary: DaySummary) {
   if (summary.failed > 0) return "gray";
-  if (summary.pending > 0) return "yellow";
+  if (summary.pending > 0 || summary.checking > 0) return "yellow";
   if (summary.indexedFalse > 0) return "red";
   if (summary.indexedTrue > 0) return "green";
   return "slate";
@@ -172,12 +165,9 @@ function buildTooltip(dateKey: string, summary: DaySummary) {
     `Всего: ${summary.total}`,
     `В индексе: ${summary.indexedTrue}`,
     `Не в индексе: ${summary.indexedFalse}`,
-    `В работе: ${summary.pending}`,
+    `В работе: ${summary.pending + summary.checking}`,
     `Проблемы: ${summary.failed}`
   ];
-  if (summary.domains.length > 0) {
-    lines.push(`Домены: ${summary.domains.join(", ")}`);
-  }
   return lines.join("\n");
 }
 

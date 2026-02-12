@@ -1216,6 +1216,14 @@ export default function ProjectDetailPage() {
             >
               <FiList /> Очередь проекта
             </Link>
+            {projectId && (
+              <Link
+                href={`/monitoring/indexing?projectId=${encodeURIComponent(projectId)}`}
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              >
+                <FiActivity /> Indexing
+              </Link>
+            )}
             <button
               onClick={() => load(true)}
               disabled={loading}

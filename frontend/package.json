@@ -20,6 +20,7 @@
     "verify:link-task-form": "node --import tsx scripts/verify_link_task_form.ts",
     "verify:link-task-list": "node --import tsx scripts/verify_link_task_list.ts",
     "verify:index-checks-api": "node --import tsx scripts/verify_index_checks_api.ts",
+    "verify:index-checks-pagination": "node --import tsx scripts/verify_index_checks_pagination.ts",
     "verify:index-monitoring-ui": "node --import tsx scripts/verify_index_monitoring_ui.ts",
     "verify:index-monitoring-dashboard": "node --import tsx scripts/verify_index_monitoring_dashboard.ts",
     "verify:index-table": "node --import tsx scripts/verify_index_table.ts",

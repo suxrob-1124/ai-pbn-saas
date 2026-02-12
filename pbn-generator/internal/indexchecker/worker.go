@@ -176,6 +176,9 @@ func processCheck(
 		if err := historyStore.Create(ctx, history); err != nil {
 			return fmt.Errorf("create check history: %w", err)
 		}
+		if err := checkStore.IncrementAttempts(ctx, check.ID); err != nil {
+			return fmt.Errorf("increment attempts: %w", err)
+		}
 		if err := checkStore.UpdateStatus(ctx, check.ID, "success", &indexed, nil); err != nil {
 			return fmt.Errorf("update index check status: %w", err)
 		}

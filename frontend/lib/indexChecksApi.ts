@@ -1,9 +1,12 @@
-import { authFetch } from "./http";
+import { authFetch, authFetchCached } from "./http";
 import type {
   IndexCheckBatchResponse,
+  IndexCheckCalendarDayDTO,
   IndexCheckDTO,
   IndexCheckHistoryDTO,
-  IndexChecksFilters
+  IndexCheckStatsDTO,
+  IndexChecksFilters,
+  IndexChecksResponse
 } from "../types/indexChecks";
 
 const encodeDomainId = (domainId: string) => {
@@ -66,6 +69,9 @@ const buildFilters = (filters?: IndexChecksFilters, opts?: { allowDomainId?: boo
   if (filters.search && filters.search.trim()) {
     params.set("search", filters.search.trim());
   }
+  if (filters.sort && filters.sort.trim()) {
+    params.set("sort", filters.sort.trim());
+  }
   if (opts?.allowDomainId && filters.domainId && filters.domainId.trim()) {
     const domainId = filters.domainId.trim();
     params.set("domain_id", domainId);
@@ -86,14 +92,61 @@ const buildHistoryQuery = (limit?: number) => {
   return `?${params.toString()}`;
 };
 
+const buildCalendarQuery = (filters?: { month?: string } & IndexChecksFilters) => {
+  if (!filters) {
+    return "";
+  }
+  const params = new URLSearchParams();
+  if (filters.month) {
+    params.set("month", filters.month);
+  }
+  if (filters.from) {
+    params.set("from", toISO(filters.from));
+  }
+  if (filters.to) {
+    params.set("to", toISO(filters.to));
+  }
+  if (filters.domainId && filters.domainId.trim()) {
+    params.set("domain_id", filters.domainId.trim());
+  }
+  const query = params.toString();
+  return query ? `?${query}` : "";
+};
+
+const buildStatsQuery = (filters?: IndexChecksFilters) => {
+  if (!filters) {
+    return "";
+  }
+  const params = new URLSearchParams();
+  if (filters.status) {
+    params.set("status", filters.status);
+  }
+  if (typeof filters.isIndexed === "boolean") {
+    params.set("is_indexed", String(filters.isIndexed));
+  }
+  if (filters.from) {
+    params.set("from", toISO(filters.from));
+  }
+  if (filters.to) {
+    params.set("to", toISO(filters.to));
+  }
+  if (filters.domainId && filters.domainId.trim()) {
+    params.set("domain_id", filters.domainId.trim());
+  }
+  const query = params.toString();
+  return query ? `?${query}` : "";
+};
+
+const AGGREGATE_TTL_MS = 30000;
+
 /** Получить список проверок индексации по домену. */
 export async function listByDomain(
   domainId: string,
   filters?: IndexChecksFilters
-): Promise<IndexCheckDTO[]> {
+): Promise<IndexChecksResponse> {
   const encoded = encodeDomainId(domainId);
   const query = buildFilters(filters);
-  return authFetch<IndexCheckDTO[]>(`/api/domains/${encoded}/index-checks${query}`);
+  return authFetch<IndexChecksResponse>(`/api/domains/${encoded}/index-checks${query}`);
 }
 
 /** Запустить ручную проверку индексации по домену. */
@@ -108,10 +161,10 @@ export async function runManual(domainId: string): Promise<IndexCheckDTO> {
 export async function listByProject(
   projectId: string,
   filters?: IndexChecksFilters
-): Promise<IndexCheckDTO[]> {
+): Promise<IndexChecksResponse> {
   const encoded = encodeProjectId(projectId);
   const query = buildFilters(filters);
-  return authFetch<IndexCheckDTO[]>(`/api/projects/${encoded}/index-checks${query}`);
+  return authFetch<IndexChecksResponse>(`/api/projects/${encoded}/index-checks${query}`);
 }
 
 /** Запустить ручные проверки индексации по проекту. */
@@ -122,16 +175,105 @@ export async function runManualProject(projectId: string): Promise<IndexCheckBat
   });
 }
 
+/** Запустить ручную проверку индексации (admin). */
+export async function runAdminManual(domainId: string): Promise<IndexCheckDTO> {
+  const trimmed = domainId.trim();
+  if (!trimmed) {
+    throw new Error("domainId is required");
+  }
+  return authFetch<IndexCheckDTO>(`/api/admin/index-checks/run`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ domain_id: trimmed })
+  });
+}
+
 /** Получить список проверок индексации (admin). */
-export async function listAdmin(filters?: IndexChecksFilters): Promise<IndexCheckDTO[]> {
+export async function listAdmin(filters?: IndexChecksFilters): Promise<IndexChecksResponse> {
   const query = buildFilters(filters, { allowDomainId: true });
-  return authFetch<IndexCheckDTO[]>(`/api/admin/index-checks${query}`);
+  return authFetch<IndexChecksResponse>(`/api/admin/index-checks${query}`);
 }
 
 /** Получить список проблемных проверок индексации (admin). */
-export async function listFailed(filters?: IndexChecksFilters): Promise<IndexCheckDTO[]> {
+export async function listFailed(filters?: IndexChecksFilters): Promise<IndexChecksResponse> {
   const query = buildFilters(filters, { allowDomainId: true });
-  return authFetch<IndexCheckDTO[]>(`/api/admin/index-checks/failed${query}`);
+  return authFetch<IndexChecksResponse>(`/api/admin/index-checks/failed${query}`);
+}
+
+/** Получить агрегированную статистику (admin). */
+export async function listAdminStats(filters?: IndexChecksFilters): Promise<IndexCheckStatsDTO> {
+  const query = buildStatsQuery(filters);
+  return authFetchCached<IndexCheckStatsDTO>(`/api/admin/index-checks/stats${query}`, undefined, {
+    ttlMs: AGGREGATE_TTL_MS
+  });
+}
+
+/** Получить агрегированную статистику по домену. */
+export async function listDomainStats(
+  domainId: string,
+  filters?: IndexChecksFilters
+): Promise<IndexCheckStatsDTO> {
+  const encoded = encodeDomainId(domainId);
+  const query = buildStatsQuery(filters);
+  return authFetchCached<IndexCheckStatsDTO>(
+    `/api/domains/${encoded}/index-checks/stats${query}`,
+    undefined,
+    { ttlMs: AGGREGATE_TTL_MS }
+  );
+}
+
+/** Получить агрегированную статистику по проекту. */
+export async function listProjectStats(
+  projectId: string,
+  filters?: IndexChecksFilters
+): Promise<IndexCheckStatsDTO> {
+  const encoded = encodeProjectId(projectId);
+  const query = buildStatsQuery(filters);
+  return authFetchCached<IndexCheckStatsDTO>(
+    `/api/projects/${encoded}/index-checks/stats${query}`,
+    undefined,
+    { ttlMs: AGGREGATE_TTL_MS }
+  );
+}
+
+/** Получить агрегаты по дням для календаря (admin). */
+export async function listAdminCalendar(
+  filters?: { month?: string } & IndexChecksFilters
+): Promise<IndexCheckCalendarDayDTO[]> {
+  const query = buildCalendarQuery(filters);
+  return authFetchCached<IndexCheckCalendarDayDTO[]>(
+    `/api/admin/index-checks/calendar${query}`,
+    undefined,
+    { ttlMs: AGGREGATE_TTL_MS }
+  );
+}
+
+/** Получить агрегаты по дням для календаря по домену. */
+export async function listDomainCalendar(
+  domainId: string,
+  filters?: { month?: string } & IndexChecksFilters
+): Promise<IndexCheckCalendarDayDTO[]> {
+  const encoded = encodeDomainId(domainId);
+  const query = buildCalendarQuery(filters);
+  return authFetchCached<IndexCheckCalendarDayDTO[]>(
+    `/api/domains/${encoded}/index-checks/calendar${query}`,
+    undefined,
+    { ttlMs: AGGREGATE_TTL_MS }
+  );
+}
+
+/** Получить агрегаты по дням для календаря по проекту. */
+export async function listProjectCalendar(
+  projectId: string,
+  filters?: { month?: string } & IndexChecksFilters
+): Promise<IndexCheckCalendarDayDTO[]> {
+  const encoded = encodeProjectId(projectId);
+  const query = buildCalendarQuery(filters);
+  return authFetchCached<IndexCheckCalendarDayDTO[]>(
+    `/api/projects/${encoded}/index-checks/calendar${query}`,
+    undefined,
+    { ttlMs: AGGREGATE_TTL_MS }
+  );
 }
 
 /** Получить историю попыток по домену. */

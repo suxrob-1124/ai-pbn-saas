@@ -6,29 +6,44 @@ import { FiActivity, FiRefreshCw } from "react-icons/fi";
 import { FailedChecksAlert } from "../../../components/indexing/FailedChecksAlert";
 import { IndexCalendar } from "../../../components/indexing/IndexCalendar";
 import { IndexFiltersBar } from "../../../components/indexing/IndexFiltersBar";
-import { IndexStats } from "../../../components/indexing/IndexStats";
-import { IndexTable } from "../../../components/indexing/IndexTable";
+import { IndexStats, type PeriodKey } from "../../../components/indexing/IndexStats";
+import { IndexTable, type IndexCheckSort, type IndexCheckSortKey } from "../../../components/indexing/IndexTable";
 import { useAuthGuard } from "../../../lib/useAuth";
+import { invalidateAuthCache } from "../../../lib/http";
+import { useDebouncedValue } from "../../../lib/useDebouncedValue";
 import {
   listAdmin,
+  listAdminCalendar,
+  listAdminStats,
   listAdminHistory,
   listByDomain,
   listByProject,
+  listDomainCalendar,
+  listDomainStats,
   listFailed,
   listDomainHistory,
+  listProjectCalendar,
   listProjectHistory,
+  listProjectStats,
+  runAdminManual,
   runManual,
   runManualProject
 } from "../../../lib/indexChecksApi";
 import type {
+  IndexCheckCalendarDayDTO,
   IndexCheckDTO,
   IndexCheckHistoryDTO,
   IndexCheckStatus,
-  IndexChecksFilters
+  IndexCheckStatsDTO,
+  IndexChecksFilters,
+  IndexChecksResponse
 } from "../../../types/indexChecks";
 import type { IndexFiltersValue } from "../../../components/indexing/IndexFiltersBar";
 
 const DEFAULT_LIMIT = 20;
+const SEARCH_DEBOUNCE_MS = 400;
+const DEFAULT_SORT: IndexCheckSort = { key: "check_date", dir: "desc" };
+const DEFAULT_SORT_PARAM = sortToParam(DEFAULT_SORT);
 
 export default function IndexingMonitoringPage() {
   return (
@@ -50,11 +65,20 @@ function IndexingMonitoringContent() {
   const isAdmin = (me?.role || "").toLowerCase() === "admin";
 
   const [checks, setChecks] = useState<IndexCheckDTO[]>([]);
+  const [totalChecks, setTotalChecks] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [failedChecks, setFailedChecks] = useState<IndexCheckDTO[]>([]);
+  const [failedTotal, setFailedTotal] = useState(0);
   const [failedLoading, setFailedLoading] = useState(false);
   const [failedError, setFailedError] = useState<string | null>(null);
+  const [stats, setStats] = useState<IndexCheckStatsDTO | null>(null);
+  const [statsLoading, setStatsLoading] = useState(false);
+  const [statsError, setStatsError] = useState<string | null>(null);
+  const [statsPeriod, setStatsPeriod] = useState<PeriodKey>("30d");
+  const [calendarDays, setCalendarDays] = useState<IndexCheckCalendarDayDTO[]>([]);
+  const [calendarLoading, setCalendarLoading] = useState(false);
+  const [calendarError, setCalendarError] = useState<string | null>(null);
 
   const [statusFilter, setStatusFilter] = useState<IndexCheckStatus[]>(() =>
     parseStatusParam(searchParams.get("status"))
@@ -65,11 +89,17 @@ function IndexingMonitoringContent() {
   const [domainFilter, setDomainFilter] = useState(searchParams.get("domainId") || "");
   const [dateFrom, setDateFrom] = useState(searchParams.get("from") || "");
   const [dateTo, setDateTo] = useState(searchParams.get("to") || "");
+  const [search, setSearch] = useState(searchParams.get("search") || "");
+  const debouncedSearch = useDebouncedValue(search, SEARCH_DEBOUNCE_MS);
+  const [sort, setSort] = useState<IndexCheckSort>(() => parseSortParam(searchParams.get("sort")));
   const [page, setPage] = useState(() => {
     const initial = Number(searchParams.get("page") || 1);
     return Number.isFinite(initial) && initial > 0 ? initial : 1;
   });
-  const [limit, setLimit] = useState(DEFAULT_LIMIT);
+  const [limit, setLimit] = useState(() => {
+    const initial = Number(searchParams.get("limit") || DEFAULT_LIMIT);
+    return Number.isFinite(initial) && initial > 0 ? initial : DEFAULT_LIMIT;
+  });
 
   const [history, setHistory] = useState<Record<string, IndexCheckHistoryDTO[]>>({});
   const [historyLoading, setHistoryLoading] = useState<Record<string, boolean>>({});
@@ -80,13 +110,21 @@ function IndexingMonitoringContent() {
   const permissionDenied = !authLoading && !isAdmin && !projectId && !domainScope;
   const querySnapshot = searchParams.toString();
 
+  const sortParam = useMemo(() => sortToParam(sort), [sort]);
+
   const filters = useMemo<IndexChecksFilters>(() => {
     const base: IndexChecksFilters = {
       limit,
       page
     };
-    if (statusFilter.length === 1) {
-      base.status = statusFilter[0];
+    if (statusFilter.length > 0) {
+      base.status = statusFilter.join(",");
+    }
+    if (debouncedSearch.trim()) {
+      base.search = debouncedSearch.trim();
+    }
+    if (sortParam) {
+      base.sort = sortParam;
     }
     if (indexedFilter !== "all") {
       base.isIndexed = indexedFilter === "true";
@@ -101,7 +139,30 @@ function IndexingMonitoringContent() {
       base.domainId = domainScope;
     }
     return base;
-  }, [dateFrom, dateTo, domainScope, indexedFilter, limit, page, statusFilter]);
+  }, [
+    dateFrom,
+    dateTo,
+    debouncedSearch,
+    domainScope,
+    indexedFilter,
+    limit,
+    page,
+    sortParam,
+    statusFilter
+  ]);
+
+  const statsRange = useMemo(() => {
+    const days = periodToDays(statsPeriod);
+    const to = new Date();
+    const from = new Date(Date.UTC(to.getUTCFullYear(), to.getUTCMonth(), to.getUTCDate()));
+    from.setUTCDate(from.getUTCDate() - days + 1);
+    return { from: formatDateKey(from), to: formatDateKey(to) };
+  }, [statsPeriod]);
+
+  const calendarMonth = useMemo(() => {
+    const base = dateFrom || dateTo || new Date().toISOString().slice(0, 10);
+    return base.slice(0, 7);
+  }, [dateFrom, dateTo]);
 
   const loadChecks = useCallback(async () => {
     if (permissionDenied) {
@@ -110,7 +171,7 @@ function IndexingMonitoringContent() {
     setLoading(true);
     setError(null);
     try {
-      let list: IndexCheckDTO[] = [];
+      let list: IndexChecksResponse | null = null;
       if (projectId) {
         list = await listByProject(projectId, filters);
       } else if (isAdmin) {
@@ -118,7 +179,8 @@ function IndexingMonitoringContent() {
       } else if (domainScope) {
         list = await listByDomain(domainScope, filters);
       }
-      setChecks(Array.isArray(list) ? list : []);
+      setChecks(Array.isArray(list?.items) ? list!.items : []);
+      setTotalChecks(typeof list?.total === "number" ? list.total : 0);
     } catch (err: any) {
       setError(err?.message || "Не удалось загрузить проверки индексации");
     } finally {
@@ -132,18 +194,25 @@ function IndexingMonitoringContent() {
 
   useEffect(() => {
     const statusParam = parseStatusParam(searchParams.get("status"));
+    const searchParam = searchParams.get("search") || "";
     const fromParam = searchParams.get("from") || "";
     const toParam = searchParams.get("to") || "";
     const domainParam = searchParams.get("domainId") || "";
     const indexedParam = (searchParams.get("isIndexed") || "all") as "all" | "true" | "false";
+    const sortParam = parseSortParam(searchParams.get("sort"));
     const pageParam = Number(searchParams.get("page") || 1);
     const nextPage = Number.isFinite(pageParam) && pageParam > 0 ? pageParam : 1;
+    const limitParam = Number(searchParams.get("limit") || DEFAULT_LIMIT);
+    const nextLimit = Number.isFinite(limitParam) && limitParam > 0 ? limitParam : DEFAULT_LIMIT;
 
     if (!sameStatusList(statusParam, statusFilter)) {
       setStatusFilter(statusParam);
     }
     if (indexedParam !== indexedFilter) {
       setIndexedFilter(indexedParam);
+    }
+    if (searchParam !== search) {
+      setSearch(searchParam);
     }
     if (fromParam !== dateFrom) {
       setDateFrom(fromParam);
@@ -154,10 +223,16 @@ function IndexingMonitoringContent() {
     if (domainParam !== domainFilter) {
       setDomainFilter(domainParam);
     }
+    if (!sameSort(sortParam, sort)) {
+      setSort(sortParam);
+    }
     if (nextPage !== page) {
       setPage(nextPage);
     }
-  }, [dateFrom, dateTo, domainFilter, indexedFilter, page, querySnapshot, searchParams, statusFilter]);
+    if (nextLimit !== limit) {
+      setLimit(nextLimit);
+    }
+  }, [querySnapshot, searchParams]);
 
   useEffect(() => {
     const params = new URLSearchParams(searchParams.toString());
@@ -166,7 +241,11 @@ function IndexingMonitoringContent() {
     } else {
       params.set("status", statusFilter.join(","));
     }
-    params.delete("search");
+    if (debouncedSearch.trim()) {
+      params.set("search", debouncedSearch.trim());
+    } else {
+      params.delete("search");
+    }
     if (indexedFilter === "all") {
       params.delete("isIndexed");
     } else {
@@ -192,12 +271,35 @@ function IndexingMonitoringContent() {
     } else {
       params.delete("page");
     }
+    if (limit !== DEFAULT_LIMIT) {
+      params.set("limit", String(limit));
+    } else {
+      params.delete("limit");
+    }
+    if (sortParam && sortParam !== DEFAULT_SORT_PARAM) {
+      params.set("sort", sortParam);
+    } else {
+      params.delete("sort");
+    }
     const nextQuery = params.toString();
     const currentQuery = searchParams.toString();
     if (nextQuery !== currentQuery) {
-      router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
+      const href = nextQuery ? `${pathname}?${nextQuery}` : pathname;
+      router.replace(href as any, { scroll: false });
     }
-  }, [dateFrom, dateTo, domainScope, indexedFilter, page, pathname, router, searchParams, statusFilter]);
+  }, [
+    dateFrom,
+    dateTo,
+    debouncedSearch,
+    domainScope,
+    indexedFilter,
+    page,
+    pathname,
+    router,
+    searchParams,
+    sortParam,
+    statusFilter
+  ]);
 
   const loadHistory = useCallback(
     async (checkId: string) => {
@@ -238,6 +340,8 @@ function IndexingMonitoringContent() {
   const handleManualRun = async () => {
     setError(null);
     try {
+      invalidateAuthCache("index-checks/stats");
+      invalidateAuthCache("index-checks/calendar");
       if (domainScope) {
         await runManual(domainScope);
       } else if (projectId) {
@@ -245,7 +349,7 @@ function IndexingMonitoringContent() {
       } else {
         return;
       }
-      await loadChecks();
+      await Promise.all([loadChecks(), loadStats(), loadCalendar()]);
     } catch (err: any) {
       setError(err?.message || "Не удалось запустить проверку");
     }
@@ -261,7 +365,8 @@ function IndexingMonitoringContent() {
     setFailedError(null);
     try {
       const list = await listFailed({ limit: 5, domainId: domainScope || undefined });
-      setFailedChecks(Array.isArray(list) ? list : []);
+      setFailedChecks(Array.isArray(list?.items) ? list.items : []);
+      setFailedTotal(typeof list?.total === "number" ? list.total : 0);
     } catch (err: any) {
       setFailedError(err?.message || "Не удалось загрузить проблемные проверки");
     } finally {
@@ -273,15 +378,101 @@ function IndexingMonitoringContent() {
     loadFailed();
   }, [loadFailed]);
 
+  const loadStats = useCallback(async () => {
+    if (permissionDenied) {
+      return;
+    }
+    setStatsLoading(true);
+    setStatsError(null);
+    try {
+      const statsFilters: IndexChecksFilters = {
+        from: statsRange.from,
+        to: statsRange.to
+      };
+      if (statusFilter.length > 0) {
+        statsFilters.status = statusFilter.join(",");
+      }
+      if (indexedFilter !== "all") {
+        statsFilters.isIndexed = indexedFilter === "true";
+      }
+      if (domainScope) {
+        statsFilters.domainId = domainScope;
+      }
+      let data: IndexCheckStatsDTO | null = null;
+      if (projectId) {
+        data = await listProjectStats(projectId, statsFilters);
+      } else if (isAdmin) {
+        data = await listAdminStats(statsFilters);
+      } else if (domainScope) {
+        data = await listDomainStats(domainScope, statsFilters);
+      }
+      setStats(data);
+    } catch (err: any) {
+      setStatsError(err?.message || "Не удалось загрузить статистику");
+    } finally {
+      setStatsLoading(false);
+    }
+  }, [domainScope, indexedFilter, isAdmin, permissionDenied, projectId, statsRange, statusFilter]);
+
+  useEffect(() => {
+    loadStats();
+  }, [loadStats]);
+
+  const loadCalendar = useCallback(async () => {
+    if (permissionDenied) {
+      return;
+    }
+    setCalendarLoading(true);
+    setCalendarError(null);
+    try {
+      let list: IndexCheckCalendarDayDTO[] = [];
+      if (projectId) {
+        list = await listProjectCalendar(projectId, { month: calendarMonth });
+      } else if (isAdmin) {
+        list = await listAdminCalendar({ month: calendarMonth, domainId: domainScope || undefined });
+      } else if (domainScope) {
+        list = await listDomainCalendar(domainScope, { month: calendarMonth });
+      }
+      setCalendarDays(Array.isArray(list) ? list : []);
+    } catch (err: any) {
+      setCalendarError(err?.message || "Не удалось загрузить календарь");
+    } finally {
+      setCalendarLoading(false);
+    }
+  }, [calendarMonth, domainScope, isAdmin, permissionDenied, projectId]);
+
+  useEffect(() => {
+    loadCalendar();
+  }, [loadCalendar]);
+
+  const handleAdminRunNow = useCallback(
+    async (domainId: string) => {
+      if (!isAdmin) {
+        return;
+      }
+      setError(null);
+      try {
+        invalidateAuthCache("index-checks/stats");
+        invalidateAuthCache("index-checks/calendar");
+        await runAdminManual(domainId);
+        await Promise.all([loadChecks(), loadStats(), loadCalendar(), loadFailed()]);
+      } catch (err: any) {
+        setError(err?.message || "Не удалось запустить проверку");
+      }
+    },
+    [isAdmin, loadCalendar, loadChecks, loadFailed, loadStats]
+  );
+
   const appliedFilters = useMemo<IndexFiltersValue>(
     () => ({
       statuses: statusFilter,
       from: dateFrom,
       to: dateTo,
       domainId: domainFilter,
-      isIndexed: indexedFilter
+      isIndexed: indexedFilter,
+      search
     }),
-    [dateFrom, dateTo, domainFilter, indexedFilter, statusFilter]
+    [dateFrom, dateTo, domainFilter, indexedFilter, search, statusFilter]
   );
 
   const defaultFilters = useMemo<IndexFiltersValue>(
@@ -290,7 +481,8 @@ function IndexingMonitoringContent() {
       from: "",
       to: "",
       domainId: "",
-      isIndexed: "all"
+      isIndexed: "all",
+      search: ""
     }),
     []
   );
@@ -301,17 +493,36 @@ function IndexingMonitoringContent() {
     setDateTo(next.to);
     setDomainFilter(next.domainId);
     setIndexedFilter(next.isIndexed);
+    setSearch(next.search);
+    setPage(1);
+  };
+
+  const handleSearchChange = useCallback((value: string) => {
+    setSearch(value);
+    setPage(1);
+  }, []);
+
+  const handleSortChange = (next: IndexCheckSort) => {
+    setSort(next);
     setPage(1);
   };
 
   const handleRefresh = async () => {
-    await Promise.all([loadChecks(), loadFailed()]);
+    invalidateAuthCache("index-checks/stats");
+    invalidateAuthCache("index-checks/calendar");
+    await Promise.all([loadChecks(), loadFailed(), loadStats(), loadCalendar()]);
   };
 
-  const visibleChecks = useMemo(
-    () => filterChecks(checks, statusFilter, indexedFilter, dateFrom, dateTo),
-    [checks, dateFrom, dateTo, indexedFilter, statusFilter]
-  );
+  const visibleChecks = checks;
+  const hasNextPage = page * limit < totalChecks;
+  const totalPages = Math.max(1, Math.ceil(totalChecks / limit));
+  const pageLabel = Math.min(page, totalPages);
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
 
   return (
     <div className="space-y-4">
@@ -356,6 +567,7 @@ function IndexingMonitoringContent() {
         onApply={applyFilters}
         onReset={applyFilters}
         onRefresh={handleRefresh}
+        onSearchChange={handleSearchChange}
         showDomain={isAdmin && !projectId}
         disabled={loading}
       />
@@ -375,7 +587,7 @@ function IndexingMonitoringContent() {
       {canShowFailedAlert && !permissionDenied && (
         <FailedChecksAlert
           checks={failedChecks}
-          failedCount={failedChecks.length}
+          failedCount={failedTotal}
           loading={failedLoading}
           error={failedError}
           onRefresh={loadFailed}
@@ -385,13 +597,28 @@ function IndexingMonitoringContent() {
               from: "",
               to: "",
               domainId: domainFilter,
-              isIndexed: "all"
+              isIndexed: "all",
+              search
             })
           }
         />
       )}
 
-      {!permissionDenied && <IndexStats checks={visibleChecks} loading={loading} />}
+      {statsError && !permissionDenied && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-700/50 dark:bg-red-900/20 dark:text-red-200">
+          {statsError}
+        </div>
+      )}
+
+      {!permissionDenied && (
+        <IndexStats
+          stats={stats}
+          daily={stats?.daily || []}
+          loading={statsLoading}
+          period={statsPeriod}
+          onPeriodChange={setStatsPeriod}
+        />
+      )}
 
       {!permissionDenied && (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -406,24 +633,77 @@ function IndexingMonitoringContent() {
               onToggleHistory={toggleHistory}
               formatDate={formatDate}
               formatDateTime={formatDateTime}
+              sort={sort}
+              onSortChange={handleSortChange}
+              onRunNow={isAdmin && !projectId ? handleAdminRunNow : undefined}
             />
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500 dark:text-slate-400">
+              <div>
+                Страница {pageLabel} из {totalPages}
+              </div>
+              <div className="flex items-center gap-2">
+                <span>Размер страницы</span>
+                <select
+                  value={limit}
+                  onChange={(e) => {
+                    const next = Number(e.target.value) || DEFAULT_LIMIT;
+                    setLimit(next);
+                    setPage(1);
+                  }}
+                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs dark:border-slate-800 dark:bg-slate-950"
+                  disabled={loading}
+                >
+                  {[10, 20, 50, 100].map((size) => (
+                    <option key={size} value={size}>
+                      {size}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={loading || page <= 1}
+                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                >
+                  Назад
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => p + 1)}
+                  disabled={loading || !hasNextPage}
+                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                >
+                  Вперед
+                </button>
+              </div>
+            </div>
           </div>
-          <IndexCalendar
-            checks={visibleChecks}
-            baseDate={dateFrom || undefined}
-            loading={loading}
-            selectedDate={dateFrom && dateFrom === dateTo ? dateFrom : undefined}
-            onSelectDate={(date) => {
-              const next = dateFrom === date && dateTo === date ? { from: "", to: "" } : { from: date, to: date };
-              applyFilters({
-                statuses: statusFilter,
-                from: next.from,
-                to: next.to,
-                domainId: domainFilter,
-                isIndexed: indexedFilter
-              });
-            }}
-          />
+          <div className="space-y-2">
+            <IndexCalendar
+              days={calendarDays}
+              baseDate={dateFrom || undefined}
+              loading={calendarLoading}
+              selectedDate={dateFrom && dateFrom === dateTo ? dateFrom : undefined}
+              onSelectDate={(date) => {
+                const next = dateFrom === date && dateTo === date ? { from: "", to: "" } : { from: date, to: date };
+                applyFilters({
+                  statuses: statusFilter,
+                  from: next.from,
+                  to: next.to,
+                  domainId: domainFilter,
+                  isIndexed: indexedFilter,
+                  search
+                });
+              }}
+            />
+            {calendarError && (
+              <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700 dark:border-red-700/50 dark:bg-red-900/20 dark:text-red-200">
+                {calendarError}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -464,6 +744,45 @@ function normalizeStatusList(statuses: IndexCheckStatus[]): IndexCheckStatus[] {
   return Array.from(new Set(trimmed));
 }
 
+const SORT_KEYS: IndexCheckSortKey[] = [
+  "domain",
+  "check_date",
+  "status",
+  "attempts",
+  "is_indexed",
+  "last_attempt_at",
+  "next_retry_at"
+];
+
+function parseSortParam(raw: string | null): IndexCheckSort {
+  if (!raw) {
+    return DEFAULT_SORT;
+  }
+  const cleaned = raw.trim();
+  if (!cleaned) {
+    return DEFAULT_SORT;
+  }
+  const [keyRaw, dirRaw] = cleaned.split(":", 2);
+  const key = keyRaw.trim();
+  if (!isSortKey(key)) {
+    return DEFAULT_SORT;
+  }
+  const dir = dirRaw && dirRaw.trim().toLowerCase() === "asc" ? "asc" : "desc";
+  return { key, dir };
+}
+
+function sortToParam(sort: IndexCheckSort): string {
+  return `${sort.key}:${sort.dir}`;
+}
+
+function sameSort(a: IndexCheckSort, b: IndexCheckSort): boolean {
+  return a.key === b.key && a.dir === b.dir;
+}
+
+function isSortKey(value: string): value is IndexCheckSortKey {
+  return SORT_KEYS.includes(value as IndexCheckSortKey);
+}
+
 function sameStatusList(a: IndexCheckStatus[], b: IndexCheckStatus[]): boolean {
   if (a.length !== b.length) return false;
   const setA = new Set(a.map((item) => item.trim()));
@@ -475,46 +794,17 @@ function sameStatusList(a: IndexCheckStatus[], b: IndexCheckStatus[]): boolean {
   return true;
 }
 
-function filterChecks(
-  checks: IndexCheckDTO[],
-  statuses: IndexCheckStatus[],
-  isIndexed: "all" | "true" | "false",
-  from: string,
-  to: string
-) {
-  const statusList = normalizeStatusList(statuses);
-  const fromKey = from.trim();
-  const toKey = to.trim();
-  return checks.filter((check) => {
-    if (statusList.length > 0 && !statusList.includes(check.status as IndexCheckStatus)) {
-      return false;
-    }
-    if (isIndexed !== "all") {
-      if (isIndexed === "true" && check.is_indexed !== true) {
-        return false;
-      }
-      if (isIndexed === "false" && check.is_indexed !== false) {
-        return false;
-      }
-    }
-    const dateKey = toDateKey(check.check_date);
-    if (fromKey && dateKey && dateKey < fromKey) {
-      return false;
-    }
-    if (toKey && dateKey && dateKey > toKey) {
-      return false;
-    }
-    return true;
-  });
+function periodToDays(period: PeriodKey) {
+  switch (period) {
+    case "7d":
+      return 7;
+    case "90d":
+      return 90;
+    default:
+      return 30;
+  }
 }
 
-function toDateKey(value?: string | null): string {
-  if (!value) {
-    return "";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "";
-  }
+function formatDateKey(date: Date) {
   return date.toISOString().slice(0, 10);
 }

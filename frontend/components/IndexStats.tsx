@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import {
   Bar,
   BarChart,
@@ -12,14 +12,17 @@ import {
   XAxis,
   YAxis
 } from "recharts";
-import type { IndexCheckDTO } from "../types/indexChecks";
+import type { IndexCheckCalendarDayDTO, IndexCheckStatsDTO } from "../types/indexChecks";
 
 export type IndexStatsProps = {
-  checks: IndexCheckDTO[];
+  stats?: IndexCheckStatsDTO | null;
+  daily?: IndexCheckCalendarDayDTO[];
   loading?: boolean;
+  period: PeriodKey;
+  onPeriodChange: (period: PeriodKey) => void;
 };
 
-type PeriodKey = "7d" | "30d" | "90d";
+export type PeriodKey = "7d" | "30d" | "90d";
 
 type ChartPoint = {
   date: string;
@@ -29,43 +32,23 @@ type ChartPoint = {
 };
 
 /** Статистика и графики для мониторинга индексации. */
-export function IndexStats({ checks, loading }: IndexStatsProps) {
-  const [period, setPeriod] = useState<PeriodKey>("30d");
-
+export function IndexStats({ stats, daily, loading, period, onPeriodChange }: IndexStatsProps) {
   const { chartData, percentIndexed, avgAttempts, failedWeek } = useMemo(() => {
-    const days = periodToDays(period);
-    const now = new Date();
-    const fromDate = startOfDay(addDays(now, -days + 1));
-    const toDate = endOfDay(now);
-
-    const filtered = checks.filter((check) => {
-      const dt = parseDate(check.check_date);
-      if (!dt) return false;
-      return dt >= fromDate && dt <= toDate;
-    });
-
-    const stats = buildChartData(filtered, fromDate, days);
-    const resolved = filtered.filter((check) => check.status === "success" && check.is_indexed !== null);
-    const totalResolved = resolved.length;
-    const indexedTrue = resolved.filter((check) => check.is_indexed === true).length;
-    const percentIndexed = totalResolved > 0 ? Math.round((indexedTrue / totalResolved) * 100) : 0;
-
-    const successAttempts = filtered
-      .filter((check) => check.status === "success")
-      .map((check) => check.attempts)
-      .filter((value) => typeof value === "number");
-    const avgAttempts = successAttempts.length
-      ? Number((successAttempts.reduce((a, b) => a + b, 0) / successAttempts.length).toFixed(1))
+    const list = daily || [];
+    const statsFallback = stats;
+    const percentIndexed =
+      statsFallback && typeof statsFallback.percent_indexed === "number"
+        ? statsFallback.percent_indexed
+        : statsFallback && statsFallback.total_resolved > 0
+          ? Math.round((statsFallback.indexed_true / statsFallback.total_resolved) * 100)
+          : 0;
+    const avgAttempts = statsFallback?.avg_attempts_to_success
+      ? Number(statsFallback.avg_attempts_to_success.toFixed(1))
       : 0;
-
-    const weekAgo = startOfDay(addDays(now, -6));
-    const failedWeek = checks.filter((check) => {
-      const dt = parseDate(check.check_date);
-      return dt && dt >= weekAgo && dt <= toDate && check.status === "failed_investigation";
-    }).length;
-
-    return { chartData: stats, percentIndexed, avgAttempts, failedWeek };
-  }, [checks, period]);
+    const failedWeek = calcFailedWeek(list);
+    const chartData = buildChartData(list);
+    return { chartData, percentIndexed, avgAttempts, failedWeek };
+  }, [daily, stats]);
 
   if (loading) {
     return (
@@ -80,13 +63,18 @@ export function IndexStats({ checks, loading }: IndexStatsProps) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="font-semibold">Index Stats</h3>
+        <div>
+          <h3 className="font-semibold">Статистика индексации</h3>
+          <div className="text-xs text-slate-500 dark:text-slate-400">
+            Данные агрегированы по дням.
+          </div>
+        </div>
         <div className="flex items-center gap-2">
           {(["7d", "30d", "90d"] as PeriodKey[]).map((key) => (
             <button
               key={key}
               type="button"
-              onClick={() => setPeriod(key)}
+              onClick={() => onPeriodChange(key)}
               className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
                 period === key
                   ? "border-indigo-500 bg-indigo-500/10 text-indigo-600"
@@ -100,7 +88,7 @@ export function IndexStats({ checks, loading }: IndexStatsProps) {
       </div>
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-        <MetricCard label="Процент индексации (30д)" value={`${percentIndexed}%`} />
+        <MetricCard label={`Процент индексации (${period})`} value={`${percentIndexed}%`} />
         <MetricCard label="Среднее попыток до успеха" value={avgAttempts.toString()} />
         <MetricCard label="failed_investigation за неделю" value={failedWeek.toString()} />
       </div>
@@ -133,28 +121,22 @@ export function IndexStats({ checks, loading }: IndexStatsProps) {
   );
 }
 
-function buildChartData(checks: IndexCheckDTO[], startDate: Date, days: number): ChartPoint[] {
-  const map = new Map<string, ChartPoint>();
-  for (let i = 0; i < days; i++) {
-    const day = addDays(startDate, i);
-    const key = day.toISOString().slice(0, 10);
-    map.set(key, { date: key, total: 0, indexed: 0, percent: 0 });
+function buildChartData(days: IndexCheckCalendarDayDTO[]): ChartPoint[] {
+  if (!days || days.length === 0) {
+    return [];
   }
-  for (const check of checks) {
-    const key = toDateKey(check.check_date);
-    if (!key || !map.has(key)) {
-      continue;
-    }
-    const entry = map.get(key)!;
-    entry.total += 1;
-    if (check.status === "success" && check.is_indexed === true) {
-      entry.indexed += 1;
-    }
-  }
-  map.forEach((entry) => {
-    entry.percent = entry.total > 0 ? Math.round((entry.indexed / entry.total) * 100) : 0;
+  const sorted = [...days].sort((a, b) => a.date.localeCompare(b.date));
+  return sorted.map((day) => {
+    const total = day.total || 0;
+    const indexed = day.indexed_true || 0;
+    const percent = total > 0 ? Math.round((indexed / total) * 100) : 0;
+    return {
+      date: day.date,
+      total,
+      indexed,
+      percent
+    };
   });
-  return Array.from(map.values());
 }
 
 function MetricCard({ label, value }: { label: string; value: string }) {
@@ -184,28 +166,10 @@ function SkeletonCard() {
   );
 }
 
-function periodToDays(period: PeriodKey) {
-  switch (period) {
-    case "7d":
-      return 7;
-    case "90d":
-      return 90;
-    default:
-      return 30;
-  }
-}
-
 function parseDate(value?: string | null): Date | null {
   if (!value) return null;
   const dt = new Date(value);
   return Number.isNaN(dt.getTime()) ? null : dt;
-}
-
-function toDateKey(value?: string | null): string {
-  if (!value) return "";
-  const dt = new Date(value);
-  if (Number.isNaN(dt.getTime())) return "";
-  return dt.toISOString().slice(0, 10);
 }
 
 function startOfDay(date: Date) {
@@ -220,4 +184,22 @@ function addDays(date: Date, days: number) {
   const next = new Date(date.getTime());
   next.setUTCDate(next.getUTCDate() + days);
   return next;
+}
+
+function calcFailedWeek(days: IndexCheckCalendarDayDTO[]): number {
+  if (!days || days.length === 0) {
+    return 0;
+  }
+  const now = new Date();
+  const weekAgo = startOfDay(addDays(now, -6));
+  const toDate = endOfDay(now);
+  let count = 0;
+  for (const day of days) {
+    const dt = parseDate(day.date);
+    if (!dt) continue;
+    if (dt >= weekAgo && dt <= toDate) {
+      count += day.failed_investigation || 0;
+    }
+  }
+  return count;
 }

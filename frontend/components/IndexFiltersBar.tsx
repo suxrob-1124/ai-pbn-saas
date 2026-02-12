@@ -9,6 +9,7 @@ export type IndexFiltersValue = {
   to: string;
   domainId: string;
   isIndexed: "all" | "true" | "false";
+  search: string;
 };
 
 export type IndexFiltersBarProps = {
@@ -17,6 +18,7 @@ export type IndexFiltersBarProps = {
   onApply: (value: IndexFiltersValue) => void;
   onReset: (value: IndexFiltersValue) => void;
   onRefresh: () => void;
+  onSearchChange?: (value: string) => void;
   domainOptions?: Array<{ id: string; label?: string }>;
   showDomain?: boolean;
   disabled?: boolean;
@@ -34,7 +36,8 @@ const buildDefaultValue = (): IndexFiltersValue => ({
   from: "",
   to: "",
   domainId: "",
-  isIndexed: "all"
+  isIndexed: "all",
+  search: ""
 });
 
 /** Панель фильтров для мониторинга индексации. */
@@ -44,6 +47,7 @@ export function IndexFiltersBar({
   onApply,
   onReset,
   onRefresh,
+  onSearchChange,
   domainOptions,
   showDomain,
   disabled
@@ -53,7 +57,7 @@ export function IndexFiltersBar({
 
   useEffect(() => {
     setDraft(value);
-  }, [value.domainId, value.from, value.isIndexed, value.to, value.statuses.join("|")]);
+  }, [value.domainId, value.from, value.isIndexed, value.search, value.to, value.statuses.join("|")]);
 
   const dirty = useMemo(() => !isSameValue(draft, value), [draft, value]);
 
@@ -124,6 +128,37 @@ export function IndexFiltersBar({
             disabled={disabled}
           />
         </div>
+        <div>
+          <label className="text-xs text-slate-500 dark:text-slate-400">В индексе</label>
+          <select
+            value={draft.isIndexed}
+            onChange={(e) => setDraft((prev) => ({ ...prev, isIndexed: e.target.value as "all" | "true" | "false" }))}
+            className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-800 dark:bg-slate-950"
+            disabled={disabled}
+          >
+            <option value="all">Любой</option>
+            <option value="true">Да</option>
+            <option value="false">Нет</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        <div>
+          <label className="text-xs text-slate-500 dark:text-slate-400">Поиск (URL/ID)</label>
+          <input
+            type="text"
+            value={draft.search}
+            onChange={(e) => {
+              const next = e.target.value;
+              setDraft((prev) => ({ ...prev, search: next }));
+              onSearchChange?.(next);
+            }}
+            placeholder="example.com"
+            className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-800 dark:bg-slate-950"
+            disabled={disabled}
+          />
+        </div>
         {showDomain && (
           <div>
             <label className="text-xs text-slate-500 dark:text-slate-400">Домен</label>
@@ -147,46 +182,32 @@ export function IndexFiltersBar({
             )}
           </div>
         )}
-        <div>
-          <label className="text-xs text-slate-500 dark:text-slate-400">В индексе</label>
-          <select
-            value={draft.isIndexed}
-            onChange={(e) => setDraft((prev) => ({ ...prev, isIndexed: e.target.value as "all" | "true" | "false" }))}
-            className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-800 dark:bg-slate-950"
+        <div className="flex items-end gap-2">
+          <button
+            type="button"
+            onClick={handleApply}
+            className="inline-flex items-center gap-2 rounded-lg bg-slate-800 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-700 disabled:opacity-50"
+            disabled={disabled || !dirty}
+          >
+            Apply
+          </button>
+          <button
+            type="button"
+            onClick={handleReset}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            disabled={disabled || !dirty}
+          >
+            Reset
+          </button>
+          <button
+            type="button"
+            onClick={onRefresh}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
             disabled={disabled}
           >
-            <option value="all">Любой</option>
-            <option value="true">Да</option>
-            <option value="false">Нет</option>
-          </select>
+            Refresh
+          </button>
         </div>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={handleApply}
-          className="inline-flex items-center gap-2 rounded-lg bg-slate-800 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-700 disabled:opacity-50"
-          disabled={disabled || !dirty}
-        >
-          Apply
-        </button>
-        <button
-          type="button"
-          onClick={handleReset}
-          className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-          disabled={disabled || !dirty}
-        >
-          Reset
-        </button>
-        <button
-          type="button"
-          onClick={onRefresh}
-          className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-          disabled={disabled}
-        >
-          Refresh
-        </button>
       </div>
     </div>
   );
@@ -203,6 +224,7 @@ function isSameValue(a: IndexFiltersValue, b: IndexFiltersValue): boolean {
     a.to === b.to &&
     a.domainId === b.domainId &&
     a.isIndexed === b.isIndexed &&
+    a.search === b.search &&
     sameStatuses(a.statuses, b.statuses)
   );
 }

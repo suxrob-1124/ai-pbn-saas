@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import {
   FiLogIn,
@@ -26,6 +26,8 @@ type UserState = {
 export function Navbar() {
   const { theme, toggle } = useTheme();
   const [user, setUser] = useState<UserState>({ email: null });
+  const [monitoringOpen, setMonitoringOpen] = useState(false);
+  const monitoringRef = useRef<HTMLDivElement | null>(null);
   const pathname = usePathname();
 
   useEffect(() => {
@@ -49,6 +51,34 @@ export function Navbar() {
     fetchMe();
   }, [pathname]);
 
+  useEffect(() => {
+    setMonitoringOpen(false);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!monitoringOpen) {
+      return;
+    }
+    const onClick = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (monitoringRef.current && target && monitoringRef.current.contains(target)) {
+        return;
+      }
+      setMonitoringOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setMonitoringOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onClick);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onClick);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [monitoringOpen]);
+
   const logout = async () => {
     await post("/api/logout").catch(() => {});
     setUser({ email: null });
@@ -66,11 +96,6 @@ export function Navbar() {
       </Link>
       <div className="flex items-center gap-2">
         <Link
-          href="/docs"
-          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100">
-          Документация
-        </Link>
-        <Link
           href="/queue"
           className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100">
           <FiClock /> Очередь
@@ -84,21 +109,27 @@ export function Navbar() {
             </Link>
             {user.role && user.role.toLowerCase() === "admin" && (
               <>
-                <div className="relative group">
+                <div className="relative" ref={monitoringRef}>
                   <button
                     type="button"
+                    aria-expanded={monitoringOpen}
+                    onClick={() => setMonitoringOpen((prev) => !prev)}
                     className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   >
                     <FiActivity /> Monitoring <FiChevronDown className="text-xs" />
                   </button>
-                  <div className="absolute left-0 mt-2 min-w-[160px] rounded-xl border border-slate-200 bg-white shadow-lg opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition dark:border-slate-800 dark:bg-slate-900">
-                    <Link
-                      href="/monitoring/indexing"
-                      className="block px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-100 dark:hover:bg-slate-800"
-                    >
-                      Indexing
-                    </Link>
-                  </div>
+                  {monitoringOpen && (
+                    <div className="absolute left-0 top-full pt-2 min-w-[180px]">
+                      <div className="rounded-xl border border-slate-200 bg-white shadow-lg dark:border-slate-800 dark:bg-slate-900">
+                        <Link
+                          href="/monitoring/indexing"
+                          className="block px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-100 dark:hover:bg-slate-800"
+                        >
+                          Indexing
+                        </Link>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <Link
                   href="/admin"

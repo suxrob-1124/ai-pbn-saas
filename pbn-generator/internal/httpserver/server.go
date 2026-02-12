@@ -144,6 +144,16 @@ type IndexCheckStore interface {
 	ListByProject(ctx context.Context, projectID string, filters sqlstore.IndexCheckFilters) ([]sqlstore.IndexCheck, error)
 	ListAll(ctx context.Context, filters sqlstore.IndexCheckFilters) ([]sqlstore.IndexCheck, error)
 	ListFailed(ctx context.Context, filters sqlstore.IndexCheckFilters) ([]sqlstore.IndexCheck, error)
+	CountByDomain(ctx context.Context, domainID string, filters sqlstore.IndexCheckFilters) (int, error)
+	CountByProject(ctx context.Context, projectID string, filters sqlstore.IndexCheckFilters) (int, error)
+	CountAll(ctx context.Context, filters sqlstore.IndexCheckFilters) (int, error)
+	CountFailed(ctx context.Context, filters sqlstore.IndexCheckFilters) (int, error)
+	AggregateStats(ctx context.Context, filters sqlstore.IndexCheckFilters) (sqlstore.IndexCheckStats, error)
+	AggregateStatsByDomain(ctx context.Context, domainID string, filters sqlstore.IndexCheckFilters) (sqlstore.IndexCheckStats, error)
+	AggregateStatsByProject(ctx context.Context, projectID string, filters sqlstore.IndexCheckFilters) (sqlstore.IndexCheckStats, error)
+	AggregateDaily(ctx context.Context, filters sqlstore.IndexCheckFilters) ([]sqlstore.IndexCheckDailySummary, error)
+	AggregateDailyByDomain(ctx context.Context, domainID string, filters sqlstore.IndexCheckFilters) ([]sqlstore.IndexCheckDailySummary, error)
+	AggregateDailyByProject(ctx context.Context, projectID string, filters sqlstore.IndexCheckFilters) ([]sqlstore.IndexCheckDailySummary, error)
 	ResetForManual(ctx context.Context, checkID string, nextRetry time.Time) error
 }
 
@@ -256,6 +266,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("/api/links/", s.withAuth(http.HandlerFunc(s.handleLinkByID)))
 	mux.Handle("/api/queue/", s.withAuth(http.HandlerFunc(s.handleQueueItem)))
 	mux.Handle("/api/admin/index-checks", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminIndexChecks))))
+	mux.Handle("/api/admin/index-checks/run", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminIndexChecksRun))))
+	mux.Handle("/api/admin/index-checks/stats", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminIndexChecksStats))))
+	mux.Handle("/api/admin/index-checks/calendar", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminIndexChecksCalendar))))
 	mux.Handle("/api/admin/index-checks/", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminIndexCheckRoute))))
 	mux.Handle("/api/admin/index-checks/failed", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminIndexChecksFailed))))
 	mux.Handle("/api/admin/users", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminUsers))))
@@ -2190,6 +2203,14 @@ func (s *Server) handleDomainIndexChecks(w http.ResponseWriter, r *http.Request,
 			s.handleDomainIndexCheckHistory(w, r, domainID, parts[0], memberRole)
 			return
 		}
+		if len(parts) == 1 && parts[0] == "stats" {
+			s.handleDomainIndexChecksStats(w, r, domainID, memberRole)
+			return
+		}
+		if len(parts) == 1 && parts[0] == "calendar" {
+			s.handleDomainIndexChecksCalendar(w, r, domainID, memberRole)
+			return
+		}
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
@@ -2206,6 +2227,11 @@ func (s *Server) handleDomainIndexChecks(w http.ResponseWriter, r *http.Request,
 			writeError(w, http.StatusInternalServerError, "could not list index checks")
 			return
 		}
+		total, err := s.indexChecks.CountByDomain(r.Context(), domainID, filters)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not count index checks")
+			return
+		}
 		resp := make([]indexCheckDTO, 0, len(list))
 		for _, check := range list {
 			dto := toIndexCheckDTO(check)
@@ -2217,7 +2243,7 @@ func (s *Server) handleDomainIndexChecks(w http.ResponseWriter, r *http.Request,
 			dto.ProjectID = &pid
 			resp = append(resp, dto)
 		}
-		writeJSON(w, http.StatusOK, resp)
+		writeJSON(w, http.StatusOK, indexCheckListDTO{Items: resp, Total: total})
 	case http.MethodPost:
 		if err := requireApprovedUser(user); err != nil {
 			writeError(w, http.StatusForbidden, err.Error())
@@ -2295,6 +2321,77 @@ func (s *Server) handleDomainIndexCheckHistory(w http.ResponseWriter, r *http.Re
 	resp := make([]indexCheckHistoryDTO, 0, len(list))
 	for _, item := range list {
 		resp = append(resp, toIndexCheckHistoryDTO(item))
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleDomainIndexChecksStats(w http.ResponseWriter, r *http.Request, domainID, memberRole string) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if s.indexChecks == nil {
+		writeError(w, http.StatusInternalServerError, "index checks not configured")
+		return
+	}
+	user, ok := currentUserFromContext(r.Context())
+	if !ok || user.Email == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if !hasProjectPermission(user.Role, memberRole, "viewer") {
+		writeError(w, http.StatusForbidden, "insufficient permissions: viewer role required")
+		return
+	}
+	now := time.Now().UTC()
+	filters := parseIndexCheckFilters(r, 0, 0)
+	from, to := resolveIndexCheckStatsRange(&filters, now)
+	filters.Limit = 0
+	filters.Offset = 0
+	stats, err := s.indexChecks.AggregateStatsByDomain(r.Context(), domainID, filters)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not aggregate index checks")
+		return
+	}
+	daily, err := s.indexChecks.AggregateDailyByDomain(r.Context(), domainID, filters)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not aggregate index checks")
+		return
+	}
+	writeJSON(w, http.StatusOK, buildIndexCheckStatsDTO(stats, daily, from, to))
+}
+
+func (s *Server) handleDomainIndexChecksCalendar(w http.ResponseWriter, r *http.Request, domainID, memberRole string) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if s.indexChecks == nil {
+		writeError(w, http.StatusInternalServerError, "index checks not configured")
+		return
+	}
+	user, ok := currentUserFromContext(r.Context())
+	if !ok || user.Email == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if !hasProjectPermission(user.Role, memberRole, "viewer") {
+		writeError(w, http.StatusForbidden, "insufficient permissions: viewer role required")
+		return
+	}
+	now := time.Now().UTC()
+	filters := parseIndexCheckFilters(r, 0, 0)
+	_, _ = resolveIndexCheckCalendarRange(&filters, r, now)
+	filters.Limit = 0
+	filters.Offset = 0
+	daily, err := s.indexChecks.AggregateDailyByDomain(r.Context(), domainID, filters)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not aggregate index checks")
+		return
+	}
+	resp := make([]indexCheckDailyDTO, 0, len(daily))
+	for _, item := range daily {
+		resp = append(resp, toIndexCheckDailyDTO(item))
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -4196,6 +4293,14 @@ func (s *Server) handleProjectIndexChecks(w http.ResponseWriter, r *http.Request
 			s.handleProjectIndexCheckHistory(w, r, projectID, parts[0], memberRole)
 			return
 		}
+		if len(parts) == 1 && parts[0] == "stats" {
+			s.handleProjectIndexChecksStats(w, r, projectID, memberRole)
+			return
+		}
+		if len(parts) == 1 && parts[0] == "calendar" {
+			s.handleProjectIndexChecksCalendar(w, r, projectID, memberRole)
+			return
+		}
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
@@ -4210,6 +4315,11 @@ func (s *Server) handleProjectIndexChecks(w http.ResponseWriter, r *http.Request
 		list, err := s.indexChecks.ListByProject(r.Context(), projectID, filters)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "could not list index checks")
+			return
+		}
+		total, err := s.indexChecks.CountByProject(r.Context(), projectID, filters)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not count index checks")
 			return
 		}
 		domainMap := map[string]string{}
@@ -4228,7 +4338,7 @@ func (s *Server) handleProjectIndexChecks(w http.ResponseWriter, r *http.Request
 			dto.ProjectID = &pid
 			resp = append(resp, dto)
 		}
-		writeJSON(w, http.StatusOK, resp)
+		writeJSON(w, http.StatusOK, indexCheckListDTO{Items: resp, Total: total})
 	case http.MethodPost:
 		if err := requireApprovedUser(user); err != nil {
 			writeError(w, http.StatusForbidden, err.Error())
@@ -4324,6 +4434,77 @@ func (s *Server) handleProjectIndexCheckHistory(w http.ResponseWriter, r *http.R
 	resp := make([]indexCheckHistoryDTO, 0, len(list))
 	for _, item := range list {
 		resp = append(resp, toIndexCheckHistoryDTO(item))
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleProjectIndexChecksStats(w http.ResponseWriter, r *http.Request, projectID, memberRole string) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if s.indexChecks == nil {
+		writeError(w, http.StatusInternalServerError, "index checks not configured")
+		return
+	}
+	user, ok := currentUserFromContext(r.Context())
+	if !ok || user.Email == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if !hasProjectPermission(user.Role, memberRole, "viewer") {
+		writeError(w, http.StatusForbidden, "insufficient permissions: viewer role required")
+		return
+	}
+	now := time.Now().UTC()
+	filters := parseIndexCheckFilters(r, 0, 0)
+	from, to := resolveIndexCheckStatsRange(&filters, now)
+	filters.Limit = 0
+	filters.Offset = 0
+	stats, err := s.indexChecks.AggregateStatsByProject(r.Context(), projectID, filters)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not aggregate index checks")
+		return
+	}
+	daily, err := s.indexChecks.AggregateDailyByProject(r.Context(), projectID, filters)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not aggregate index checks")
+		return
+	}
+	writeJSON(w, http.StatusOK, buildIndexCheckStatsDTO(stats, daily, from, to))
+}
+
+func (s *Server) handleProjectIndexChecksCalendar(w http.ResponseWriter, r *http.Request, projectID, memberRole string) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if s.indexChecks == nil {
+		writeError(w, http.StatusInternalServerError, "index checks not configured")
+		return
+	}
+	user, ok := currentUserFromContext(r.Context())
+	if !ok || user.Email == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if !hasProjectPermission(user.Role, memberRole, "viewer") {
+		writeError(w, http.StatusForbidden, "insufficient permissions: viewer role required")
+		return
+	}
+	now := time.Now().UTC()
+	filters := parseIndexCheckFilters(r, 0, 0)
+	_, _ = resolveIndexCheckCalendarRange(&filters, r, now)
+	filters.Limit = 0
+	filters.Offset = 0
+	daily, err := s.indexChecks.AggregateDailyByProject(r.Context(), projectID, filters)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not aggregate index checks")
+		return
+	}
+	resp := make([]indexCheckDailyDTO, 0, len(daily))
+	for _, item := range daily {
+		resp = append(resp, toIndexCheckDailyDTO(item))
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -4982,8 +5163,13 @@ func (s *Server) handleAdminIndexChecks(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "could not list index checks")
 		return
 	}
+	total, err := s.indexChecks.CountAll(r.Context(), filters)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not count index checks")
+		return
+	}
 	resp := s.buildIndexCheckResponse(r.Context(), list)
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, http.StatusOK, indexCheckListDTO{Items: resp, Total: total})
 }
 
 func (s *Server) handleAdminIndexChecksFailed(w http.ResponseWriter, r *http.Request) {
@@ -5001,7 +5187,122 @@ func (s *Server) handleAdminIndexChecksFailed(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusInternalServerError, "could not list index checks")
 		return
 	}
+	total, err := s.indexChecks.CountFailed(r.Context(), filters)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not count index checks")
+		return
+	}
 	resp := s.buildIndexCheckResponse(r.Context(), list)
+	writeJSON(w, http.StatusOK, indexCheckListDTO{Items: resp, Total: total})
+}
+
+func (s *Server) handleAdminIndexChecksRun(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if s.indexChecks == nil {
+		writeError(w, http.StatusInternalServerError, "index checks not configured")
+		return
+	}
+	if !ensureJSON(w, r) {
+		return
+	}
+	var body struct {
+		DomainID string `json:"domain_id"`
+	}
+	defer r.Body.Close()
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	domainID := strings.TrimSpace(body.DomainID)
+	if domainID == "" {
+		writeError(w, http.StatusBadRequest, "domain_id is required")
+		return
+	}
+	if s.domains == nil {
+		writeError(w, http.StatusInternalServerError, "domains not configured")
+		return
+	}
+	domain, err := s.domains.Get(r.Context(), domainID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "domain not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not load domain")
+		return
+	}
+	now := time.Now().UTC()
+	check, created, err := s.upsertManualIndexCheck(r.Context(), domainID, now)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not start index check")
+		return
+	}
+	dto := toIndexCheckDTO(check)
+	if url := strings.TrimSpace(domain.URL); url != "" {
+		dto.DomainURL = &url
+	}
+	pid := domain.ProjectID
+	dto.ProjectID = &pid
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	writeJSON(w, status, dto)
+}
+
+func (s *Server) handleAdminIndexChecksStats(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if s.indexChecks == nil {
+		writeError(w, http.StatusInternalServerError, "index checks not configured")
+		return
+	}
+	now := time.Now().UTC()
+	filters := parseIndexCheckFilters(r, 0, 0)
+	from, to := resolveIndexCheckStatsRange(&filters, now)
+	filters.Limit = 0
+	filters.Offset = 0
+	stats, err := s.indexChecks.AggregateStats(r.Context(), filters)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not aggregate index checks")
+		return
+	}
+	daily, err := s.indexChecks.AggregateDaily(r.Context(), filters)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not aggregate index checks")
+		return
+	}
+	writeJSON(w, http.StatusOK, buildIndexCheckStatsDTO(stats, daily, from, to))
+}
+
+func (s *Server) handleAdminIndexChecksCalendar(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if s.indexChecks == nil {
+		writeError(w, http.StatusInternalServerError, "index checks not configured")
+		return
+	}
+	now := time.Now().UTC()
+	filters := parseIndexCheckFilters(r, 0, 0)
+	_, _ = resolveIndexCheckCalendarRange(&filters, r, now)
+	filters.Limit = 0
+	filters.Offset = 0
+	daily, err := s.indexChecks.AggregateDaily(r.Context(), filters)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not aggregate index checks")
+		return
+	}
+	resp := make([]indexCheckDailyDTO, 0, len(daily))
+	for _, item := range daily {
+		resp = append(resp, toIndexCheckDailyDTO(item))
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -5272,6 +5573,11 @@ type indexCheckDTO struct {
 	CreatedAt     time.Time  `json:"created_at"`
 }
 
+type indexCheckListDTO struct {
+	Items []indexCheckDTO `json:"items"`
+	Total int             `json:"total"`
+}
+
 type indexCheckHistoryDTO struct {
 	ID            string          `json:"id"`
 	CheckID       string          `json:"check_id"`
@@ -5281,6 +5587,29 @@ type indexCheckHistoryDTO struct {
 	ErrorMessage  *string         `json:"error_message,omitempty"`
 	DurationMS    *int64          `json:"duration_ms,omitempty"`
 	CreatedAt     time.Time       `json:"created_at"`
+}
+
+type indexCheckDailyDTO struct {
+	Date                string `json:"date"`
+	Total               int    `json:"total"`
+	IndexedTrue         int    `json:"indexed_true"`
+	IndexedFalse        int    `json:"indexed_false"`
+	Pending             int    `json:"pending"`
+	Checking            int    `json:"checking"`
+	FailedInvestigation int    `json:"failed_investigation"`
+	Success             int    `json:"success"`
+}
+
+type indexCheckStatsDTO struct {
+	From                 string               `json:"from"`
+	To                   string               `json:"to"`
+	TotalChecks          int                  `json:"total_checks"`
+	TotalResolved        int                  `json:"total_resolved"`
+	IndexedTrue          int                  `json:"indexed_true"`
+	PercentIndexed       int                  `json:"percent_indexed"`
+	AvgAttemptsToSuccess float64              `json:"avg_attempts_to_success"`
+	FailedInvestigation  int                  `json:"failed_investigation"`
+	Daily                []indexCheckDailyDTO `json:"daily"`
 }
 
 type generationDTO struct {
@@ -5542,6 +5871,49 @@ func toIndexCheckHistoryDTO(item sqlstore.CheckHistory) indexCheckHistoryDTO {
 		dto.DurationMS = &val
 	}
 	return dto
+}
+
+func toIndexCheckDailyDTO(item sqlstore.IndexCheckDailySummary) indexCheckDailyDTO {
+	return indexCheckDailyDTO{
+		Date:                item.Date.Format("2006-01-02"),
+		Total:               item.Total,
+		IndexedTrue:         item.IndexedTrue,
+		IndexedFalse:        item.IndexedFalse,
+		Pending:             item.Pending,
+		Checking:            item.Checking,
+		FailedInvestigation: item.FailedInvestigation,
+		Success:             item.Success,
+	}
+}
+
+func buildIndexCheckStatsDTO(
+	stats sqlstore.IndexCheckStats,
+	daily []sqlstore.IndexCheckDailySummary,
+	from time.Time,
+	to time.Time,
+) indexCheckStatsDTO {
+	percent := 0
+	if stats.TotalResolved > 0 {
+		percent = int(math.Round(float64(stats.IndexedTrue) / float64(stats.TotalResolved) * 100))
+	}
+	resp := indexCheckStatsDTO{
+		From:                 from.Format("2006-01-02"),
+		To:                   to.Format("2006-01-02"),
+		TotalChecks:          stats.TotalChecks,
+		TotalResolved:        stats.TotalResolved,
+		IndexedTrue:          stats.IndexedTrue,
+		PercentIndexed:       percent,
+		AvgAttemptsToSuccess: stats.AvgAttemptsToSuccess,
+		FailedInvestigation:  stats.FailedInvestigation,
+		Daily:                []indexCheckDailyDTO{},
+	}
+	if len(daily) > 0 {
+		resp.Daily = make([]indexCheckDailyDTO, 0, len(daily))
+		for _, item := range daily {
+			resp.Daily = append(resp.Daily, toIndexCheckDailyDTO(item))
+		}
+	}
+	return resp
 }
 
 func toGenerationDTO(g sqlstore.Generation) generationDTO {
@@ -6450,19 +6822,163 @@ func parseIndexCheckFilters(r *http.Request, fallbackLimit int, maxLimit int) sq
 	limit := parseLimitParam(r, fallbackLimit, maxLimit)
 	page := parsePageParam(r, 1)
 	offset := (page - 1) * limit
-	status := strings.TrimSpace(r.URL.Query().Get("status"))
-	search := strings.TrimSpace(r.URL.Query().Get("search"))
 	filters := sqlstore.IndexCheckFilters{
 		Limit:  limit,
 		Offset: offset,
 	}
-	if status != "" {
-		filters.Status = &status
+	if status := strings.TrimSpace(r.URL.Query().Get("status")); status != "" {
+		filters.Statuses = parseStatusList(status)
 	}
-	if search != "" {
+	if search := strings.TrimSpace(r.URL.Query().Get("search")); search != "" {
 		filters.Search = &search
 	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("sort")); raw != "" {
+		if key, dir := parseIndexCheckSort(raw); key != "" {
+			filters.SortBy = key
+			filters.SortDir = dir
+		}
+	}
+	if domainID := strings.TrimSpace(r.URL.Query().Get("domain_id")); domainID != "" {
+		filters.DomainID = &domainID
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("is_indexed")); raw != "" {
+		if val, err := strconv.ParseBool(raw); err == nil {
+			filters.IsIndexed = &val
+		}
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("from")); raw != "" {
+		if dt, ok := parseIndexCheckDate(raw); ok {
+			filters.From = &dt
+		}
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("to")); raw != "" {
+		if dt, ok := parseIndexCheckDate(raw); ok {
+			filters.To = &dt
+		}
+	}
 	return filters
+}
+
+func resolveIndexCheckStatsRange(filters *sqlstore.IndexCheckFilters, now time.Time) (time.Time, time.Time) {
+	const defaultDays = 30
+	var from time.Time
+	var to time.Time
+	if filters.From != nil {
+		from = dateOnlyUTC(*filters.From)
+	}
+	if filters.To != nil {
+		to = dateOnlyUTC(*filters.To)
+	}
+	switch {
+	case !from.IsZero() && !to.IsZero():
+		// keep
+	case !from.IsZero() && to.IsZero():
+		to = dateOnlyUTC(now)
+	case from.IsZero() && !to.IsZero():
+		from = dateOnlyUTC(to.AddDate(0, 0, -defaultDays+1))
+	default:
+		to = dateOnlyUTC(now)
+		from = dateOnlyUTC(now.AddDate(0, 0, -defaultDays+1))
+	}
+	if from.After(to) {
+		from, to = to, from
+	}
+	filters.From = &from
+	filters.To = &to
+	return from, to
+}
+
+func resolveIndexCheckCalendarRange(filters *sqlstore.IndexCheckFilters, r *http.Request, now time.Time) (time.Time, time.Time) {
+	if month := strings.TrimSpace(r.URL.Query().Get("month")); month != "" {
+		if from, to, ok := parseIndexCheckMonth(month); ok {
+			filters.From = &from
+			filters.To = &to
+			return from, to
+		}
+	}
+	if filters.From != nil || filters.To != nil {
+		from, to := resolveIndexCheckStatsRange(filters, now)
+		return from, to
+	}
+	current := dateOnlyUTC(now)
+	from := time.Date(current.Year(), current.Month(), 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(current.Year(), current.Month()+1, 0, 0, 0, 0, 0, time.UTC)
+	filters.From = &from
+	filters.To = &to
+	return from, to
+}
+
+func parseIndexCheckMonth(raw string) (time.Time, time.Time, bool) {
+	t, err := time.Parse("2006-01", raw)
+	if err != nil {
+		return time.Time{}, time.Time{}, false
+	}
+	from := time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(t.Year(), t.Month()+1, 0, 0, 0, 0, 0, time.UTC)
+	return from, to, true
+}
+
+func parseStatusList(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+	for _, part := range parts {
+		status := strings.TrimSpace(part)
+		if status == "" {
+			continue
+		}
+		if _, ok := seen[status]; ok {
+			continue
+		}
+		seen[status] = struct{}{}
+		out = append(out, status)
+	}
+	return out
+}
+
+func parseIndexCheckSort(raw string) (string, string) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", ""
+	}
+	parts := strings.SplitN(value, ":", 2)
+	key := strings.TrimSpace(parts[0])
+	if !isAllowedIndexCheckSort(key) {
+		return "", ""
+	}
+	dir := "desc"
+	if len(parts) > 1 {
+		switch strings.ToLower(strings.TrimSpace(parts[1])) {
+		case "asc":
+			dir = "asc"
+		case "desc":
+			dir = "desc"
+		}
+	}
+	return key, dir
+}
+
+func isAllowedIndexCheckSort(key string) bool {
+	switch key {
+	case "domain", "check_date", "status", "attempts", "is_indexed", "last_attempt_at", "next_retry_at", "created_at":
+		return true
+	default:
+		return false
+	}
+}
+
+func parseIndexCheckDate(raw string) (time.Time, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}, false
+	}
+	if dt, err := time.Parse(time.RFC3339, raw); err == nil {
+		return dateOnlyUTC(dt), true
+	}
+	if dt, err := time.Parse("2006-01-02", raw); err == nil {
+		return dateOnlyUTC(dt), true
+	}
+	return time.Time{}, false
 }
 
 func dateOnlyUTC(t time.Time) time.Time {

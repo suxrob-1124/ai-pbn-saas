@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -62,15 +63,18 @@ func TestDomainIndexChecksList(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	var list []indexCheckDTO
+	var list indexCheckListDTO
 	if err := json.NewDecoder(rec.Body).Decode(&list); err != nil {
 		t.Fatalf("decode list: %v", err)
 	}
-	if len(list) != 1 {
-		t.Fatalf("expected 1 item, got %d", len(list))
+	if len(list.Items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(list.Items))
 	}
-	if list[0].IsIndexed == nil || !*list[0].IsIndexed {
-		t.Fatalf("expected is_indexed=true, got %#v", list[0].IsIndexed)
+	if list.Total != 1 {
+		t.Fatalf("expected total=1, got %d", list.Total)
+	}
+	if list.Items[0].IsIndexed == nil || !*list.Items[0].IsIndexed {
+		t.Fatalf("expected is_indexed=true, got %#v", list.Items[0].IsIndexed)
 	}
 }
 
@@ -263,15 +267,18 @@ func TestAdminIndexChecksFailed(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	var list []indexCheckDTO
+	var list indexCheckListDTO
 	if err := json.NewDecoder(rec.Body).Decode(&list); err != nil {
 		t.Fatalf("decode list: %v", err)
 	}
-	if len(list) != 1 {
-		t.Fatalf("expected 1 item, got %d", len(list))
+	if len(list.Items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(list.Items))
 	}
-	if list[0].Status != "failed_investigation" {
-		t.Fatalf("unexpected status: %s", list[0].Status)
+	if list.Total != 1 {
+		t.Fatalf("expected total=1, got %d", list.Total)
+	}
+	if list.Items[0].Status != "failed_investigation" {
+		t.Fatalf("unexpected status: %s", list.Items[0].Status)
 	}
 }
 
@@ -357,15 +364,18 @@ func TestAdminIndexChecksFilters(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	var list []indexCheckDTO
+	var list indexCheckListDTO
 	if err := json.NewDecoder(rec.Body).Decode(&list); err != nil {
 		t.Fatalf("decode list: %v", err)
 	}
-	if len(list) != 1 {
-		t.Fatalf("expected 1 item, got %d", len(list))
+	if len(list.Items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(list.Items))
 	}
-	if list[0].DomainID != "domain-a" {
-		t.Fatalf("unexpected domain id: %s", list[0].DomainID)
+	if list.Total != 1 {
+		t.Fatalf("expected total=1, got %d", list.Total)
+	}
+	if list.Items[0].DomainID != "domain-a" {
+		t.Fatalf("unexpected domain id: %s", list.Items[0].DomainID)
 	}
 }
 
@@ -505,5 +515,100 @@ func TestAdminIndexChecksHistoryStoreError(t *testing.T) {
 	s.handleAdminIndexCheckRoute(rec, req)
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAdminIndexChecksRun(t *testing.T) {
+	s := setupServer(t)
+
+	projStore := s.projects.(*stubProjectStore)
+	domStore := s.domains.(*stubDomainStore)
+
+	project := sqlstore.Project{
+		ID:        "project-1",
+		UserEmail: "owner@example.com",
+		Name:      "Demo",
+		Status:    "draft",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+	projStore.projects[project.ID] = project
+	domStore.domains["domain-1"] = sqlstore.Domain{
+		ID:        "domain-1",
+		ProjectID: project.ID,
+		URL:       "example.com",
+		Status:    "waiting",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+
+	body := `{"domain_id":"domain-1"}`
+	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: "admin@example.com",
+		Role:  "admin",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/index-checks/run", strings.NewReader(body)).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.handleAdminIndexChecksRun(rec, req)
+	if rec.Code != http.StatusCreated && rec.Code != http.StatusOK {
+		t.Fatalf("expected 200/201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var dto indexCheckDTO
+	if err := json.NewDecoder(rec.Body).Decode(&dto); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if dto.DomainID != "domain-1" {
+		t.Fatalf("expected domain_id domain-1, got %s", dto.DomainID)
+	}
+	if dto.Status != "pending" {
+		t.Fatalf("expected status pending, got %s", dto.Status)
+	}
+}
+
+func TestAdminIndexChecksStats(t *testing.T) {
+	s := setupServer(t)
+
+	checkStore := s.indexChecks.(*stubIndexCheckStore)
+	checkStore.checks["check-1"] = sqlstore.IndexCheck{
+		ID:        "check-1",
+		DomainID:  "domain-1",
+		CheckDate: time.Date(2026, 2, 11, 0, 0, 0, 0, time.UTC),
+		Status:    "success",
+		IsIndexed: sql.NullBool{Bool: true, Valid: true},
+		Attempts:  2,
+		CreatedAt: time.Now().UTC(),
+	}
+	checkStore.checks["check-2"] = sqlstore.IndexCheck{
+		ID:        "check-2",
+		DomainID:  "domain-2",
+		CheckDate: time.Date(2026, 2, 12, 0, 0, 0, 0, time.UTC),
+		Status:    "failed_investigation",
+		Attempts:  1,
+		CreatedAt: time.Now().UTC(),
+	}
+
+	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: "admin@example.com",
+		Role:  "admin",
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/index-checks/stats?from=2026-02-01&to=2026-02-12", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	s.handleAdminIndexChecksStats(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp indexCheckStatsDTO
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.TotalChecks != 2 {
+		t.Fatalf("expected total_checks=2, got %d", resp.TotalChecks)
+	}
+	if resp.IndexedTrue != 1 {
+		t.Fatalf("expected indexed_true=1, got %d", resp.IndexedTrue)
+	}
+	if len(resp.Daily) == 0 {
+		t.Fatalf("expected daily stats, got 0")
 	}
 }

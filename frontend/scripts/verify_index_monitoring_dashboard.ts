@@ -21,7 +21,7 @@ requiredComponents.forEach((name) => {
   assert.ok(page.includes(name), `page must reference ${name}`);
 });
 
-const queryKeys = ["status", "from", "to", "domainId", "isIndexed"];
+const queryKeys = ["status", "from", "to", "domainId", "isIndexed", "search", "sort"];
 queryKeys.forEach((key) => {
   assert.ok(
     page.includes(`\"${key}\"`) || page.includes(`'${key}'`),

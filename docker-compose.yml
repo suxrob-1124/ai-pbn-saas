@@ -101,6 +101,27 @@ services:
     entrypoint: ["/bin/scheduler"]
     restart: unless-stopped
 
+  indexchecker:
+    build:
+      context: ./pbn-generator
+    env_file:
+      - .env
+    environment:
+      PORT: "8080"
+      ALLOWED_ORIGIN: "${ALLOWED_ORIGIN:-*}"
+      DB_DRIVER: "${DB_DRIVER:-pgx}"
+      DB_DSN: "${DB_DSN:-postgres://auth:auth@db:5432/auth?sslmode=disable}"
+      SESSION_TTL: "${SESSION_TTL:-24h}"
+      SESSION_CLEAN_INTERVAL: "${SESSION_CLEAN_INTERVAL:-5m}"
+      DB_CONNECT_RETRIES: "${DB_CONNECT_RETRIES:-20}"
+      DB_CONNECT_INTERVAL: "${DB_CONNECT_INTERVAL:-1s}"
+      MIGRATE_ON_START: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint: ["/bin/indexchecker"]
+    restart: unless-stopped
+
   migrate:
     build:
       context: ./pbn-generator

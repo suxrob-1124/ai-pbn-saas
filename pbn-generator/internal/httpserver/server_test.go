@@ -2126,6 +2126,9 @@ type stubIndexCheckStore struct {
 	errListProject  error
 	errListAll      error
 	errListFailed   error
+	errCount        error
+	errAggStats     error
+	errAggDaily     error
 }
 
 func newStubIndexCheckStore() *stubIndexCheckStore {
@@ -2247,8 +2250,7 @@ func (s *stubIndexCheckStore) ListFailed(ctx context.Context, filters sqlstore.I
 	if s.errListFailed != nil {
 		return nil, s.errListFailed
 	}
-	status := "failed_investigation"
-	filters.Status = &status
+	filters.Statuses = []string{"failed_investigation"}
 	res := make([]sqlstore.IndexCheck, 0)
 	for _, check := range s.checks {
 		if !filterIndexCheck(check, filters, s.domainURL) {
@@ -2259,6 +2261,77 @@ func (s *stubIndexCheckStore) ListFailed(ctx context.Context, filters sqlstore.I
 	sortIndexChecks(res)
 	res = applyIndexCheckPagination(res, filters)
 	return res, nil
+}
+
+func (s *stubIndexCheckStore) CountByDomain(ctx context.Context, domainID string, filters sqlstore.IndexCheckFilters) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.errCount != nil {
+		return 0, s.errCount
+	}
+	count := 0
+	for _, check := range s.checks {
+		if check.DomainID != domainID {
+			continue
+		}
+		if !filterIndexCheck(check, filters, s.domainURL) {
+			continue
+		}
+		count++
+	}
+	return count, nil
+}
+
+func (s *stubIndexCheckStore) CountByProject(ctx context.Context, projectID string, filters sqlstore.IndexCheckFilters) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.errCount != nil {
+		return 0, s.errCount
+	}
+	count := 0
+	for _, check := range s.checks {
+		if s.domainToProject[check.DomainID] != projectID {
+			continue
+		}
+		if !filterIndexCheck(check, filters, s.domainURL) {
+			continue
+		}
+		count++
+	}
+	return count, nil
+}
+
+func (s *stubIndexCheckStore) CountAll(ctx context.Context, filters sqlstore.IndexCheckFilters) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.errCount != nil {
+		return 0, s.errCount
+	}
+	count := 0
+	for _, check := range s.checks {
+		if !filterIndexCheck(check, filters, s.domainURL) {
+			continue
+		}
+		count++
+	}
+	return count, nil
+}
+
+func (s *stubIndexCheckStore) CountFailed(ctx context.Context, filters sqlstore.IndexCheckFilters) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.errCount != nil {
+		return 0, s.errCount
+	}
+	count := 0
+	filters.Statuses = []string{"failed_investigation"}
+	for _, check := range s.checks {
+		if !filterIndexCheck(check, filters, s.domainURL) {
+			continue
+		}
+		count++
+	}
+	return count, nil
 }
 
 func (s *stubIndexCheckStore) ResetForManual(ctx context.Context, checkID string, nextRetry time.Time) error {
@@ -2280,6 +2353,114 @@ func (s *stubIndexCheckStore) ResetForManual(ctx context.Context, checkID string
 	check.NextRetryAt = sql.NullTime{Time: nextRetry, Valid: true}
 	s.checks[checkID] = check
 	return nil
+}
+
+func (s *stubIndexCheckStore) AggregateStats(ctx context.Context, filters sqlstore.IndexCheckFilters) (sqlstore.IndexCheckStats, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.errAggStats != nil {
+		return sqlstore.IndexCheckStats{}, s.errAggStats
+	}
+	res := make([]sqlstore.IndexCheck, 0, len(s.checks))
+	for _, check := range s.checks {
+		if !filterIndexCheck(check, filters, s.domainURL) {
+			continue
+		}
+		res = append(res, check)
+	}
+	return aggregateIndexCheckStats(res), nil
+}
+
+func (s *stubIndexCheckStore) AggregateStatsByDomain(ctx context.Context, domainID string, filters sqlstore.IndexCheckFilters) (sqlstore.IndexCheckStats, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.errAggStats != nil {
+		return sqlstore.IndexCheckStats{}, s.errAggStats
+	}
+	res := make([]sqlstore.IndexCheck, 0)
+	for _, check := range s.checks {
+		if check.DomainID != domainID {
+			continue
+		}
+		if !filterIndexCheck(check, filters, s.domainURL) {
+			continue
+		}
+		res = append(res, check)
+	}
+	return aggregateIndexCheckStats(res), nil
+}
+
+func (s *stubIndexCheckStore) AggregateStatsByProject(ctx context.Context, projectID string, filters sqlstore.IndexCheckFilters) (sqlstore.IndexCheckStats, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.errAggStats != nil {
+		return sqlstore.IndexCheckStats{}, s.errAggStats
+	}
+	res := make([]sqlstore.IndexCheck, 0)
+	for _, check := range s.checks {
+		if s.domainToProject[check.DomainID] != projectID {
+			continue
+		}
+		if !filterIndexCheck(check, filters, s.domainURL) {
+			continue
+		}
+		res = append(res, check)
+	}
+	return aggregateIndexCheckStats(res), nil
+}
+
+func (s *stubIndexCheckStore) AggregateDaily(ctx context.Context, filters sqlstore.IndexCheckFilters) ([]sqlstore.IndexCheckDailySummary, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.errAggDaily != nil {
+		return nil, s.errAggDaily
+	}
+	res := make([]sqlstore.IndexCheck, 0, len(s.checks))
+	for _, check := range s.checks {
+		if !filterIndexCheck(check, filters, s.domainURL) {
+			continue
+		}
+		res = append(res, check)
+	}
+	return aggregateIndexCheckDaily(res), nil
+}
+
+func (s *stubIndexCheckStore) AggregateDailyByDomain(ctx context.Context, domainID string, filters sqlstore.IndexCheckFilters) ([]sqlstore.IndexCheckDailySummary, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.errAggDaily != nil {
+		return nil, s.errAggDaily
+	}
+	res := make([]sqlstore.IndexCheck, 0)
+	for _, check := range s.checks {
+		if check.DomainID != domainID {
+			continue
+		}
+		if !filterIndexCheck(check, filters, s.domainURL) {
+			continue
+		}
+		res = append(res, check)
+	}
+	return aggregateIndexCheckDaily(res), nil
+}
+
+func (s *stubIndexCheckStore) AggregateDailyByProject(ctx context.Context, projectID string, filters sqlstore.IndexCheckFilters) ([]sqlstore.IndexCheckDailySummary, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.errAggDaily != nil {
+		return nil, s.errAggDaily
+	}
+	res := make([]sqlstore.IndexCheck, 0)
+	for _, check := range s.checks {
+		if s.domainToProject[check.DomainID] != projectID {
+			continue
+		}
+		if !filterIndexCheck(check, filters, s.domainURL) {
+			continue
+		}
+		res = append(res, check)
+	}
+	return aggregateIndexCheckDaily(res), nil
 }
 
 type stubCheckHistoryStore struct {
@@ -2308,8 +2489,15 @@ func (s *stubCheckHistoryStore) ListByCheck(ctx context.Context, checkID string,
 }
 
 func filterIndexCheck(check sqlstore.IndexCheck, filters sqlstore.IndexCheckFilters, domainURL map[string]string) bool {
-	if filters.Status != nil && strings.TrimSpace(*filters.Status) != "" {
-		if check.Status != *filters.Status {
+	if len(filters.Statuses) > 0 {
+		match := false
+		for _, status := range filters.Statuses {
+			if strings.TrimSpace(status) == check.Status {
+				match = true
+				break
+			}
+		}
+		if !match {
 			return false
 		}
 	}
@@ -2325,7 +2513,87 @@ func filterIndexCheck(check sqlstore.IndexCheck, filters sqlstore.IndexCheckFilt
 			return false
 		}
 	}
+	if filters.DomainID != nil && strings.TrimSpace(*filters.DomainID) != "" {
+		if check.DomainID != strings.TrimSpace(*filters.DomainID) {
+			return false
+		}
+	}
+	if filters.IsIndexed != nil {
+		if !check.IsIndexed.Valid || check.IsIndexed.Bool != *filters.IsIndexed {
+			return false
+		}
+	}
+	if filters.From != nil && check.CheckDate.Before(dateOnlyUTC(*filters.From)) {
+		return false
+	}
+	if filters.To != nil && check.CheckDate.After(dateOnlyUTC(*filters.To)) {
+		return false
+	}
 	return true
+}
+
+func aggregateIndexCheckStats(list []sqlstore.IndexCheck) sqlstore.IndexCheckStats {
+	var stats sqlstore.IndexCheckStats
+	var successAttempts []int
+	for _, check := range list {
+		stats.TotalChecks++
+		if check.Status == "success" {
+			successAttempts = append(successAttempts, check.Attempts)
+			if check.IsIndexed.Valid {
+				stats.TotalResolved++
+				if check.IsIndexed.Bool {
+					stats.IndexedTrue++
+				}
+			}
+		}
+		if check.Status == "failed_investigation" {
+			stats.FailedInvestigation++
+		}
+	}
+	if len(successAttempts) > 0 {
+		sum := 0
+		for _, val := range successAttempts {
+			sum += val
+		}
+		stats.AvgAttemptsToSuccess = float64(sum) / float64(len(successAttempts))
+	}
+	return stats
+}
+
+func aggregateIndexCheckDaily(list []sqlstore.IndexCheck) []sqlstore.IndexCheckDailySummary {
+	summary := make(map[time.Time]*sqlstore.IndexCheckDailySummary)
+	for _, check := range list {
+		day := dateOnlyUTC(check.CheckDate)
+		item := summary[day]
+		if item == nil {
+			item = &sqlstore.IndexCheckDailySummary{Date: day}
+			summary[day] = item
+		}
+		item.Total++
+		switch check.Status {
+		case "pending":
+			item.Pending++
+		case "checking":
+			item.Checking++
+		case "failed_investigation":
+			item.FailedInvestigation++
+		case "success":
+			item.Success++
+			if check.IsIndexed.Valid {
+				if check.IsIndexed.Bool {
+					item.IndexedTrue++
+				} else {
+					item.IndexedFalse++
+				}
+			}
+		}
+	}
+	out := make([]sqlstore.IndexCheckDailySummary, 0, len(summary))
+	for _, item := range summary {
+		out = append(out, *item)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Date.Before(out[j].Date) })
+	return out
 }
 
 func applyIndexCheckPagination(list []sqlstore.IndexCheck, filters sqlstore.IndexCheckFilters) []sqlstore.IndexCheck {
@@ -2585,6 +2853,45 @@ func (s *stubPromptStore) Get(ctx context.Context, id string) (sqlstore.SystemPr
 		return sqlstore.SystemPrompt{}, sql.ErrNoRows
 	}
 	return p, nil
+}
+
+func TestParseIndexCheckFiltersSortAndSearch(t *testing.T) {
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/api/admin/index-checks?status=success,checking&search=Example.COM&domain_id=domain-1&is_indexed=true&from=2026-02-01&to=2026-02-12&sort=check_date:asc&limit=20&page=2",
+		nil,
+	)
+
+	filters := parseIndexCheckFilters(req, 50, 200)
+	if filters.Limit != 20 {
+		t.Fatalf("expected limit 20, got %d", filters.Limit)
+	}
+	if filters.Offset != 20 {
+		t.Fatalf("expected offset 20, got %d", filters.Offset)
+	}
+	if len(filters.Statuses) != 2 || filters.Statuses[0] != "success" || filters.Statuses[1] != "checking" {
+		t.Fatalf("unexpected statuses: %#v", filters.Statuses)
+	}
+	if filters.Search == nil || *filters.Search != "Example.COM" {
+		t.Fatalf("unexpected search: %#v", filters.Search)
+	}
+	if filters.DomainID == nil || *filters.DomainID != "domain-1" {
+		t.Fatalf("unexpected domain id: %#v", filters.DomainID)
+	}
+	if filters.IsIndexed == nil || *filters.IsIndexed != true {
+		t.Fatalf("unexpected is_indexed: %#v", filters.IsIndexed)
+	}
+	expectedFrom := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+	expectedTo := time.Date(2026, 2, 12, 0, 0, 0, 0, time.UTC)
+	if filters.From == nil || !filters.From.Equal(expectedFrom) {
+		t.Fatalf("unexpected from: %#v", filters.From)
+	}
+	if filters.To == nil || !filters.To.Equal(expectedTo) {
+		t.Fatalf("unexpected to: %#v", filters.To)
+	}
+	if filters.SortBy != "check_date" || filters.SortDir != "asc" {
+		t.Fatalf("unexpected sort: %s %s", filters.SortBy, filters.SortDir)
+	}
 }
 
 type stubSiteFileStore struct{}

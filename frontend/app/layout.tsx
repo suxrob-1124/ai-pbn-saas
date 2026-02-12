@@ -1,6 +1,7 @@
 import "./globals.css";
 import { ReactNode } from "react";
 import { Navbar } from "../components/Navbar";
+import { Footer } from "../components/Footer";
 import { ToastHost } from "../components/ToastHost";
 
 export const metadata = {
@@ -41,6 +42,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             </p>
           </header>
           {children}
+          <Footer />
         </div>
         <ToastHost />
       </body>

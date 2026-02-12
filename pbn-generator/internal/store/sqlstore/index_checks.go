@@ -32,19 +32,56 @@ type IndexCheckStore interface {
 	ListByProject(ctx context.Context, projectID string, filters IndexCheckFilters) ([]IndexCheck, error)
 	ListAll(ctx context.Context, filters IndexCheckFilters) ([]IndexCheck, error)
 	ListFailed(ctx context.Context, filters IndexCheckFilters) ([]IndexCheck, error)
+	CountByDomain(ctx context.Context, domainID string, filters IndexCheckFilters) (int, error)
+	CountByProject(ctx context.Context, projectID string, filters IndexCheckFilters) (int, error)
+	CountAll(ctx context.Context, filters IndexCheckFilters) (int, error)
+	CountFailed(ctx context.Context, filters IndexCheckFilters) (int, error)
 	ListPendingRetries(ctx context.Context) ([]IndexCheck, error)
 	UpdateStatus(ctx context.Context, checkID string, status string, isIndexed *bool, errMsg *string) error
 	IncrementAttempts(ctx context.Context, checkID string) error
 	SetNextRetry(ctx context.Context, checkID string, nextRetry time.Time) error
 	ResetForManual(ctx context.Context, checkID string, nextRetry time.Time) error
+	AggregateStats(ctx context.Context, filters IndexCheckFilters) (IndexCheckStats, error)
+	AggregateStatsByDomain(ctx context.Context, domainID string, filters IndexCheckFilters) (IndexCheckStats, error)
+	AggregateStatsByProject(ctx context.Context, projectID string, filters IndexCheckFilters) (IndexCheckStats, error)
+	AggregateDaily(ctx context.Context, filters IndexCheckFilters) ([]IndexCheckDailySummary, error)
+	AggregateDailyByDomain(ctx context.Context, domainID string, filters IndexCheckFilters) ([]IndexCheckDailySummary, error)
+	AggregateDailyByProject(ctx context.Context, projectID string, filters IndexCheckFilters) ([]IndexCheckDailySummary, error)
 }
 
 // IndexCheckFilters описывает фильтры для выборки проверок индексации.
 type IndexCheckFilters struct {
-	Status *string
-	Search *string
-	Limit  int
-	Offset int
+  Statuses  []string
+  Search    *string
+  Limit     int
+  Offset    int
+  SortBy    string
+  SortDir   string
+  IsIndexed *bool
+  From      *time.Time
+  To        *time.Time
+  DomainID  *string
+}
+
+// IndexCheckDailySummary описывает агрегаты по дням.
+type IndexCheckDailySummary struct {
+	Date                time.Time
+	Total               int
+	IndexedTrue         int
+	IndexedFalse        int
+	Pending             int
+	Checking            int
+	FailedInvestigation int
+	Success             int
+}
+
+// IndexCheckStats описывает агрегированную статистику.
+type IndexCheckStats struct {
+	TotalChecks          int
+	TotalResolved        int
+	IndexedTrue          int
+	AvgAttemptsToSuccess float64
+	FailedInvestigation  int
 }
 
 // IndexCheckSQLStore реализует IndexCheckStore поверх SQL БД.
@@ -160,9 +197,43 @@ func (s *IndexCheckSQLStore) ListAll(ctx context.Context, filters IndexCheckFilt
 
 // ListFailed возвращает проблемные проверки.
 func (s *IndexCheckSQLStore) ListFailed(ctx context.Context, filters IndexCheckFilters) ([]IndexCheck, error) {
-	status := "failed_investigation"
-	filters.Status = &status
+	filters.Statuses = []string{"failed_investigation"}
 	return s.listIndexChecks(ctx, filters)
+}
+
+// CountByDomain возвращает количество проверок по домену.
+func (s *IndexCheckSQLStore) CountByDomain(ctx context.Context, domainID string, filters IndexCheckFilters) (int, error) {
+	return s.countIndexChecksWithBase(ctx,
+		"domain_index_checks c",
+		[]string{"c.domain_id=$1"},
+		[]interface{}{domainID},
+		filters,
+		true,
+		false,
+	)
+}
+
+// CountByProject возвращает количество проверок по проекту.
+func (s *IndexCheckSQLStore) CountByProject(ctx context.Context, projectID string, filters IndexCheckFilters) (int, error) {
+	return s.countIndexChecksWithBase(ctx,
+		"domain_index_checks c JOIN domains d ON d.id = c.domain_id",
+		[]string{"d.project_id=$1"},
+		[]interface{}{projectID},
+		filters,
+		true,
+		true,
+	)
+}
+
+// CountAll возвращает количество проверок по всем доменам.
+func (s *IndexCheckSQLStore) CountAll(ctx context.Context, filters IndexCheckFilters) (int, error) {
+	return s.countIndexChecksWithBase(ctx, "domain_index_checks c", nil, nil, filters, true, false)
+}
+
+// CountFailed возвращает количество проблемных проверок.
+func (s *IndexCheckSQLStore) CountFailed(ctx context.Context, filters IndexCheckFilters) (int, error) {
+	filters.Statuses = []string{"failed_investigation"}
+	return s.countIndexChecksWithBase(ctx, "domain_index_checks c", nil, nil, filters, true, false)
 }
 
 // ListPendingRetries возвращает проверки, готовые к повторной попытке.
@@ -257,38 +328,21 @@ func (s *IndexCheckSQLStore) listIndexChecksWithBase(
 	allowSearch bool,
 	hasDomainJoin bool,
 ) ([]IndexCheck, error) {
-	fromTable := baseFrom
-	clauses := append([]string(nil), baseClauses...)
-	args := append([]interface{}(nil), baseArgs...)
-	idx := len(args) + 1
-
-	if filters.Status != nil {
-		status := strings.TrimSpace(*filters.Status)
-		if status != "" {
-			clauses = append(clauses, fmt.Sprintf("c.status=$%d", idx))
-			args = append(args, status)
-			idx++
-		}
-	}
-	if allowSearch && filters.Search != nil {
-		term := strings.TrimSpace(*filters.Search)
-		if term != "" {
-			if !hasDomainJoin {
-				fromTable = "domain_index_checks c JOIN domains d ON d.id = c.domain_id"
-				hasDomainJoin = true
-			}
-			clauses = append(clauses, fmt.Sprintf("(LOWER(COALESCE(d.url, '')) LIKE $%d OR LOWER(c.domain_id) LIKE $%d)", idx, idx))
-			args = append(args, "%"+strings.ToLower(term)+"%")
-			idx++
-		}
-	}
+	fromTable, clauses, args, idx := buildIndexCheckFilterClauses(
+		baseFrom,
+		baseClauses,
+		baseArgs,
+		filters,
+		allowSearch,
+		hasDomainJoin,
+	)
 
 	query := fmt.Sprintf(`SELECT c.id, c.domain_id, c.check_date, c.status, c.is_indexed, c.attempts, c.last_attempt_at, c.next_retry_at, c.error_message, c.completed_at, c.created_at
 		FROM %s`, fromTable)
 	if len(clauses) > 0 {
 		query += " WHERE " + strings.Join(clauses, " AND ")
 	}
-	query += " ORDER BY c.check_date DESC, c.created_at DESC"
+	query += " ORDER BY " + buildIndexCheckOrder(filters)
 	if filters.Limit > 0 {
 		query += fmt.Sprintf(" LIMIT $%d", idx)
 		args = append(args, filters.Limit)
@@ -308,9 +362,203 @@ func (s *IndexCheckSQLStore) listIndexChecksWithBase(
 	return scanIndexChecks(rows)
 }
 
-func scanIndexChecks(rows *sql.Rows) ([]IndexCheck, error) {
-	var res []IndexCheck
+func (s *IndexCheckSQLStore) countIndexChecksWithBase(
+	ctx context.Context,
+	baseFrom string,
+	baseClauses []string,
+	baseArgs []interface{},
+	filters IndexCheckFilters,
+	allowSearch bool,
+	hasDomainJoin bool,
+) (int, error) {
+	fromTable, clauses, args, _ := buildIndexCheckFilterClauses(
+		baseFrom,
+		baseClauses,
+		baseArgs,
+		filters,
+		allowSearch,
+		hasDomainJoin,
+	)
+	query := fmt.Sprintf("SELECT COUNT(*) FROM %s", fromTable)
+	if len(clauses) > 0 {
+		query += " WHERE " + strings.Join(clauses, " AND ")
+	}
+
+	var total int
+	if err := s.db.QueryRowContext(ctx, query, args...).Scan(&total); err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+// AggregateStats агрегирует статистику по всем проверкам.
+func (s *IndexCheckSQLStore) AggregateStats(ctx context.Context, filters IndexCheckFilters) (IndexCheckStats, error) {
+	return s.aggregateStatsWithBase(ctx, "domain_index_checks c", nil, nil, filters, true, false)
+}
+
+// AggregateStatsByDomain агрегирует статистику по домену.
+func (s *IndexCheckSQLStore) AggregateStatsByDomain(ctx context.Context, domainID string, filters IndexCheckFilters) (IndexCheckStats, error) {
+	return s.aggregateStatsWithBase(
+		ctx,
+		"domain_index_checks c",
+		[]string{"c.domain_id=$1"},
+		[]interface{}{domainID},
+		filters,
+		true,
+		false,
+	)
+}
+
+// AggregateStatsByProject агрегирует статистику по проекту.
+func (s *IndexCheckSQLStore) AggregateStatsByProject(ctx context.Context, projectID string, filters IndexCheckFilters) (IndexCheckStats, error) {
+	return s.aggregateStatsWithBase(
+		ctx,
+		"domain_index_checks c JOIN domains d ON d.id = c.domain_id",
+		[]string{"d.project_id=$1"},
+		[]interface{}{projectID},
+		filters,
+		true,
+		true,
+	)
+}
+
+// AggregateDaily агрегирует проверки по дням (global).
+func (s *IndexCheckSQLStore) AggregateDaily(ctx context.Context, filters IndexCheckFilters) ([]IndexCheckDailySummary, error) {
+	return s.aggregateDailyWithBase(ctx, "domain_index_checks c", nil, nil, filters, true, false)
+}
+
+// AggregateDailyByDomain агрегирует проверки по дням для домена.
+func (s *IndexCheckSQLStore) AggregateDailyByDomain(ctx context.Context, domainID string, filters IndexCheckFilters) ([]IndexCheckDailySummary, error) {
+	return s.aggregateDailyWithBase(
+		ctx,
+		"domain_index_checks c",
+		[]string{"c.domain_id=$1"},
+		[]interface{}{domainID},
+		filters,
+		true,
+		false,
+	)
+}
+
+// AggregateDailyByProject агрегирует проверки по дням для проекта.
+func (s *IndexCheckSQLStore) AggregateDailyByProject(ctx context.Context, projectID string, filters IndexCheckFilters) ([]IndexCheckDailySummary, error) {
+	return s.aggregateDailyWithBase(
+		ctx,
+		"domain_index_checks c JOIN domains d ON d.id = c.domain_id",
+		[]string{"d.project_id=$1"},
+		[]interface{}{projectID},
+		filters,
+		true,
+		true,
+	)
+}
+
+func (s *IndexCheckSQLStore) aggregateStatsWithBase(
+	ctx context.Context,
+	baseFrom string,
+	baseClauses []string,
+	baseArgs []interface{},
+	filters IndexCheckFilters,
+	allowSearch bool,
+	hasDomainJoin bool,
+) (IndexCheckStats, error) {
+	fromTable, clauses, args, _ := buildIndexCheckFilterClauses(
+		baseFrom,
+		baseClauses,
+		baseArgs,
+		filters,
+		allowSearch,
+		hasDomainJoin,
+	)
+	query := fmt.Sprintf(`SELECT
+		COUNT(*) AS total_checks,
+		COUNT(*) FILTER (WHERE c.status='success' AND c.is_indexed IS NOT NULL) AS total_resolved,
+		COUNT(*) FILTER (WHERE c.status='success' AND c.is_indexed = true) AS indexed_true,
+		AVG(c.attempts) FILTER (WHERE c.status='success') AS avg_attempts,
+		COUNT(*) FILTER (WHERE c.status='failed_investigation') AS failed_count
+		FROM %s`, fromTable)
+	if len(clauses) > 0 {
+		query += " WHERE " + strings.Join(clauses, " AND ")
+	}
+
+	var stats IndexCheckStats
+	var avg sql.NullFloat64
+	if err := s.db.QueryRowContext(ctx, query, args...).Scan(
+		&stats.TotalChecks,
+		&stats.TotalResolved,
+		&stats.IndexedTrue,
+		&avg,
+		&stats.FailedInvestigation,
+	); err != nil {
+		return IndexCheckStats{}, err
+	}
+	if avg.Valid {
+		stats.AvgAttemptsToSuccess = avg.Float64
+	}
+	return stats, nil
+}
+
+func (s *IndexCheckSQLStore) aggregateDailyWithBase(
+	ctx context.Context,
+	baseFrom string,
+	baseClauses []string,
+	baseArgs []interface{},
+	filters IndexCheckFilters,
+	allowSearch bool,
+	hasDomainJoin bool,
+) ([]IndexCheckDailySummary, error) {
+	fromTable, clauses, args, _ := buildIndexCheckFilterClauses(
+		baseFrom,
+		baseClauses,
+		baseArgs,
+		filters,
+		allowSearch,
+		hasDomainJoin,
+	)
+	query := fmt.Sprintf(`SELECT
+		c.check_date,
+		COUNT(*) AS total,
+		COUNT(*) FILTER (WHERE c.status='success' AND c.is_indexed = true) AS indexed_true,
+		COUNT(*) FILTER (WHERE c.status='success' AND c.is_indexed = false) AS indexed_false,
+		COUNT(*) FILTER (WHERE c.status='pending') AS pending,
+		COUNT(*) FILTER (WHERE c.status='checking') AS checking,
+		COUNT(*) FILTER (WHERE c.status='failed_investigation') AS failed,
+		COUNT(*) FILTER (WHERE c.status='success') AS success
+		FROM %s`, fromTable)
+	if len(clauses) > 0 {
+		query += " WHERE " + strings.Join(clauses, " AND ")
+	}
+	query += " GROUP BY c.check_date ORDER BY c.check_date ASC"
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []IndexCheckDailySummary
 	for rows.Next() {
+		var item IndexCheckDailySummary
+		if err := rows.Scan(
+			&item.Date,
+			&item.Total,
+			&item.IndexedTrue,
+			&item.IndexedFalse,
+			&item.Pending,
+			&item.Checking,
+			&item.FailedInvestigation,
+			&item.Success,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func scanIndexChecks(rows *sql.Rows) ([]IndexCheck, error) {
+  var res []IndexCheck
+  for rows.Next() {
 		var check IndexCheck
 		if err := rows.Scan(
 			&check.ID,
@@ -329,7 +577,124 @@ func scanIndexChecks(rows *sql.Rows) ([]IndexCheck, error) {
 		}
 		res = append(res, check)
 	}
-	return res, rows.Err()
+  return res, rows.Err()
+}
+
+func buildIndexCheckOrder(filters IndexCheckFilters) string {
+	key := strings.TrimSpace(filters.SortBy)
+	dir := "DESC"
+	if strings.EqualFold(strings.TrimSpace(filters.SortDir), "asc") {
+		dir = "ASC"
+	}
+	switch key {
+	case "domain":
+		return fmt.Sprintf("COALESCE(d.url, c.domain_id) %s, c.check_date DESC, c.created_at DESC", dir)
+	case "status":
+		return fmt.Sprintf("c.status %s, c.check_date DESC, c.created_at DESC", dir)
+	case "attempts":
+    return fmt.Sprintf("c.attempts %s, c.check_date DESC, c.created_at DESC", dir)
+  case "is_indexed":
+    return fmt.Sprintf("c.is_indexed %s, c.check_date DESC, c.created_at DESC", dir)
+  case "last_attempt_at":
+    return fmt.Sprintf("c.last_attempt_at %s, c.check_date DESC, c.created_at DESC", dir)
+  case "next_retry_at":
+    return fmt.Sprintf("c.next_retry_at %s, c.check_date DESC, c.created_at DESC", dir)
+  case "created_at":
+    return fmt.Sprintf("c.created_at %s", dir)
+  case "check_date":
+    fallthrough
+  default:
+    return fmt.Sprintf("c.check_date %s, c.created_at %s", dir, dir)
+  }
+}
+
+func requiresDomainJoinForSort(sortBy string) bool {
+  return strings.TrimSpace(sortBy) == "domain"
+}
+
+func normalizeIndexCheckStatuses(list []string) []string {
+  if len(list) == 0 {
+    return nil
+	}
+	seen := make(map[string]struct{}, len(list))
+	out := make([]string, 0, len(list))
+	for _, raw := range list {
+		status := strings.TrimSpace(raw)
+		if status == "" {
+			continue
+		}
+		if _, ok := seen[status]; ok {
+			continue
+		}
+		seen[status] = struct{}{}
+		out = append(out, status)
+	}
+	return out
+}
+
+func buildIndexCheckFilterClauses(
+	baseFrom string,
+	baseClauses []string,
+	baseArgs []interface{},
+	filters IndexCheckFilters,
+	allowSearch bool,
+	hasDomainJoin bool,
+) (string, []string, []interface{}, int) {
+	fromTable := baseFrom
+	clauses := append([]string(nil), baseClauses...)
+	args := append([]interface{}(nil), baseArgs...)
+	idx := len(args) + 1
+
+	statuses := normalizeIndexCheckStatuses(filters.Statuses)
+	if len(statuses) > 0 {
+		placeholders := make([]string, 0, len(statuses))
+		for _, status := range statuses {
+			placeholders = append(placeholders, fmt.Sprintf("$%d", idx))
+			args = append(args, status)
+			idx++
+		}
+		clauses = append(clauses, fmt.Sprintf("c.status IN (%s)", strings.Join(placeholders, ",")))
+	}
+	if requiresDomainJoinForSort(filters.SortBy) && !hasDomainJoin {
+		fromTable = "domain_index_checks c JOIN domains d ON d.id = c.domain_id"
+		hasDomainJoin = true
+	}
+	if allowSearch && filters.Search != nil {
+		term := strings.TrimSpace(*filters.Search)
+		if term != "" {
+			if !hasDomainJoin {
+				fromTable = "domain_index_checks c JOIN domains d ON d.id = c.domain_id"
+				hasDomainJoin = true
+			}
+			clauses = append(clauses, fmt.Sprintf("(LOWER(COALESCE(d.url, '')) LIKE $%d OR LOWER(c.domain_id) LIKE $%d)", idx, idx))
+			args = append(args, "%"+strings.ToLower(term)+"%")
+			idx++
+		}
+	}
+	if filters.DomainID != nil {
+		domainID := strings.TrimSpace(*filters.DomainID)
+		if domainID != "" {
+			clauses = append(clauses, fmt.Sprintf("c.domain_id=$%d", idx))
+			args = append(args, domainID)
+			idx++
+		}
+	}
+	if filters.IsIndexed != nil {
+		clauses = append(clauses, fmt.Sprintf("c.is_indexed=$%d", idx))
+		args = append(args, *filters.IsIndexed)
+		idx++
+	}
+	if filters.From != nil {
+		clauses = append(clauses, fmt.Sprintf("c.check_date >= $%d", idx))
+		args = append(args, *filters.From)
+		idx++
+	}
+	if filters.To != nil {
+		clauses = append(clauses, fmt.Sprintf("c.check_date <= $%d", idx))
+		args = append(args, *filters.To)
+		idx++
+	}
+	return fromTable, clauses, args, idx
 }
 
 func nullBool(ptr *bool) sql.NullBool {
