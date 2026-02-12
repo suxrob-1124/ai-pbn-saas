@@ -1,6 +1,7 @@
 package db
 
 import (
+	"errors"
 	"regexp"
 	"strings"
 	"testing"
@@ -24,6 +25,32 @@ func TestMigrateExecutesAllStatements(t *testing.T) {
 
 	if err := Migrate(conn); err != nil {
 		t.Fatalf("Migrate returned error: %v", err)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet sql expectations: %v", err)
+	}
+}
+
+func TestMigrateReturnsError(t *testing.T) {
+	t.Parallel()
+
+	conn, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to create sqlmock: %v", err)
+	}
+	defer conn.Close()
+
+	stmts := migrationStatements()
+	if len(stmts) == 0 {
+		t.Fatal("migrationStatements returned no statements")
+	}
+
+	mock.ExpectExec(regexp.QuoteMeta(stmts[0])).
+		WillReturnError(errors.New("boom"))
+
+	if err := Migrate(conn); err == nil {
+		t.Fatal("expected Migrate to return error")
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -138,6 +165,25 @@ func TestMigrationStatementsIncludeProjectTimezone(t *testing.T) {
 
 	stmts := migrationStatements()
 	expectContains(t, stmts, "ALTER TABLE projects ADD COLUMN IF NOT EXISTS timezone TEXT;")
+}
+
+func TestMigrationStatementsIncludeDomainIndexChecks(t *testing.T) {
+	t.Parallel()
+
+	stmts := migrationStatements()
+	expectContains(t, stmts, "CREATE TABLE IF NOT EXISTS domain_index_checks")
+	expectContains(t, stmts, "CREATE INDEX IF NOT EXISTS idx_index_checks_domain ON domain_index_checks(domain_id);")
+	expectContains(t, stmts, "CREATE INDEX IF NOT EXISTS idx_index_checks_date ON domain_index_checks(check_date);")
+	expectContains(t, stmts, "CREATE INDEX IF NOT EXISTS idx_index_checks_status ON domain_index_checks(status);")
+	expectContains(t, stmts, "CREATE INDEX IF NOT EXISTS idx_index_checks_retry ON domain_index_checks(next_retry_at) WHERE status = 'checking';")
+}
+
+func TestMigrationStatementsIncludeIndexCheckHistory(t *testing.T) {
+	t.Parallel()
+
+	stmts := migrationStatements()
+	expectContains(t, stmts, "CREATE TABLE IF NOT EXISTS index_check_history")
+	expectContains(t, stmts, "CREATE INDEX IF NOT EXISTS idx_check_history_check ON index_check_history(check_id);")
 }
 
 func expectContains(t *testing.T, stmts []string, needle string) {

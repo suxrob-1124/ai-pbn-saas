@@ -40,8 +40,3 @@
 
 Жду от тебя выполнения по шагам 1-4.
 
-
-
-Проверка
-6.1. go test ./internal/db ./internal/store/sqlstore ./cmd/scheduler
-6.2. Быстрый runtime чек логики (psql + scheduler logs).

@@ -124,7 +124,7 @@
 
 ### Sprint 3: Index Checker
 
-- [ ] **Миграция 008: Create domain_index_checks table**
+- [x] **Миграция 008: Create domain_index_checks table**
   ```sql
   CREATE TABLE IF NOT EXISTS domain_index_checks (
     id TEXT PRIMARY KEY,
@@ -146,7 +146,7 @@
   CREATE INDEX idx_index_checks_retry ON domain_index_checks(next_retry_at) WHERE status = 'checking';
   ```
 
-- [ ] **Миграция 009: Create index_check_history table**
+- [x] **Миграция 009: Create index_check_history table**
   ```sql
   CREATE TABLE IF NOT EXISTS index_check_history (
     id TEXT PRIMARY KEY,
@@ -359,10 +359,14 @@
 - [ ] **Создать модуль indexchecker**
   - Файл: `internal/indexchecker/checker.go`
   - Интерфейс `IndexChecker`:
-    - `Check(ctx, domain string) (indexed bool, err error)`
+    - `Check(ctx, domain string, geo string) (indexed bool, err error)`
   - Реализации:
-    - `MockChecker` - всегда возвращает `false`
-    - `RealChecker` - заглушка для будущей интеграции
+    - `MockChecker` - всегда возвращает `false` (для тестов)
+    - `SerpChecker` - реальная проверка через SERP API (`alfasearchspy`)
+      - Запрос: `site:{domain}` (punycode домен)
+      - Гео: из проекта/домена, fallback `se`
+      - Таймаут/ретраи: использовать общие настройки SERP (как в analyzer)
+      - **Без чтения файлов с диска** (главная страница хранится в БД)
 
 - [ ] **Создать Store для index_checks**
   - Файл: `internal/store/sqlstore/index_checks.go`
@@ -399,7 +403,7 @@
     1. Создать pending checks для всех domains (если нет за сегодня)
     2. Получить список pending/checking checks с `next_retry_at <= NOW()`
     3. Для каждого:
-       - Вызвать `IndexChecker.Check(domain)`
+       - Вызвать `IndexChecker.Check(domain, geo)`
        - Логировать попытку в `index_check_history`
        - Если успех (получен четкий ответ):
          * Статус: `success`
@@ -448,7 +452,9 @@
   - Файлы: `types/schedules.ts`, `types/queue.ts`, `types/linkTasks.ts` (или общий `types/api.ts`)
 
 - [x] **Навигация/вкладки**
-  - Проект: вкладки `Schedules` и `Queue`
+  - Проект: вкладки `Домены`, `Расписания`, `Ошибки`, `Настройки`
+  - Очередь проекта вынесена на отдельную страницу, доступна кнопкой
+  - Участники перенесены внутрь вкладки `Настройки`
   - Домен: вкладка `Links`
 
 - [x] **UI состояния для Scheduler/Links**
@@ -487,10 +493,15 @@
 
 - [x] **Страница: /projects/[id]/queue**
   - Файл: `app/projects/[id]/queue/page.tsx`
-  - Таблица generation_queue:
-    - Домен, время запуска, статус, приоритет
-    - Фильтры: по статусу, по дате
-    - Кнопка "Remove from Queue"
+  - Две вкладки: `Домены` и `Ссылки`
+  - Server-side пагинация + поиск по домену
+  - Фильтры: по статусу, по дате
+  - Быстрые действия: retry/delete (для ссылок), delete (для очереди)
+
+- [x] **Глобальная очередь: /queue**
+  - Список генераций и задач ссылок по всем проектам
+  - Вкладки `Домены` / `Ссылки`, поиск по домену, пагинация
+  - Быстрые действия для ссылок (retry/delete)
 
 #### Link Building UI
 
