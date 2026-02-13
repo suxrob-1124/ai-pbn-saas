@@ -5125,11 +5125,14 @@ func (s *Server) handleLinkByID(w http.ResponseWriter, r *http.Request) {
 
 		now := time.Now().UTC()
 		status := "pending"
-		attempts := task.Attempts + 1
+		attempts := task.Attempts
+		nullStr := sql.NullString{}
 		updates := sqlstore.LinkTaskUpdates{
 			Status:       &status,
 			Attempts:     &attempts,
 			ScheduledFor: &now,
+			FoundLocation: &nullStr,
+			GeneratedContent: &nullStr,
 			ErrorMessage: &sql.NullString{},
 			CompletedAt:  &sql.NullTime{},
 		}
