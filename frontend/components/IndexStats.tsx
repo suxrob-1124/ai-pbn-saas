@@ -99,8 +99,8 @@ export function IndexStats({ stats, daily, loading, period, onPeriodChange }: In
             <LineChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="date" />
-              <YAxis domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
-              <Tooltip formatter={(value) => `${value}%`} />
+              <YAxis domain={[0, 100]} tickFormatter={(v: number | string) => `${v}%`} />
+              <Tooltip formatter={(value: number | string) => `${value}%`} />
               <Line type="monotone" dataKey="percent" stroke="#6366f1" strokeWidth={2} dot={false} />
             </LineChart>
           </ResponsiveContainer>

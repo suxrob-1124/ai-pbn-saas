@@ -28,6 +28,7 @@ import { deleteLinkSchedule, getLinkSchedule, triggerLinkSchedule, upsertLinkSch
 import type { ScheduleDTO } from "../../../types/schedules";
 import { ScheduleForm } from "../../../components/ScheduleForm";
 import { ScheduleList } from "../../../components/ScheduleList";
+import { PromptOverridesPanel } from "../../../components/PromptOverridesPanel";
 import type { ScheduleFormValue } from "../../../lib/scheduleFormValidation";
 import { Badge } from "../../../components/Badge";
 
@@ -50,7 +51,12 @@ type Domain = {
   target_language?: string;
   exclude_domains?: string;
   status: string;
-  last_generation_id?: string;
+  last_attempt_generation_id?: string;
+  last_success_generation_id?: string;
+  published_path?: string;
+  file_count?: number;
+  total_size_bytes?: number;
+  deployment_mode?: string;
   link_anchor_text?: string;
   link_acceptor_url?: string;
   link_status?: string;
@@ -90,6 +96,7 @@ export default function ProjectDetailPage() {
   const searchParams = useSearchParams();
   const projectId = params?.id as string;
   const [project, setProject] = useState<Project | null>(null);
+  const [myRole, setMyRole] = useState<"admin" | "owner" | "editor" | "viewer">("viewer");
   const [domains, setDomains] = useState<Domain[]>([]);
   const [domainSearch, setDomainSearch] = useState("");
   const domainById = useMemo(() => {
@@ -251,6 +258,7 @@ export default function ProjectDetailPage() {
       const d = Array.isArray(summary?.domains) ? summary.domains : [];
       const m = Array.isArray(summary?.members) ? summary.members : [];
       setProject(p);
+      setMyRole(summary?.my_role || "viewer");
       setCountry(p?.target_country || "");
       setLanguage(p?.target_language || "");
       setProjectName(p?.name || "");
@@ -282,6 +290,7 @@ export default function ProjectDetailPage() {
 
   const isPermissionError = (message: string) =>
     /permission|access denied|admin only|forbidden/i.test(message);
+  const canEditPrompts = myRole === "admin" || myRole === "owner" || myRole === "editor";
 
   const resolvedProjectTimezone = (projectTimezone || project?.timezone || "UTC").trim() || "UTC";
 
@@ -1216,7 +1225,7 @@ export default function ProjectDetailPage() {
             </Link>
             {projectId && (
               <Link
-                href={`/monitoring/indexing?projectId=${encodeURIComponent(projectId)}`}
+                href={{ pathname: "/monitoring/indexing", query: { projectId } } as UrlObject}
                 className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
               >
                 <FiActivity /> Индексация
@@ -1430,6 +1439,16 @@ export default function ProjectDetailPage() {
                       {d.url}
                     </Link>
                     <StatusBadge status={d.status} />
+                    <Badge
+                      label={`Попытка: ${d.status}`}
+                      tone={["processing", "pending", "pause_requested", "cancelling"].includes((d.status || "").toLowerCase()) ? "amber" : "slate"}
+                      className="text-[11px]"
+                    />
+                    <Badge
+                      label={d.last_success_generation_id ? "Успех: есть" : "Успех: нет"}
+                      tone={d.last_success_generation_id ? "green" : "slate"}
+                      className="text-[11px]"
+                    />
                     <LinkStatusBadge domain={d} />
                   </div>
                   <div className="text-xs text-slate-500 dark:text-slate-400">
@@ -1545,13 +1564,13 @@ export default function ProjectDetailPage() {
                   {isPublished ? (
                     <>
                       <Link
-                        href={`/monitoring/indexing?domainId=${encodeURIComponent(d.id)}`}
+                        href={{ pathname: "/monitoring/indexing", query: { domainId: d.id } } as UrlObject}
                         className="hidden sm:inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                       >
                         <FiActivity /> Проверки индексации
                       </Link>
                       <Link
-                        href={`/monitoring/indexing?domainId=${encodeURIComponent(d.id)}`}
+                        href={{ pathname: "/monitoring/indexing", query: { domainId: d.id } } as UrlObject}
                         className="inline-flex sm:hidden items-center justify-center rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                         title="Проверки индексации"
                         aria-label="Проверки индексации"
@@ -1994,6 +2013,12 @@ export default function ProjectDetailPage() {
                 </div>
               </div>
             </div>
+
+            <PromptOverridesPanel
+              title="Prompt Overrides (Project)"
+              endpoint={`/api/projects/${projectId}/prompts`}
+              canEdit={canEditPrompts}
+            />
 
             <div className="border-t border-slate-200 dark:border-slate-800 pt-4 space-y-4">
               <h3 className="font-semibold">Участники проекта</h3>

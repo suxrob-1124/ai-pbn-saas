@@ -4,11 +4,12 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import type { UrlObject } from "url";
-import { authFetch, authFetchCached, patch, del } from "../../../lib/http";
+import { apiBase, authFetch, authFetchCached, patch, del } from "../../../lib/http";
 import { showToast } from "../../../lib/toastStore";
 import { useAuthGuard } from "../../../lib/useAuth";
 import { FiClock, FiPlay, FiCheck, FiAlertTriangle, FiRefreshCw, FiTrash2, FiPause, FiX, FiInfo, FiEdit3, FiCode, FiDownload } from "react-icons/fi";
 import { ArtifactsViewer, LogsViewer } from "../../../components/ArtifactsViewer";
+import { PromptOverridesPanel } from "../../../components/PromptOverridesPanel";
 import PipelineSteps from "../../../components/PipelineSteps";
 import { computeDisplayProgress } from "../../../lib/pipelineProgress";
 import { AuditReport } from "../../../components/AuditReport";
@@ -24,11 +25,13 @@ type Domain = {
   target_language?: string;
   exclude_domains?: string;
   status: string;
-  last_generation_id?: string;
+  last_attempt_generation_id?: string;
+  last_success_generation_id?: string;
   published_at?: string;
   published_path?: string;
   file_count?: number;
   total_size_bytes?: number;
+  deployment_mode?: string;
   updated_at?: string;
   link_anchor_text?: string;
   link_acceptor_url?: string;
@@ -37,12 +40,17 @@ type Domain = {
 
 type Generation = {
   id: string;
+  domain_id?: string;
   status: string;
   progress: number;
+  error?: string;
   created_at?: string;
   updated_at?: string;
+  started_at?: string;
+  finished_at?: string;
   logs?: any;
   artifacts?: Record<string, any>;
+  artifacts_summary?: Record<string, any>;
 };
 
 type LinkTask = {
@@ -67,8 +75,33 @@ type DomainSummary = {
   domain: Domain;
   project_name: string;
   generations: Generation[];
+  latest_attempt?: Generation;
+  latest_success?: Generation;
   link_tasks: LinkTask[];
   my_role?: "admin" | "owner" | "editor" | "viewer";
+};
+
+type GenerationDetail = {
+  id: string;
+  logs?: any;
+  artifacts?: Record<string, any>;
+  artifacts_summary?: Record<string, any>;
+};
+
+type DeploymentAttempt = {
+  id: string;
+  domain_id: string;
+  generation_id: string;
+  mode: string;
+  target_path: string;
+  owner_before?: string;
+  owner_after?: string;
+  status: string;
+  error_message?: string;
+  file_count: number;
+  total_size_bytes: number;
+  created_at: string;
+  finished_at?: string;
 };
 
 export default function DomainPage() {
@@ -77,6 +110,10 @@ export default function DomainPage() {
   const id = params?.id as string;
   const [domain, setDomain] = useState<Domain | null>(null);
   const [gens, setGens] = useState<Generation[]>([]);
+  const [latestAttempt, setLatestAttempt] = useState<Generation | null>(null);
+  const [latestSuccess, setLatestSuccess] = useState<Generation | null>(null);
+  const [generationDetails, setGenerationDetails] = useState<Record<string, GenerationDetail>>({});
+  const [myRole, setMyRole] = useState<"admin" | "owner" | "editor" | "viewer">("viewer");
   const [projectName, setProjectName] = useState<string>("");
   const [kw, setKw] = useState("");
   const [country, setCountry] = useState("");
@@ -98,6 +135,11 @@ export default function DomainPage() {
   const [showAllLinkTasks, setShowAllLinkTasks] = useState(false);
   const [showResultHTMLModal, setShowResultHTMLModal] = useState(false);
   const [resultHTMLTab, setResultHTMLTab] = useState<"preview" | "code">("preview");
+  const [liveResultHTML, setLiveResultHTML] = useState("");
+  const [liveResultCode, setLiveResultCode] = useState("");
+  const [liveResultLoading, setLiveResultLoading] = useState(false);
+  const [liveResultError, setLiveResultError] = useState<string | null>(null);
+  const [deployments, setDeployments] = useState<DeploymentAttempt[]>([]);
 
   const load = async (force = false) => {
     if (!id) return;
@@ -111,6 +153,7 @@ export default function DomainPage() {
       const d = summary?.domain || null;
       setDomain(d);
       setProjectName(summary?.project_name || "");
+      setMyRole(summary?.my_role || "viewer");
       setKw(d?.main_keyword || "");
       setCountry(d?.target_country || "");
       setLanguage(d?.target_language || "");
@@ -120,14 +163,27 @@ export default function DomainPage() {
       setLinkAcceptor(d?.link_acceptor_url || "");
       const list = Array.isArray(summary?.generations) ? summary.generations : [];
       setGens(list);
+      setLatestAttempt(summary?.latest_attempt || list[0] || null);
+      setLatestSuccess(summary?.latest_success || null);
       const tasks = Array.isArray(summary?.link_tasks) ? summary.link_tasks : [];
       tasks.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
       setLinkTasks(tasks);
       setLinkTasksError(null);
+      void loadDeployments();
     } catch (err: any) {
       setError(err?.message || "Не удалось загрузить домен");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadDeployments = async () => {
+    if (!id) return;
+    try {
+      const list = await authFetch<DeploymentAttempt[]>(`/api/domains/${id}/deployments?limit=10`);
+      setDeployments(Array.isArray(list) ? list : []);
+    } catch {
+      setDeployments([]);
     }
   };
 
@@ -246,7 +302,7 @@ export default function DomainPage() {
       setError("Сначала задайте ключевое слово");
       return;
     }
-    const latestGen = gens[0];
+    const latestGen = latestAttempt || gens[0];
     if (!forceStep && latestGen?.status === "success") {
       if (!confirm("Генерация уже завершена. Запустить заново?")) {
         return;
@@ -262,6 +318,7 @@ export default function DomainPage() {
       updated[0] = { ...updated[0], status: "processing", progress: 0 };
       return updated;
     });
+    setLatestAttempt((prev) => (prev ? { ...prev, status: "processing", progress: 0 } : prev));
     try {
       const payload = forceStep ? { force_step: forceStep } : undefined;
       const headers = payload ? { "Content-Type": "application/json" } : undefined;
@@ -355,12 +412,14 @@ export default function DomainPage() {
   };
 
   const activeStatusesList = ["pending", "processing", "pause_requested", "cancelling"];
-  const latestGen = gens[0];
-  const latestDisplayProgress = latestGen ? computeDisplayProgress(latestGen.artifacts, latestGen.progress, latestGen.status) : 0;
-  const isRegenerate = Boolean(latestGen && latestGen.status === "success");
-  const mainButtonText = !latestGen ? "Запустить генерацию" : isRegenerate ? "Перегенерировать всё" : "Продолжить генерацию";
+  const currentAttempt = latestAttempt || gens[0] || null;
+  const latestAttemptDetail = currentAttempt?.id ? generationDetails[currentAttempt.id] : undefined;
+  const latestSuccessDetail = latestSuccess?.id ? generationDetails[latestSuccess.id] : undefined;
+  const latestDisplayProgress = currentAttempt ? computeDisplayProgress(latestAttemptDetail?.artifacts, currentAttempt.progress, currentAttempt.status) : 0;
+  const isRegenerate = Boolean(currentAttempt && currentAttempt.status === "success");
+  const mainButtonText = !currentAttempt ? "Запустить генерацию" : isRegenerate ? "Перегенерировать всё" : "Продолжить генерацию";
   const mainButtonIcon = isRegenerate ? <FiRefreshCw /> : <FiPlay />;
-  const mainButtonDisabled = loading || Boolean(latestGen && activeStatusesList.includes(latestGen.status));
+  const mainButtonDisabled = loading || Boolean(currentAttempt && activeStatusesList.includes(currentAttempt.status));
   const visibleLinkTasks = showAllLinkTasks ? linkTasks : linkTasks.slice(0, 2);
   const normalizedLinkStatus = (domain?.link_status || "").toLowerCase();
   const hasActiveLink = ["inserted", "generated"].includes(normalizedLinkStatus);
@@ -372,13 +431,26 @@ export default function DomainPage() {
     linkTasks.some((task) => (task.action || "") === "remove" && ["pending", "searching", "removing"].includes(task.status));
   const canRemoveLink = (hasActiveLink || hasLinkInTasks) && !removingInFlight;
   const latestArtifacts = useMemo<Record<string, any> | null>(() => {
-    if (!latestGen?.artifacts || typeof latestGen.artifacts !== "object") {
-      return null;
+    if (latestSuccessDetail?.artifacts && typeof latestSuccessDetail.artifacts === "object") {
+      return latestSuccessDetail.artifacts;
     }
-    return latestGen.artifacts;
-  }, [latestGen?.artifacts]);
+    return null;
+  }, [latestSuccessDetail?.artifacts]);
+  const latestSuccessSummary = useMemo<Record<string, any>>(() => {
+    if (latestSuccess?.artifacts_summary && typeof latestSuccess.artifacts_summary === "object") {
+      return latestSuccess.artifacts_summary;
+    }
+    if (latestSuccessDetail?.artifacts_summary && typeof latestSuccessDetail.artifacts_summary === "object") {
+      return latestSuccessDetail.artifacts_summary;
+    }
+    return {};
+  }, [latestSuccess?.artifacts_summary, latestSuccessDetail?.artifacts_summary]);
   const legacyDecodeMeta = useMemo(() => getLegacyDecodeMeta(latestArtifacts), [latestArtifacts]);
-  const hasArtifacts = Boolean(latestArtifacts && Object.keys(latestArtifacts).length > 0);
+  const summaryLegacyDecodeMeta = useMemo(() => getLegacyDecodeMeta(latestSuccessSummary), [latestSuccessSummary]);
+  const effectiveLegacyDecodeMeta = legacyDecodeMeta || summaryLegacyDecodeMeta;
+  const hasArtifacts = Boolean(
+    latestArtifacts && Object.keys(latestArtifacts).length > 0
+  ) || Boolean(latestSuccessSummary.has_final_html || latestSuccessSummary.has_zip_archive || latestSuccessSummary.has_generated_files);
   const finalHTML = useMemo(() => getArtifactText(latestArtifacts, "final_html") || getArtifactText(latestArtifacts, "html_raw"), [latestArtifacts]);
   const zipArchive = useMemo(() => getArtifactText(latestArtifacts, "zip_archive"), [latestArtifacts]);
   const canOpenEditor = Boolean(
@@ -386,12 +458,32 @@ export default function DomainPage() {
       domain.status === "published" &&
       ((typeof domain.file_count === "number" && domain.file_count > 0) || Boolean(domain.published_at))
   );
-  const showResultBlock = hasArtifacts || domain?.status === "published";
-  const resultSourceLabel = legacyDecodeMeta ? "Legacy Decoded" : "Generated";
+  const showResultBlock = Boolean(latestSuccess) || hasArtifacts || domain?.status === "published";
+  const resultSourceLabel = effectiveLegacyDecodeMeta ? "Legacy Decoded" : "Generated";
+  const canEditPrompts = myRole === "admin" || myRole === "owner" || myRole === "editor";
+
+  const ensureGenerationDetails = async (generationId: string) => {
+    if (!generationId || generationDetails[generationId]) {
+      return;
+    }
+    try {
+      const detail = await authFetch<GenerationDetail>(`/api/generations/${generationId}`);
+      setGenerationDetails((prev) => ({ ...prev, [generationId]: detail }));
+    } catch {
+      // Данные деталей не критичны для рендера, показываем summary без raw.
+    }
+  };
 
   useEffect(() => {
     load();
   }, [id]);
+
+  useEffect(() => {
+    const ids = [latestAttempt?.id, latestSuccess?.id].filter((value): value is string => Boolean(value));
+    ids.forEach((generationId) => {
+      void ensureGenerationDetails(generationId);
+    });
+  }, [latestAttempt?.id, latestSuccess?.id]);
 
   const buildFileUrl = (path: string) => {
     const safe = path
@@ -436,6 +528,39 @@ export default function DomainPage() {
         title: "Ошибка скачивания ZIP",
         message: "Не удалось декодировать zip_archive"
       });
+    }
+  };
+
+  const openLiveResultPreview = async () => {
+    setResultHTMLTab("preview");
+    setShowResultHTMLModal(true);
+    setLiveResultLoading(true);
+    setLiveResultError(null);
+    try {
+      const indexResp = await authFetch<{ content: string }>(`/api/domains/${id}/files/index.html`);
+      const indexHtml = indexResp?.content || "";
+      const styleResp = await authFetch<{ content: string }>(`/api/domains/${id}/files/style.css`).catch(() => null);
+      const scriptResp = await authFetch<{ content: string }>(`/api/domains/${id}/files/script.js`).catch(() => null);
+
+      const styleContent = styleResp?.content ? rewriteCssUrls(styleResp.content, id) : "";
+      const scriptContent = scriptResp?.content || "";
+      const htmlWithAssets = injectRuntimeAssets(indexHtml, styleContent, scriptContent);
+      const livePreview = rewriteHtmlAssetRefs(htmlWithAssets, id);
+
+      setLiveResultCode(indexHtml);
+      setLiveResultHTML(livePreview);
+    } catch {
+      if (finalHTML) {
+        setLiveResultCode(finalHTML);
+        setLiveResultHTML(finalHTML);
+        setLiveResultError("Показан артефактный HTML: живые файлы пока недоступны.");
+      } else {
+        setLiveResultCode("");
+        setLiveResultHTML("");
+        setLiveResultError("Не удалось загрузить live preview из файлов домена.");
+      }
+    } finally {
+      setLiveResultLoading(false);
     }
   };
 
@@ -545,40 +670,40 @@ export default function DomainPage() {
             >
               {mainButtonIcon} {mainButtonText}
             </button>
-            {gens.length > 0 && gens[0] && (
+            {currentAttempt && (
               <>
-                {gens[0].status === "paused" && (
+                {currentAttempt.status === "paused" && (
                   <button
-                    onClick={() => resumeGeneration(gens[0].id)}
+                    onClick={() => resumeGeneration(currentAttempt.id)}
                     disabled={loading}
                     className="inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-white px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700 dark:bg-slate-800 dark:text-emerald-300 disabled:opacity-50"
                   >
                     <FiPlay /> Возобновить
                   </button>
                 )}
-                {(gens[0].status === "pending" || gens[0].status === "processing" || gens[0].status === "pause_requested" || gens[0].status === "cancelling") && (
+                {(currentAttempt.status === "pending" || currentAttempt.status === "processing" || currentAttempt.status === "pause_requested" || currentAttempt.status === "cancelling") && (
                   <>
-                    {gens[0].status !== "cancelling" && (
+                    {currentAttempt.status !== "cancelling" && (
                       <button
-                        onClick={() => pauseGeneration(gens[0].id)}
-                        disabled={loading || gens[0].status === "pause_requested"}
+                        onClick={() => pauseGeneration(currentAttempt.id)}
+                        disabled={loading || currentAttempt.status === "pause_requested"}
                         className="inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm font-semibold text-amber-700 hover:bg-amber-50 dark:border-amber-700 dark:bg-slate-800 dark:text-amber-300 disabled:opacity-50"
                       >
-                        <FiPause /> {gens[0].status === "pause_requested" ? "Пауза запрошена..." : "Пауза"}
+                        <FiPause /> {currentAttempt.status === "pause_requested" ? "Пауза запрошена..." : "Пауза"}
                       </button>
                     )}
                     <button
-                      onClick={() => cancelGeneration(gens[0].id)}
-                      disabled={loading || gens[0].status === "cancelling"}
+                      onClick={() => cancelGeneration(currentAttempt.id)}
+                      disabled={loading || currentAttempt.status === "cancelling"}
                       className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 dark:border-red-700 dark:bg-slate-800 dark:text-red-300 disabled:opacity-50"
                     >
-                      <FiX /> {gens[0].status === "cancelling" ? "Отмена..." : "Отменить"}
+                      <FiX /> {currentAttempt.status === "cancelling" ? "Отмена..." : "Отменить"}
                     </button>
                   </>
                 )}
-                {gens[0].status === "cancelled" && (
+                {currentAttempt.status === "cancelled" && (
                   <button
-                    onClick={() => cancelGeneration(gens[0].id)}
+                    onClick={() => cancelGeneration(currentAttempt.id)}
                     disabled={loading}
                     className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 dark:border-red-700 dark:bg-slate-800 dark:text-red-300 disabled:opacity-50"
                   >
@@ -633,7 +758,7 @@ export default function DomainPage() {
         <h3 className="font-semibold mb-3">Этапы генерации</h3>
         <PipelineSteps
           domainId={id}
-          generation={gens[0]}
+          generation={latestAttemptDetail?.artifacts ? { ...currentAttempt, artifacts: latestAttemptDetail.artifacts } : currentAttempt || undefined}
           disabled={loading}
           activeStep={pipelineStepInFlight}
           onForceStep={handleForceStep}
@@ -716,6 +841,12 @@ export default function DomainPage() {
           Сохранить
         </button>
       </div>
+
+      <PromptOverridesPanel
+        title="Prompt Overrides (Domain)"
+        endpoint={`/api/domains/${id}/prompts`}
+        canEdit={canEditPrompts}
+      />
 
       <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -1029,13 +1160,13 @@ export default function DomainPage() {
               <div className="mt-1 flex items-center gap-2">
                 <Badge
                   label={resultSourceLabel}
-                  tone={legacyDecodeMeta ? "sky" : "emerald"}
+                  tone={effectiveLegacyDecodeMeta ? "sky" : "emerald"}
                   icon={<FiCheck />}
                   className="text-xs"
                 />
-                {legacyDecodeMeta?.decoded_at && (
+                {effectiveLegacyDecodeMeta?.decoded_at && (
                   <span className="text-xs text-slate-500 dark:text-slate-400">
-                    Декодировано: {new Date(legacyDecodeMeta.decoded_at).toLocaleString()}
+                    Декодировано: {new Date(effectiveLegacyDecodeMeta.decoded_at).toLocaleString()}
                   </span>
                 )}
               </div>
@@ -1044,10 +1175,9 @@ export default function DomainPage() {
               <button
                 type="button"
                 onClick={() => {
-                  setResultHTMLTab("preview");
-                  setShowResultHTMLModal(true);
+                  void openLiveResultPreview();
                 }}
-                disabled={!finalHTML}
+                disabled={!domain?.id}
                 className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
               >
                 <FiCode /> Просмотр HTML
@@ -1066,6 +1196,32 @@ export default function DomainPage() {
                   className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 >
                   К артефактам
+                </a>
+              )}
+              {latestAttempt && (
+                <Link
+                  href={`/queue/${latestAttempt.id}`}
+                  className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                >
+                  Последняя попытка
+                </Link>
+              )}
+              {latestSuccess && latestSuccess.id !== latestAttempt?.id && (
+                <Link
+                  href={`/queue/${latestSuccess.id}`}
+                  className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                >
+                  Последний успех
+                </Link>
+              )}
+              {domain?.url && (
+                <a
+                  href={`https://${domain.url}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                >
+                  Открыть по домену
                 </a>
               )}
               {canOpenEditor ? (
@@ -1090,6 +1246,24 @@ export default function DomainPage() {
             <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">
               Артефакты еще не заполнены. Запустите decode backfill: `go run ./cmd/backfill_legacy_artifacts --mode apply ...`
             </div>
+          )}
+        </div>
+      )}
+
+      {deployments[0] && (
+        <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-2">
+          <h3 className="font-semibold">Последний деплой</h3>
+          <div className="text-sm text-slate-600 dark:text-slate-300">
+            Статус: <StatusBadge status={deployments[0].status} /> · Режим: {deployments[0].mode}
+          </div>
+          <div className="text-xs text-slate-500 dark:text-slate-400">
+            Путь: {deployments[0].target_path || "—"} · Owner: {deployments[0].owner_after || deployments[0].owner_before || "—"}
+          </div>
+          <div className="text-xs text-slate-500 dark:text-slate-400">
+            Файлов: {deployments[0].file_count} · Размер: {formatBytes(deployments[0].total_size_bytes)}
+          </div>
+          {deployments[0].error_message && (
+            <div className="text-xs text-red-500">{deployments[0].error_message}</div>
           )}
         </div>
       )}
@@ -1202,26 +1376,48 @@ export default function DomainPage() {
         )}
       </div>
 
-      {gens.length > 0 && (
+      {currentAttempt && currentAttempt.status !== "success" && (
         <div id="domain-artifacts" className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="font-semibold">Последний запуск</h3>
+              <h3 className="font-semibold">Последняя попытка</h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Статус: <StatusBadge status={gens[0].status} /> · Прогресс: {latestDisplayProgress}%
+                Статус: <StatusBadge status={currentAttempt.status} /> · Прогресс: {latestDisplayProgress}%
               </p>
             </div>
-            <Link href={`/queue/${gens[0].id}`} className="text-sm text-indigo-600 hover:underline">
+            <Link href={`/queue/${currentAttempt.id}`} className="text-sm text-indigo-600 hover:underline">
               Открыть карточку запуска
             </Link>
           </div>
-          <AuditReport report={gens[0].artifacts?.audit_report} />
-          <LogsViewer logs={gens[0].logs} />
-          <ArtifactsViewer artifacts={gens[0].artifacts} domainName={domain?.url} />
+          <AuditReport report={latestAttemptDetail?.artifacts?.audit_report} />
+          <LogsViewer logs={latestAttemptDetail?.logs} />
+          <ArtifactsViewer artifacts={latestAttemptDetail?.artifacts} />
         </div>
       )}
 
-      {showResultHTMLModal && finalHTML && (
+      {latestSuccess && (
+        <div
+          id={currentAttempt && currentAttempt.status !== "success" ? undefined : "domain-artifacts"}
+          className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-4"
+        >
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="font-semibold">Последний успешный запуск</h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Статус: <StatusBadge status={latestSuccess.status} /> · Обновлено: {latestSuccess.updated_at ? new Date(latestSuccess.updated_at).toLocaleString() : "—"}
+              </p>
+            </div>
+            <Link href={`/queue/${latestSuccess.id}`} className="text-sm text-indigo-600 hover:underline">
+              Открыть карточку запуска
+            </Link>
+          </div>
+          <AuditReport report={latestSuccessDetail?.artifacts?.audit_report} />
+          <LogsViewer logs={latestSuccessDetail?.logs} />
+          <ArtifactsViewer artifacts={latestSuccessDetail?.artifacts} />
+        </div>
+      )}
+
+      {showResultHTMLModal && (
         <div className="fixed inset-0 z-50 bg-black/60 px-3 py-6 md:px-8 overflow-auto">
           <div className="mx-auto max-w-6xl rounded-xl border border-slate-200 bg-white p-4 shadow-2xl dark:border-slate-800 dark:bg-slate-950">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1258,17 +1454,30 @@ export default function DomainPage() {
                 Code
               </button>
             </div>
-            {resultHTMLTab === "preview" ? (
-              <iframe
-                title="Final HTML Preview"
-                sandbox="allow-same-origin"
-                srcDoc={finalHTML}
-                className="mt-3 h-[70vh] w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white"
-              />
+            {liveResultLoading ? (
+              <div className="mt-3 h-[70vh] rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-300">
+                Загружаем живой preview...
+              </div>
             ) : (
-              <pre className="mt-3 h-[70vh] overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs dark:border-slate-700 dark:bg-slate-900/60">
-                {finalHTML}
-              </pre>
+              <>
+                {liveResultError && (
+                  <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">
+                    {liveResultError}
+                  </div>
+                )}
+                {resultHTMLTab === "preview" ? (
+                  <iframe
+                    title="Final HTML Preview"
+                    sandbox="allow-same-origin allow-scripts"
+                    srcDoc={liveResultHTML}
+                    className="mt-3 h-[70vh] w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white"
+                  />
+                ) : (
+                  <pre className="mt-3 h-[70vh] overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs dark:border-slate-700 dark:bg-slate-900/60">
+                    {liveResultCode || "(файл index.html отсутствует)"}
+                  </pre>
+                )}
+              </>
             )}
           </div>
         </div>
@@ -1291,6 +1500,85 @@ function getLegacyDecodeMeta(artifacts: Record<string, any> | null): { source?: 
   const source = typeof (raw as any).source === "string" ? (raw as any).source : undefined;
   const decodedAt = typeof (raw as any).decoded_at === "string" ? (raw as any).decoded_at : undefined;
   return { source, decoded_at: decodedAt };
+}
+
+function rewriteHtmlAssetRefs(html: string, domainId: string): string {
+  const base = apiBase();
+  return html.replace(/\b(src|href)\s*=\s*["']([^"']+)["']/gi, (full, attr, rawValue: string) => {
+    const value = rawValue.trim();
+    if (!value || value.startsWith("#")) return full;
+    if (/^(data:|mailto:|tel:|javascript:|https?:)/i.test(value)) return full;
+    const normalized = value.replace(/^\.\//, "").replace(/^\//, "");
+    if (!normalized) return full;
+    const [pathPart, hashPart = ""] = normalized.split("#");
+    const [purePath, queryPart = ""] = pathPart.split("?");
+    if (!purePath) return full;
+    const encodedPath = purePath
+      .split("/")
+      .filter(Boolean)
+      .map((part) => encodeURIComponent(part))
+      .join("/");
+    if (!encodedPath) return full;
+    const query = queryPart ? `&${queryPart}` : "";
+    const hash = hashPart ? `#${hashPart}` : "";
+    const url = `${base}/api/domains/${domainId}/files/${encodedPath}?raw=1${query}${hash}`;
+    return `${attr}="${url}"`;
+  });
+}
+
+function rewriteCssUrls(css: string, domainId: string): string {
+  const base = apiBase();
+  return css.replace(/url\(([^)]+)\)/gi, (_full, rawValue: string) => {
+    const value = rawValue.trim().replace(/^['"]|['"]$/g, "");
+    if (!value || value.startsWith("#")) return `url(${rawValue})`;
+    if (/^(data:|https?:|blob:)/i.test(value)) return `url(${rawValue})`;
+    const normalized = value.replace(/^\.\//, "").replace(/^\//, "");
+    const [pathPart, hashPart = ""] = normalized.split("#");
+    const [purePath, queryPart = ""] = pathPart.split("?");
+    if (!purePath) return `url(${rawValue})`;
+    const encodedPath = purePath
+      .split("/")
+      .filter(Boolean)
+      .map((part) => encodeURIComponent(part))
+      .join("/");
+    if (!encodedPath) return `url(${rawValue})`;
+    const query = queryPart ? `&${queryPart}` : "";
+    const hash = hashPart ? `#${hashPart}` : "";
+    return `url("${base}/api/domains/${domainId}/files/${encodedPath}?raw=1${query}${hash}")`;
+  });
+}
+
+function injectRuntimeAssets(indexHtml: string, styleContent: string, scriptContent: string): string {
+  let html = indexHtml || "";
+  if (styleContent) {
+    html = html.replace(/<link[^>]*href=["']style\.css["'][^>]*>/gi, "");
+    if (/<\/head>/i.test(html)) {
+      html = html.replace(/<\/head>/i, `<style data-live-preview="style.css">\n${styleContent}\n</style>\n</head>`);
+    } else {
+      html = `<style data-live-preview="style.css">\n${styleContent}\n</style>\n${html}`;
+    }
+  }
+  if (scriptContent) {
+    html = html.replace(/<script[^>]*src=["']script\.js["'][^>]*>\s*<\/script>/gi, "");
+    if (/<\/body>/i.test(html)) {
+      html = html.replace(/<\/body>/i, `<script data-live-preview="script.js">\n${scriptContent}\n</script>\n</body>`);
+    } else {
+      html = `${html}\n<script data-live-preview="script.js">\n${scriptContent}\n</script>`;
+    }
+  }
+  return html;
+}
+
+function formatBytes(value?: number): string {
+  if (!value || value <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let size = value;
+  let idx = 0;
+  while (size >= 1024 && idx < units.length - 1) {
+    size /= 1024;
+    idx += 1;
+  }
+  return `${size.toFixed(idx === 0 ? 0 : 1)} ${units[idx]}`;
 }
 
 function StatusBadge({ status }: { status: string }) {
