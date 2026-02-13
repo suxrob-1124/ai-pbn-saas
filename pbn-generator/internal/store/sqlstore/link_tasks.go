@@ -49,6 +49,7 @@ type LinkTaskUpdates struct {
 	GeneratedContent *sql.NullString
 	ErrorMessage     *sql.NullString
 	Attempts         *int
+	CreatedAt        *time.Time
 	ScheduledFor     *time.Time
 	CompletedAt      *sql.NullTime
 	LogLines         *[]string
@@ -277,6 +278,11 @@ func (s *LinkTaskSQLStore) Update(ctx context.Context, taskID string, updates Li
 	if updates.Attempts != nil {
 		setClauses = append(setClauses, fmt.Sprintf("attempts=$%d", idx))
 		args = append(args, *updates.Attempts)
+		idx++
+	}
+	if updates.CreatedAt != nil {
+		setClauses = append(setClauses, fmt.Sprintf("created_at=$%d", idx))
+		args = append(args, *updates.CreatedAt)
 		idx++
 	}
 	if updates.ScheduledFor != nil {

@@ -88,7 +88,9 @@ func (s *stubGenQueueStore) MarkProcessed(ctx context.Context, itemID, status st
 }
 
 type stubDomainStore struct {
-	byProject map[string][]sqlstore.Domain
+	byProject   map[string][]sqlstore.Domain
+	linkStatus  map[string]string
+	statusCalls map[string]int
 }
 
 func (s *stubDomainStore) ListByProject(ctx context.Context, projectID string) ([]sqlstore.Domain, error) {
@@ -107,6 +109,18 @@ func (s *stubDomainStore) Get(ctx context.Context, id string) (sqlstore.Domain, 
 }
 
 func (s *stubDomainStore) UpdateStatus(ctx context.Context, id, status string) error {
+	return nil
+}
+
+func (s *stubDomainStore) UpdateLinkStatus(ctx context.Context, id, status string) error {
+	if s.linkStatus == nil {
+		s.linkStatus = make(map[string]string)
+	}
+	if s.statusCalls == nil {
+		s.statusCalls = make(map[string]int)
+	}
+	s.linkStatus[id] = status
+	s.statusCalls[id]++
 	return nil
 }
 

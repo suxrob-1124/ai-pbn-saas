@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -108,10 +109,27 @@ func TestLinkTasksUpdateAndRetry(t *testing.T) {
 		ScheduledFor: time.Now().Add(-time.Hour).UTC(),
 		Action:       "insert",
 		Status:       "failed",
-		Attempts:     1,
-		CreatedBy:    "owner@example.com",
-		CreatedAt:    time.Now().Add(-time.Hour).UTC(),
+		Attempts:     3,
+		FoundLocation: sql.NullString{
+			String: "index.html:10",
+			Valid:  true,
+		},
+		GeneratedContent: sql.NullString{
+			String: "<p>generated</p>",
+			Valid:  true,
+		},
+		ErrorMessage: sql.NullString{
+			String: "boom",
+			Valid:  true,
+		},
+		CreatedBy: "owner@example.com",
+		CreatedAt: time.Now().Add(-time.Hour).UTC(),
+		CompletedAt: sql.NullTime{
+			Time:  time.Now().Add(-30 * time.Minute).UTC(),
+			Valid: true,
+		},
 	}
+	originalCreatedAt := task.CreatedAt
 	if err := linkStore.Create(context.Background(), task); err != nil {
 		t.Fatalf("create task: %v", err)
 	}
@@ -145,8 +163,30 @@ func TestLinkTasksUpdateAndRetry(t *testing.T) {
 	if updated.Status != "pending" {
 		t.Fatalf("expected status pending, got %s", updated.Status)
 	}
+	if updated.Attempts != 0 {
+		t.Fatalf("expected attempts reset to 0, got %d", updated.Attempts)
+	}
 	if updated.ScheduledFor.Before(time.Now().Add(-time.Minute)) {
 		t.Fatalf("expected scheduled_for updated, got %s", updated.ScheduledFor.Format(time.RFC3339))
+	}
+	if !updated.CreatedAt.After(originalCreatedAt) {
+		t.Fatalf("expected created_at to be refreshed, old=%s new=%s", originalCreatedAt, updated.CreatedAt)
+	}
+	if updated.FoundLocation.Valid {
+		t.Fatalf("expected found_location cleared")
+	}
+	if updated.GeneratedContent.Valid {
+		t.Fatalf("expected generated_content cleared")
+	}
+	if updated.ErrorMessage.Valid {
+		t.Fatalf("expected error_message cleared")
+	}
+	if updated.CompletedAt.Valid {
+		t.Fatalf("expected completed_at cleared")
+	}
+	domain := domStore.domains["domain-2"]
+	if !domain.LinkStatus.Valid || domain.LinkStatus.String != "pending" {
+		t.Fatalf("expected domain link_status pending, got %#v", domain.LinkStatus)
 	}
 }
 

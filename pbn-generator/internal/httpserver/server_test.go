@@ -2953,11 +2953,17 @@ func (s *stubLinkTaskStore) Update(ctx context.Context, taskID string, updates s
 	if updates.Attempts != nil {
 		task.Attempts = *updates.Attempts
 	}
+	if updates.CreatedAt != nil {
+		task.CreatedAt = *updates.CreatedAt
+	}
 	if updates.ScheduledFor != nil {
 		task.ScheduledFor = *updates.ScheduledFor
 	}
 	if updates.CompletedAt != nil {
 		task.CompletedAt = *updates.CompletedAt
+	}
+	if updates.LogLines != nil {
+		task.LogLines = *updates.LogLines
 	}
 	s.tasks[taskID] = task
 	return nil

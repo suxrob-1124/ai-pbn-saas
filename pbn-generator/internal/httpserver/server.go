@@ -2440,21 +2440,21 @@ func (s *Server) handleDomainLinks(w http.ResponseWriter, r *http.Request, domai
 				CreatedBy:    user.Email,
 				CreatedAt:    now,
 			}
-				if err := s.linkTasks.Create(r.Context(), task); err != nil {
-					if s.logger != nil {
-						s.logger.Warnf("import link task failed: %v", err)
-					}
-					continue
+			if err := s.linkTasks.Create(r.Context(), task); err != nil {
+				if s.logger != nil {
+					s.logger.Warnf("import link task failed: %v", err)
 				}
-				if err := s.domains.UpdateLinkStatus(r.Context(), domain.ID, "pending"); err != nil {
-					if s.logger != nil {
-						s.logger.Warnf("import link task status update failed: %v", err)
-					}
-				}
-				created++
+				continue
 			}
-			writeJSON(w, http.StatusCreated, map[string]any{"created": created})
-			return
+			if err := s.domains.UpdateLinkStatus(r.Context(), domain.ID, "pending"); err != nil {
+				if s.logger != nil {
+					s.logger.Warnf("import link task status update failed: %v", err)
+				}
+			}
+			created++
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{"created": created})
+		return
 	}
 
 	switch r.Method {
@@ -2887,17 +2887,20 @@ func (s *Server) handleDomainLinkRun(w http.ResponseWriter, r *http.Request, dom
 		attempts := 0
 		nullStr := sql.NullString{}
 		nullTime := sql.NullTime{}
+		emptyLogs := []string{}
 		updates := sqlstore.LinkTaskUpdates{
 			AnchorText:       &anchor,
 			TargetURL:        &target,
 			Action:           &action,
 			Status:           &status,
 			Attempts:         &attempts,
+			CreatedAt:        &now,
 			ScheduledFor:     &now,
 			FoundLocation:    &nullStr,
 			GeneratedContent: &nullStr,
 			ErrorMessage:     &nullStr,
 			CompletedAt:      &nullTime,
+			LogLines:         &emptyLogs,
 		}
 		if err := s.linkTasks.Update(r.Context(), activeTask.ID, updates); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to update link task")
@@ -4449,6 +4452,7 @@ func (s *Server) handleProjectLinkScheduleTrigger(w http.ResponseWriter, r *http
 			attempts := 0
 			nullStr := sql.NullString{}
 			nullTime := sql.NullTime{}
+			emptyLogs := []string{}
 			action := "insert"
 			updates := sqlstore.LinkTaskUpdates{
 				AnchorText:       &anchor,
@@ -4456,11 +4460,13 @@ func (s *Server) handleProjectLinkScheduleTrigger(w http.ResponseWriter, r *http
 				Action:           &action,
 				Status:           &status,
 				Attempts:         &attempts,
+				CreatedAt:        &now,
 				ScheduledFor:     &now,
 				FoundLocation:    &nullStr,
 				GeneratedContent: &nullStr,
 				ErrorMessage:     &nullStr,
 				CompletedAt:      &nullTime,
+				LogLines:         &emptyLogs,
 			}
 			if err := s.linkTasks.Update(r.Context(), task.ID, updates); err != nil {
 				writeError(w, http.StatusInternalServerError, "failed to update link task")
@@ -5151,16 +5157,20 @@ func (s *Server) handleLinkByID(w http.ResponseWriter, r *http.Request) {
 
 		now := time.Now().UTC()
 		status := "pending"
-		attempts := task.Attempts
+		attempts := 0
 		nullStr := sql.NullString{}
+		nullTime := sql.NullTime{}
+		emptyLogs := []string{}
 		updates := sqlstore.LinkTaskUpdates{
-			Status:       &status,
-			Attempts:     &attempts,
-			ScheduledFor: &now,
-			FoundLocation: &nullStr,
+			Status:           &status,
+			Attempts:         &attempts,
+			CreatedAt:        &now,
+			ScheduledFor:     &now,
+			FoundLocation:    &nullStr,
 			GeneratedContent: &nullStr,
-			ErrorMessage: &sql.NullString{},
-			CompletedAt:  &sql.NullTime{},
+			ErrorMessage:     &sql.NullString{},
+			CompletedAt:      &nullTime,
+			LogLines:         &emptyLogs,
 		}
 		if err := s.linkTasks.Update(r.Context(), taskID, updates); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to retry link task")

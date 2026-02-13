@@ -491,10 +491,11 @@ func TestLinkTaskStoreUpdate(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		status := "inserted"
 		attempts := 2
-		updates := LinkTaskUpdates{Status: &status, Attempts: &attempts}
+		createdAt := time.Date(2026, 2, 4, 12, 0, 0, 0, time.UTC)
+		updates := LinkTaskUpdates{Status: &status, Attempts: &attempts, CreatedAt: &createdAt}
 
-		mock.ExpectExec(`UPDATE link_tasks SET status=\$1, attempts=\$2 WHERE id=\$3`).
-			WithArgs(status, attempts, "task-2").
+		mock.ExpectExec(`UPDATE link_tasks SET status=\$1, attempts=\$2, created_at=\$3 WHERE id=\$4`).
+			WithArgs(status, attempts, createdAt, "task-2").
 			WillReturnResult(sqlmock.NewResult(0, 1))
 
 		if err := store.Update(ctx, "task-2", updates); err != nil {

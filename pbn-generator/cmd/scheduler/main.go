@@ -102,6 +102,7 @@ type DomainStore interface {
 	ListByProject(ctx context.Context, projectID string) ([]sqlstore.Domain, error)
 	Get(ctx context.Context, id string) (sqlstore.Domain, error)
 	UpdateStatus(ctx context.Context, id, status string) error
+	UpdateLinkStatus(ctx context.Context, id, status string) error
 	SetLastGeneration(ctx context.Context, id, genID string) error
 }
 
@@ -673,16 +674,19 @@ func applyLinkSchedulesAt(
 				attempts := 0
 				nullStr := sql.NullString{}
 				nullTime := sql.NullTime{}
+				emptyLogs := []string{}
 				updates := sqlstore.LinkTaskUpdates{
 					AnchorText:       &anchor,
 					TargetURL:        &target,
 					Status:           &status,
 					Attempts:         &attempts,
+					CreatedAt:        &now,
 					ScheduledFor:     &now,
 					FoundLocation:    &nullStr,
 					GeneratedContent: &nullStr,
 					ErrorMessage:     &nullStr,
 					CompletedAt:      &nullTime,
+					LogLines:         &emptyLogs,
 				}
 				if err := linkTaskStore.Update(ctx, task.ID, updates); err != nil && logger != nil {
 					logger.Warnf("failed to update link task %s: %v", task.ID, err)
@@ -826,7 +830,7 @@ func isDomainPublished(d sqlstore.Domain) bool {
 }
 
 func listActiveLinkTasksByProject(ctx context.Context, linkTaskStore LinkTaskStore, projectID string) ([]sqlstore.LinkTask, error) {
-	activeStatuses := []string{"pending", "searching", "found", "removing"}
+	activeStatuses := []string{"pending", "searching", "removing"}
 	var res []sqlstore.LinkTask
 	for _, status := range activeStatuses {
 		status := status
@@ -878,6 +882,11 @@ func processPendingLinkTasks(
 			if updateErr != nil && logger != nil {
 				logger.Warnf("failed to update link task error message: %v", updateErr)
 			}
+			if domainStore != nil {
+				if err := domainStore.UpdateLinkStatus(ctx, item.DomainID, "pending"); err != nil && logger != nil {
+					logger.Warnf("failed to set pending link status for domain %s: %v", item.DomainID, err)
+				}
+			}
 			continue
 		}
 		status := "searching"
@@ -890,6 +899,11 @@ func processPendingLinkTasks(
 			ErrorMessage: &clearErr,
 		}); err != nil && logger != nil {
 			logger.Warnf("failed to mark link task searching: %v", err)
+		}
+		if domainStore != nil {
+			if err := domainStore.UpdateLinkStatus(ctx, item.DomainID, status); err != nil && logger != nil {
+				logger.Warnf("failed to set link status for domain %s: %v", item.DomainID, err)
+			}
 		}
 	}
 	return nil
