@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { FiRefreshCw } from "react-icons/fi";
 import type { LinkTaskDTO } from "../types/linkTasks";
+import { getLinkTaskStatusMeta, normalizeLinkTaskStatus } from "../lib/linkTaskStatus";
 
 type LinkTaskListProps = {
   tasks: LinkTaskDTO[];
@@ -17,25 +18,14 @@ type LinkTaskListProps = {
   onBulkDelete: (tasks: LinkTaskDTO[]) => void;
 };
 
-const statusStyles: Record<string, string> = {
-  pending: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200",
-  searching: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-200",
-  removing: "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-200",
-  inserted: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200",
-  generated: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200",
-  removed: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200",
-  failed: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-200"
-};
-
-const statusLabels: Record<string, string> = {
-  all: "Все",
-  pending: "Ожидание",
-  searching: "Поиск",
-  removing: "Удаление",
-  inserted: "Вставлено",
-  generated: "Сгенерировано",
-  removed: "Удалено",
-  failed: "Ошибка"
+const STATUS_TONE_CLASSES: Record<string, string> = {
+  amber: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200",
+  blue: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-200",
+  orange: "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-200",
+  green: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200",
+  yellow: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-200",
+  slate: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200",
+  red: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-200"
 };
 
 export function LinkTaskList({
@@ -55,7 +45,10 @@ export function LinkTaskList({
 
   const availableStatuses = useMemo(() => {
     const unique = new Set<string>();
-    tasks.forEach((task) => unique.add(task.status));
+    tasks.forEach((task) => {
+      const normalized = normalizeLinkTaskStatus(task.status);
+      unique.add(normalized || task.status);
+    });
     return ["all", ...Array.from(unique)];
   }, [tasks]);
 
@@ -63,7 +56,10 @@ export function LinkTaskList({
     if (statusFilter === "all") {
       return tasks;
     }
-    return tasks.filter((task) => task.status === statusFilter);
+    return tasks.filter((task) => {
+      const normalized = normalizeLinkTaskStatus(task.status);
+      return (normalized || task.status) === statusFilter;
+    });
   }, [tasks, statusFilter]);
 
   const selectedTasks = useMemo(
@@ -109,7 +105,7 @@ export function LinkTaskList({
             >
               {availableStatuses.map((status) => (
                 <option key={status} value={status}>
-                  {statusLabels[status] || status}
+                  {status === "all" ? "Все" : getLinkTaskStatusMeta(status).text}
                 </option>
               ))}
             </select>
@@ -190,13 +186,17 @@ export function LinkTaskList({
                   <td className="py-3 pr-4 font-medium">{task.anchor_text}</td>
                   <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">{task.target_url}</td>
                   <td className="py-3 pr-4">
+                    {(() => {
+                      const meta = getLinkTaskStatusMeta(task.status);
+                      const style = STATUS_TONE_CLASSES[meta.tone] || STATUS_TONE_CLASSES.slate;
+                      return (
                     <span
-                      className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-semibold ${
-                        statusStyles[task.status] || statusStyles.pending
-                      }`}
+                          className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-semibold ${style}`}
                     >
-                      {statusLabels[task.status] || task.status}
+                          {meta.text}
                     </span>
+                      );
+                    })()}
                   </td>
                   <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">
                     {new Date(task.scheduled_for).toLocaleString()}

@@ -34,6 +34,7 @@ type PromptOverridesPanelProps = {
   title: string;
   endpoint: string;
   canEdit: boolean;
+  layout?: "list" | "single-stage";
 };
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -65,11 +66,12 @@ const MODEL_OPTIONS = [
   { value: "gemini-1.5-flash", label: "gemini-1.5-flash" },
 ];
 
-export function PromptOverridesPanel({ title, endpoint, canEdit }: PromptOverridesPanelProps) {
+export function PromptOverridesPanel({ title, endpoint, canEdit, layout = "list" }: PromptOverridesPanelProps) {
   const [loading, setLoading] = useState(false);
   const [response, setResponse] = useState<PromptResponseDTO>({ overrides: [], resolved: [] });
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [modelDrafts, setModelDrafts] = useState<Record<string, string>>({});
+  const [selectedStage, setSelectedStage] = useState("");
 
   const overrideByStage = useMemo(() => {
     const map: Record<string, PromptOverrideDTO> = {};
@@ -123,6 +125,21 @@ export function PromptOverridesPanel({ title, endpoint, canEdit }: PromptOverrid
     void load();
   }, [endpoint]);
 
+  useEffect(() => {
+    if (layout !== "single-stage") {
+      return;
+    }
+    if (!response.resolved.length) {
+      setSelectedStage("");
+      return;
+    }
+    const hasCurrent = response.resolved.some((item) => item.stage === selectedStage);
+    if (!hasCurrent) {
+      const preferred = response.overrides[0]?.stage || response.resolved[0].stage;
+      setSelectedStage(preferred);
+    }
+  }, [layout, response.overrides, response.resolved, selectedStage]);
+
   const onSave = async (stage: string) => {
     const body = (drafts[stage] || "").trim();
     const model = (modelDrafts[stage] || "").trim();
@@ -170,6 +187,15 @@ export function PromptOverridesPanel({ title, endpoint, canEdit }: PromptOverrid
   const formatSourceLabel = (source: string) => SOURCE_LABELS[source] || source;
 
   const formatStageLabel = (stage: string) => STAGE_LABELS[stage] || stage;
+  const visibleResolved = useMemo(() => {
+    if (layout !== "single-stage") {
+      return response.resolved;
+    }
+    if (!selectedStage) {
+      return [];
+    }
+    return response.resolved.filter((item) => item.stage === selectedStage);
+  }, [layout, response.resolved, selectedStage]);
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white/80 p-4 shadow dark:border-slate-800 dark:bg-slate-900/60 space-y-3">
@@ -189,7 +215,28 @@ export function PromptOverridesPanel({ title, endpoint, canEdit }: PromptOverrid
         <div className="text-sm text-slate-500 dark:text-slate-400">Промпты еще не настроены.</div>
       ) : (
         <div className="space-y-3">
-          {response.resolved.map((item) => {
+          {layout === "single-stage" && (
+            <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3 dark:border-slate-800 dark:bg-slate-900/60 space-y-2">
+              <div className="text-xs text-slate-500 dark:text-slate-400">Выберите этап, который хотите переопределить</div>
+              <select
+                value={selectedStage}
+                onChange={(event) => setSelectedStage(event.target.value)}
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
+              >
+                {response.resolved.map((item) => {
+                  const hasOverride = Boolean(overrideByStage[item.stage]);
+                  const source = formatSourceLabel(item.source);
+                  const suffix = hasOverride ? " • есть оверрайд" : "";
+                  return (
+                    <option key={item.stage} value={item.stage}>
+                      {formatStageLabel(item.stage)} ({source}){suffix}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+          )}
+          {visibleResolved.map((item) => {
             const override = overrideByStage[item.stage];
             const draft = drafts[item.stage] ?? (override?.body || "");
             const modelDraft = modelDrafts[item.stage] ?? (override?.model || item.model || "");

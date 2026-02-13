@@ -125,6 +125,14 @@ frontend/
 - ✅ Темная тема (dark mode)
 - ✅ Responsive дизайн
 
+## 🔗 Link-flow (актуальная семантика)
+
+- Канонические статусы link-task: `pending`, `searching`, `removing`, `inserted`, `generated`, `removed`, `failed`.
+- Legacy-статус `found` больше не используется как рабочий и нормализуется в `searching`.
+- `remove` идемпотентен: если ссылка уже отсутствует, задача завершается как `removed` (с warning в логах).
+- `relink` без найденного источника замены завершается как `failed` без fallback-генерации нового блока.
+- `POST /api/links/{id}/retry` сбрасывает lifecycle задачи: `attempts=0`, `scheduled_for=now`, `created_at=now`, очищает runtime-поля задачи.
+
 ### Инфраструктура
 
 - ✅ Docker Compose для локальной разработки

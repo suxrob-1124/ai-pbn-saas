@@ -967,6 +967,10 @@ paths:
     post:
       tags: [Links]
       summary: Повторить link task
+      description: |
+        Сбрасывает lifecycle задачи для нового ручного запуска:
+        `attempts=0`, `scheduled_for=now`, `created_at=now`,
+        очищает `found_location`, `generated_content`, `error_message`, `completed_at`.
       parameters:
         - $ref: "#/components/parameters/LinkId"
       responses:
@@ -1899,6 +1903,8 @@ components:
           type: string
         status:
           type: string
+          description: Канонические статусы link-task
+          enum: [pending, searching, removing, inserted, generated, removed, failed]
         target_country:
           type: string
         target_language:

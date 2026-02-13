@@ -14,11 +14,8 @@ const mustContain = (needle: string) => {
 mustContain("Массовый повтор");
 mustContain("Массовое удаление");
 mustContain("Изменить");
-mustContain("pending");
-mustContain("searching");
-mustContain("inserted");
-mustContain("generated");
-mustContain("failed");
+mustContain("getLinkTaskStatusMeta");
+mustContain("normalizeLinkTaskStatus");
 mustContain("statusFilter");
 
 let missingCaught = false;
