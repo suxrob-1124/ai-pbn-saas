@@ -136,17 +136,32 @@ func isBrandCandidateToken(raw string) bool {
 	if strings.Contains(norm, "1xbet") {
 		return true
 	}
-	if strings.Contains(norm, "bet") {
-		// Слова вроде "alphabet" не считаем брендами.
-		if strings.HasPrefix(norm, "alpha") || strings.HasPrefix(norm, "abet") {
-			return false
-		}
-		return len(norm) >= 5
-	}
-	if strings.Contains(norm, "бет") && len(norm) >= 5 {
+	if camelBrandExpr.MatchString(raw) {
 		return true
 	}
-	if camelBrandExpr.MatchString(raw) {
+	// Для plain-text избегаем шумных совпадений (например, betona/myt1...):
+	// считаем бренд-кандидатом только алфанумерики с явным bet-маркером.
+	if containsLettersAndDigits(norm) && len(norm) >= 5 &&
+		(strings.Contains(norm, "bet") || strings.Contains(norm, "бет")) {
+		return true
+	}
+	return false
+}
+
+func isDomainLabelBrandCandidate(raw string) bool {
+	raw = strings.Trim(raw, " \t\r\n.,:;!?\"'`[](){}<>")
+	if raw == "" {
+		return false
+	}
+	norm := NormalizeBrandToken(raw)
+	if norm == "" || isGenericToken(norm) {
+		return false
+	}
+	if strings.Contains(norm, "1xbet") {
+		return true
+	}
+	// В доменных label допускаем bet/bet+digits шаблоны, т.к. это частая форма бренда.
+	if (strings.Contains(norm, "bet") || strings.Contains(norm, "бет")) && len(norm) >= 5 {
 		return true
 	}
 	if containsLettersAndDigits(norm) && len(norm) >= 5 {
@@ -169,7 +184,7 @@ func ExtractBrands(text string) []string {
 			parts := strings.Split(token, ".")
 			if len(parts) > 0 {
 				label := strings.TrimSpace(parts[0])
-				if isBrandCandidateToken(label) {
+				if isDomainLabelBrandCandidate(label) {
 					c := canonicalBrand(label)
 					if c != "" {
 						if _, ok := seen[c]; !ok {

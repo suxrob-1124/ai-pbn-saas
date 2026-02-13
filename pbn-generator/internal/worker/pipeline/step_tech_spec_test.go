@@ -199,6 +199,40 @@ func TestTechnicalSpecStep_BrandGuard_SecondViolationFails(t *testing.T) {
 	}
 }
 
+func TestTechnicalSpecStep_BrandGuard_GenericSecondViolationSoftPass(t *testing.T) {
+	llm := &fakeLLMForTechSpec{
+		responses: []string{
+			"# ТЗ\n\nСравнение бонусов Myt1BetX",
+			"# ТЗ\n\nСравнение бонусов Auto2BetY",
+		},
+	}
+	step := &TechnicalSpecStep{}
+	state := &PipelineState{
+		Context: map[string]any{
+			"llm_analysis": "Анализ без брендированного запроса",
+		},
+		Domain: &sqlstore.Domain{
+			MainKeyword:    "платежные методы в онлайн казино",
+			TargetCountry:  "SE",
+			TargetLanguage: "sv",
+		},
+		LLMClient:     llm,
+		PromptManager: &fakePromptManagerForTechSpec{},
+		AppendLog:     func(string) {},
+	}
+
+	artifacts, err := step.Execute(context.Background(), state)
+	if err != nil {
+		t.Fatalf("expected no error for generic soft-fail, got %v", err)
+	}
+	if llm.calls != 2 {
+		t.Fatalf("expected corrective regeneration with 2 calls, got %d", llm.calls)
+	}
+	if got := artifacts["technical_spec"]; got == nil {
+		t.Fatalf("expected technical_spec artifact")
+	}
+}
+
 type fakePromptManagerForTechSpecError struct{}
 
 func (f *fakePromptManagerForTechSpecError) GetPromptByStage(ctx context.Context, stage string) (string, string, string, error) {

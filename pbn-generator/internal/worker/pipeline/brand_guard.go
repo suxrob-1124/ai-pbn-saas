@@ -138,6 +138,15 @@ func generateWithBrandGuard(
 	validation2 := brandguard.ValidateText(response2, resolution)
 	logBrandValidation(state, stage, validation2)
 	if !validation2.OK {
+		if resolution.Mode == brandguard.ModeGeneric {
+			if state.AppendLog != nil {
+				state.AppendLog(fmt.Sprintf(
+					"Brand validation soft-fail for generic mode on stage %s, continuing with warnings",
+					stage,
+				))
+			}
+			return response2, validation2, nil
+		}
 		return "", validation2, fmt.Errorf("brand policy violation (%s): %s", stage, strings.Join(validation2.Violations, "; "))
 	}
 	return response2, validation2, nil

@@ -37,6 +37,37 @@ func TestResolve_GenericKeyword(t *testing.T) {
 	}
 }
 
+func TestResolve_GenericKeyword_AllowedBrandsFromDomainLabels(t *testing.T) {
+	r := Resolve(
+		"Insättning och uttag på utländska casinon",
+		"url,title\nhttps://zenitbet.com,ZenitBet\nhttps://bet365.com,Bet365",
+		"",
+	)
+	if r.Mode != ModeGeneric {
+		t.Fatalf("expected generic mode, got %q", r.Mode)
+	}
+	if len(r.AllowedBrands) == 0 {
+		t.Fatalf("expected allowed brands extracted from serp domains")
+	}
+}
+
+func TestResolve_BrandedKeyword_FallbackBySERPIntersection(t *testing.T) {
+	r := Resolve(
+		"регистрация в zenitbet",
+		"url,title\nhttps://zenitbet.com,ZenitBet registration\nhttps://example.com,Guide",
+		"",
+	)
+	if r.Mode != ModeBranded {
+		t.Fatalf("expected branded mode, got %q", r.Mode)
+	}
+	if r.PrimaryBrand != "zenitbet" {
+		t.Fatalf("expected primary brand zenitbet, got %q", r.PrimaryBrand)
+	}
+	if r.Source != SourceKeyword {
+		t.Fatalf("expected source keyword, got %q", r.Source)
+	}
+}
+
 func TestNormalizeBrandAlias(t *testing.T) {
 	got := NormalizeBrandToken("1хБет")
 	if got != "1xbet" {

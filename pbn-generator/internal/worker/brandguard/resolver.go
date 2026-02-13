@@ -8,6 +8,21 @@ func Resolve(keyword, analysisCSV, contentsTxt string) BrandResolution {
 
 	keywordBrands := ExtractBrands(keyword)
 	serpBrands := ExtractBrands(serpText)
+	if len(keywordBrands) == 0 && len(serpBrands) > 0 {
+		normalizedKeyword := NormalizeBrandToken(keyword)
+		if normalizedKeyword != "" {
+			for _, brand := range serpBrands {
+				normBrand := NormalizeBrandToken(brand)
+				if normBrand == "" {
+					continue
+				}
+				if strings.Contains(normalizedKeyword, normBrand) {
+					keywordBrands = append(keywordBrands, brand)
+					break
+				}
+			}
+		}
+	}
 
 	if len(keywordBrands) > 0 {
 		primary := keywordBrands[0]

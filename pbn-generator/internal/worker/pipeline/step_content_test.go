@@ -161,3 +161,37 @@ func TestContentGenerationStep_BrandGuard_CorrectiveRegeneration(t *testing.T) {
 		t.Fatalf("expected corrected content with 1хБет, got %v", got)
 	}
 }
+
+func TestContentGenerationStep_BrandGuard_GenericSecondViolationSoftPass(t *testing.T) {
+	llm := &fakeLLMForContent{
+		responses: []string{
+			"# Title\n\nJämförelse av bonusar hos Myt1BetX.",
+			"# Title\n\nJämförelse av bonusar hos Auto2BetY.",
+		},
+	}
+	step := &ContentGenerationStep{}
+	state := &PipelineState{
+		Context: map[string]any{
+			"technical_spec": "# ТЗ\n\nНейтральный контент без фиксированного бренда",
+		},
+		Domain: &sqlstore.Domain{
+			URL:            "example.com",
+			MainKeyword:    "insättning och uttag på utländska casinon",
+			TargetLanguage: "sv",
+		},
+		LLMClient:     llm,
+		PromptManager: &fakePromptManagerForContent{},
+		AppendLog:     func(string) {},
+	}
+
+	artifacts, err := step.Execute(context.Background(), state)
+	if err != nil {
+		t.Fatalf("expected no error for generic soft-fail, got %v", err)
+	}
+	if llm.calls != 2 {
+		t.Fatalf("expected corrective regeneration with 2 calls, got %d", llm.calls)
+	}
+	if got := artifacts["content_markdown"]; got == nil {
+		t.Fatalf("expected content_markdown artifact")
+	}
+}

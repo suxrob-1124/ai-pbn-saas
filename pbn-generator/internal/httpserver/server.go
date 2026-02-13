@@ -124,6 +124,7 @@ type GenQueueStore interface {
 	Get(ctx context.Context, itemID string) (*sqlstore.QueueItem, error)
 	ListByProject(ctx context.Context, projectID string) ([]sqlstore.QueueItem, error)
 	ListByProjectPage(ctx context.Context, projectID string, limit, offset int, search string) ([]sqlstore.QueueItem, error)
+	ListHistoryByProjectPage(ctx context.Context, projectID string, limit, offset int, search string, status *string, dateFrom *time.Time, dateTo *time.Time) ([]sqlstore.QueueItem, error)
 	Delete(ctx context.Context, itemID string) error
 }
 
@@ -148,6 +149,7 @@ type LinkTaskStore interface {
 	ListByUser(ctx context.Context, email string, filters sqlstore.LinkTaskFilters) ([]sqlstore.LinkTask, error)
 	ListAll(ctx context.Context, filters sqlstore.LinkTaskFilters) ([]sqlstore.LinkTask, error)
 	ListPending(ctx context.Context, limit int) ([]sqlstore.LinkTask, error)
+	ListActiveByDomainIDs(ctx context.Context, domainIDs []string) (map[string]sqlstore.LinkTask, error)
 	Update(ctx context.Context, taskID string, updates sqlstore.LinkTaskUpdates) error
 	Delete(ctx context.Context, taskID string) error
 }
@@ -1158,6 +1160,10 @@ func (s *Server) handleProjectByID(w http.ResponseWriter, r *http.Request) {
 			s.handleProjectQueueCleanup(w, r, projectID)
 			return
 		}
+		if action == "history" {
+			s.handleProjectQueueHistory(w, r, projectID)
+			return
+		}
 		s.handleProjectQueue(w, r, projectID)
 		return
 	}
@@ -1276,6 +1282,29 @@ func (s *Server) handleProjectSummary(w http.ResponseWriter, r *http.Request, pr
 		writeError(w, http.StatusInternalServerError, "could not list domains")
 		return
 	}
+	activeLinkTasksByDomain := map[string]sqlstore.LinkTask{}
+	if s.linkTasks != nil && len(domains) > 0 {
+		domainIDs := make([]string, 0, len(domains))
+		for _, d := range domains {
+			domainIDs = append(domainIDs, d.ID)
+		}
+		activeLinkTasksByDomain, err = s.linkTasks.ListActiveByDomainIDs(r.Context(), domainIDs)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not resolve effective link status")
+			return
+		}
+	}
+	domainDTOs := make([]domainDTO, 0, len(domains))
+	for _, d := range domains {
+		dto := toDomainDTO(d)
+		if activeTask, ok := activeLinkTasksByDomain[d.ID]; ok {
+			taskCopy := activeTask
+			applyEffectiveLinkStatus(&dto, &taskCopy)
+		} else {
+			applyEffectiveLinkStatus(&dto, nil)
+		}
+		domainDTOs = append(domainDTOs, dto)
+	}
 
 	memberDTOs := []projectMemberDTO{}
 	allowMembers := strings.EqualFold(user.Role, "admin")
@@ -1306,7 +1335,7 @@ func (s *Server) handleProjectSummary(w http.ResponseWriter, r *http.Request, pr
 
 	resp := projectSummaryDTO{
 		Project: s.toProjectDTO(r.Context(), project),
-		Domains: toDomainDTOs(domains),
+		Domains: domainDTOs,
 		Members: memberDTOs,
 		MyRole:  myRole,
 	}
@@ -1400,9 +1429,25 @@ func (s *Server) handleDomainSummary(w http.ResponseWriter, r *http.Request, dom
 			linkDTOs = append(linkDTOs, toLinkTaskDTO(t))
 		}
 	}
+	domainView := toDomainDTO(domain)
+	if s.linkTasks != nil {
+		activeMap, err := s.linkTasks.ListActiveByDomainIDs(r.Context(), []string{domainID})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not resolve effective link status")
+			return
+		}
+		if activeTask, ok := activeMap[domainID]; ok {
+			taskCopy := activeTask
+			applyEffectiveLinkStatus(&domainView, &taskCopy)
+		} else {
+			applyEffectiveLinkStatus(&domainView, nil)
+		}
+	} else {
+		applyEffectiveLinkStatus(&domainView, nil)
+	}
 
 	resp := domainSummaryDTO{
-		Domain:        toDomainDTO(domain),
+		Domain:        domainView,
 		ProjectName:   project.Name,
 		Generations:   genDTOs,
 		LatestAttempt: latestAttempt,
@@ -2943,9 +2988,9 @@ func (s *Server) handleDomainLinkRun(w http.ResponseWriter, r *http.Request, dom
 }
 
 func (s *Server) findActiveLinkTask(ctx context.Context, domainID string) (*sqlstore.LinkTask, error) {
-	activeStatuses := []string{"pending", "searching", "removing"}
+	activeStatuses := []string{"removing", "searching", "pending"}
 	for _, status := range activeStatuses {
-		filters := sqlstore.LinkTaskFilters{Status: &status, Limit: 1}
+		filters := sqlstore.LinkTaskFilters{Status: &status, Limit: 1, SortDesc: true}
 		list, err := s.linkTasks.ListByDomain(ctx, domainID, filters)
 		if err != nil {
 			return nil, err
@@ -4453,11 +4498,9 @@ func (s *Server) handleProjectLinkScheduleTrigger(w http.ResponseWriter, r *http
 			nullStr := sql.NullString{}
 			nullTime := sql.NullTime{}
 			emptyLogs := []string{}
-			action := "insert"
 			updates := sqlstore.LinkTaskUpdates{
 				AnchorText:       &anchor,
 				TargetURL:        &target,
-				Action:           &action,
 				Status:           &status,
 				Attempts:         &attempts,
 				CreatedAt:        &now,
@@ -4586,6 +4629,105 @@ func (s *Server) handleProjectQueue(w http.ResponseWriter, r *http.Request, proj
 		if domain, ok := domainByID[item.DomainID]; ok && !isDomainWaiting(domain) {
 			continue
 		}
+		dto := toQueueItemDTO(item)
+		if url, ok := domainMap[item.DomainID]; ok {
+			dto.DomainURL = &url
+		}
+		resp = append(resp, dto)
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleProjectQueueHistory(w http.ResponseWriter, r *http.Request, projectID string) {
+	user, ok := currentUserFromContext(r.Context())
+	if !ok || user.Email == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if s.genQueue == nil {
+		writeError(w, http.StatusInternalServerError, "generation queue not configured")
+		return
+	}
+	if _, err := s.authorizeProject(r.Context(), projectID); err != nil {
+		respondAuthzError(w, err, "project not found")
+		return
+	}
+	memberRole := ""
+	if !strings.EqualFold(user.Role, "admin") {
+		role, err := s.getProjectMemberRole(r.Context(), projectID, user.Email)
+		if err != nil {
+			writeError(w, http.StatusForbidden, "access denied")
+			return
+		}
+		memberRole = role
+	}
+	if !hasProjectPermission(user.Role, memberRole, "viewer") {
+		writeError(w, http.StatusForbidden, "insufficient permissions: viewer role required")
+		return
+	}
+
+	limit := 50
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 200 {
+			limit = n
+		}
+	}
+	page := 1
+	if v := strings.TrimSpace(r.URL.Query().Get("page")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			page = n
+		}
+	}
+	offset := (page - 1) * limit
+	search := strings.TrimSpace(r.URL.Query().Get("search"))
+
+	var statusFilter *string
+	if rawStatus := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status"))); rawStatus != "" && rawStatus != "all" {
+		if rawStatus != "completed" && rawStatus != "failed" {
+			writeError(w, http.StatusBadRequest, "invalid history status")
+			return
+		}
+		statusFilter = &rawStatus
+	}
+
+	var dateFrom *time.Time
+	if raw := strings.TrimSpace(r.URL.Query().Get("date_from")); raw != "" {
+		parsed, err := time.Parse("2006-01-02", raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid date_from")
+			return
+		}
+		utc := parsed.UTC()
+		dateFrom = &utc
+	}
+	var dateTo *time.Time
+	if raw := strings.TrimSpace(r.URL.Query().Get("date_to")); raw != "" {
+		parsed, err := time.Parse("2006-01-02", raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid date_to")
+			return
+		}
+		utcEnd := parsed.UTC().Add(24*time.Hour - time.Nanosecond)
+		dateTo = &utcEnd
+	}
+
+	items, err := s.genQueue.ListHistoryByProjectPage(r.Context(), projectID, limit, offset, search, statusFilter, dateFrom, dateTo)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not load queue history")
+		return
+	}
+	domainMap := map[string]string{}
+	if domains, err := s.domains.ListByProject(r.Context(), projectID); err == nil {
+		for _, d := range domains {
+			domainMap[d.ID] = d.URL
+		}
+	}
+	resp := make([]queueItemDTO, 0, len(items))
+	for _, item := range items {
 		dto := toQueueItemDTO(item)
 		if url, ok := domainMap[item.DomainID]; ok {
 			dto.DomainURL = &url
@@ -5934,32 +6076,34 @@ type projectDTO struct {
 }
 
 type domainDTO struct {
-	ID                 string     `json:"id"`
-	ProjectID          string     `json:"project_id"`
-	ServerID           *string    `json:"server_id,omitempty"`
-	URL                string     `json:"url"`
-	MainKeyword        string     `json:"main_keyword,omitempty"`
-	TargetCountry      string     `json:"target_country,omitempty"`
-	TargetLanguage     string     `json:"target_language,omitempty"`
-	ExcludeDomains     *string    `json:"exclude_domains,omitempty"`
-	Status             string     `json:"status"`
-	LastAttemptGenID   *string    `json:"last_attempt_generation_id,omitempty"`
-	LastSuccessGenID   *string    `json:"last_success_generation_id,omitempty"`
-	PublishedAt        *time.Time `json:"published_at,omitempty"`
-	PublishedPath      *string    `json:"published_path,omitempty"`
-	FileCount          int        `json:"file_count,omitempty"`
-	TotalSizeBytes     int64      `json:"total_size_bytes,omitempty"`
-	DeploymentMode     *string    `json:"deployment_mode,omitempty"`
-	LinkAnchorText     *string    `json:"link_anchor_text,omitempty"`
-	LinkAcceptorURL    *string    `json:"link_acceptor_url,omitempty"`
-	LinkStatus         *string    `json:"link_status,omitempty"`
-	LinkUpdatedAt      *time.Time `json:"link_updated_at,omitempty"`
-	LinkLastTaskID     *string    `json:"link_last_task_id,omitempty"`
-	LinkFilePath       *string    `json:"link_file_path,omitempty"`
-	LinkAnchorSnapshot *string    `json:"link_anchor_snapshot,omitempty"`
-	LinkReadyAt        *time.Time `json:"link_ready_at,omitempty"`
-	CreatedAt          time.Time  `json:"created_at"`
-	UpdatedAt          time.Time  `json:"updated_at"`
+	ID                  string     `json:"id"`
+	ProjectID           string     `json:"project_id"`
+	ServerID            *string    `json:"server_id,omitempty"`
+	URL                 string     `json:"url"`
+	MainKeyword         string     `json:"main_keyword,omitempty"`
+	TargetCountry       string     `json:"target_country,omitempty"`
+	TargetLanguage      string     `json:"target_language,omitempty"`
+	ExcludeDomains      *string    `json:"exclude_domains,omitempty"`
+	Status              string     `json:"status"`
+	LastAttemptGenID    *string    `json:"last_attempt_generation_id,omitempty"`
+	LastSuccessGenID    *string    `json:"last_success_generation_id,omitempty"`
+	PublishedAt         *time.Time `json:"published_at,omitempty"`
+	PublishedPath       *string    `json:"published_path,omitempty"`
+	FileCount           int        `json:"file_count,omitempty"`
+	TotalSizeBytes      int64      `json:"total_size_bytes,omitempty"`
+	DeploymentMode      *string    `json:"deployment_mode,omitempty"`
+	LinkAnchorText      *string    `json:"link_anchor_text,omitempty"`
+	LinkAcceptorURL     *string    `json:"link_acceptor_url,omitempty"`
+	LinkStatus          *string    `json:"link_status,omitempty"`
+	LinkStatusEffective *string    `json:"link_status_effective,omitempty"`
+	LinkStatusSource    string     `json:"link_status_source,omitempty"`
+	LinkUpdatedAt       *time.Time `json:"link_updated_at,omitempty"`
+	LinkLastTaskID      *string    `json:"link_last_task_id,omitempty"`
+	LinkFilePath        *string    `json:"link_file_path,omitempty"`
+	LinkAnchorSnapshot  *string    `json:"link_anchor_snapshot,omitempty"`
+	LinkReadyAt         *time.Time `json:"link_ready_at,omitempty"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
 }
 
 type fileDTO struct {
@@ -6307,6 +6451,56 @@ func toDomainDTOs(list []sqlstore.Domain) []domainDTO {
 		out = append(out, toDomainDTO(d))
 	}
 	return out
+}
+
+func linkTaskStatusPriority(status string) int {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "removing":
+		return 3
+	case "searching":
+		return 2
+	case "pending":
+		return 1
+	default:
+		return 0
+	}
+}
+
+func stringPtr(value string) *string {
+	return &value
+}
+
+// domains.link_status может временно отставать между scheduler и worker,
+// поэтому UI должен опираться на вычисленный link_status_effective.
+func resolveEffectiveLinkStatus(rawStatus *string, activeTaskStatus *string) (*string, string) {
+	var raw string
+	if rawStatus != nil {
+		raw = strings.TrimSpace(*rawStatus)
+	}
+	var active string
+	if activeTaskStatus != nil {
+		active = strings.TrimSpace(*activeTaskStatus)
+	}
+	if active != "" && linkTaskStatusPriority(active) > 0 {
+		return stringPtr(active), "active_task"
+	}
+	if raw != "" {
+		return stringPtr(raw), "domain"
+	}
+	return nil, "domain"
+}
+
+func applyEffectiveLinkStatus(dto *domainDTO, activeTask *sqlstore.LinkTask) {
+	if dto == nil {
+		return
+	}
+	var active *string
+	if activeTask != nil {
+		active = stringPtr(activeTask.Status)
+	}
+	effective, source := resolveEffectiveLinkStatus(dto.LinkStatus, active)
+	dto.LinkStatusEffective = effective
+	dto.LinkStatusSource = source
 }
 
 func toIndexCheckDTO(check sqlstore.IndexCheck) indexCheckDTO {
@@ -6922,63 +7116,6 @@ func enqueueScheduleDomains(
 		count++
 	}
 	return count, nil
-}
-
-func shouldAllowManualTrigger(strategy string, cfg scheduleConfig, now time.Time, lastRun time.Time) (bool, error) {
-	strategy = strings.ToLower(strings.TrimSpace(strategy))
-	if strategy == "" {
-		return true, nil
-	}
-	if lastRun.IsZero() {
-		return true, nil
-	}
-	switch strategy {
-	case "immediate":
-		return false, nil
-	case "daily":
-		return !sameDay(lastRun, now), nil
-	case "weekly":
-		return !sameWeek(lastRun, now), nil
-	case "custom":
-		if cfg.Interval != "" {
-			interval, err := parseInterval(cfg.Interval)
-			if err != nil {
-				return false, err
-			}
-			return now.Sub(lastRun) >= interval, nil
-		}
-		if cfg.Cron != "" {
-			return cronAllowsManual(cfg.Cron, now, lastRun)
-		}
-		return true, nil
-	default:
-		return true, nil
-	}
-}
-
-func cronAllowsManual(expr string, now time.Time, lastRun time.Time) (bool, error) {
-	if lastRun.IsZero() {
-		return true, nil
-	}
-	sched, err := cron.ParseStandard(expr)
-	if err != nil {
-		return false, err
-	}
-	next := sched.Next(lastRun)
-	return !now.Before(next), nil
-}
-
-func lastScheduledAt(items []sqlstore.QueueItem, scheduleID string) time.Time {
-	var last time.Time
-	for _, item := range items {
-		if !item.ScheduleID.Valid || item.ScheduleID.String != scheduleID {
-			continue
-		}
-		if item.ScheduledFor.After(last) {
-			last = item.ScheduledFor
-		}
-	}
-	return last
 }
 
 func sameDay(a, b time.Time) bool {

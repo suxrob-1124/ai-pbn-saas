@@ -627,16 +627,28 @@ func applyLinkSchedulesAt(
 			continue
 		}
 
-		eligibleByID := map[string]bool{}
-		for _, d := range eligible {
-			eligibleByID[d.ID] = true
+		domainByID := map[string]sqlstore.Domain{}
+		for _, d := range domains {
+			domainByID[d.ID] = d
 		}
 
 		activeByDomain := map[string]sqlstore.LinkTask{}
 		for _, task := range activeTasks {
-			if !eligibleByID[task.DomainID] {
+			domain, ok := domainByID[task.DomainID]
+			if !ok {
 				status := "failed"
-				msg := sql.NullString{String: "domain not eligible for link schedule", Valid: true}
+				msg := sql.NullString{String: "domain not found for link schedule", Valid: true}
+				completed := sql.NullTime{Time: now, Valid: true}
+				_ = linkTaskStore.Update(ctx, task.ID, sqlstore.LinkTaskUpdates{
+					Status:       &status,
+					ErrorMessage: &msg,
+					CompletedAt:  &completed,
+				})
+				continue
+			}
+			if !isDomainPublished(domain) {
+				status := "failed"
+				msg := sql.NullString{String: "domain is not published for link schedule", Valid: true}
 				completed := sql.NullTime{Time: now, Valid: true}
 				_ = linkTaskStore.Update(ctx, task.ID, sqlstore.LinkTaskUpdates{
 					Status:       &status,
@@ -881,11 +893,6 @@ func processPendingLinkTasks(
 			})
 			if updateErr != nil && logger != nil {
 				logger.Warnf("failed to update link task error message: %v", updateErr)
-			}
-			if domainStore != nil {
-				if err := domainStore.UpdateLinkStatus(ctx, item.DomainID, "pending"); err != nil && logger != nil {
-					logger.Warnf("failed to set pending link status for domain %s: %v", item.DomainID, err)
-				}
 			}
 			continue
 		}

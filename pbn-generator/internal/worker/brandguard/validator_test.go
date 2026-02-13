@@ -54,3 +54,16 @@ func TestValidateText_Generic_NoBrands(t *testing.T) {
 		t.Fatalf("expected validation ok, got: %v", got.Violations)
 	}
 }
+
+func TestValidateText_Generic_IgnoresLexicalBetNoise(t *testing.T) {
+	resolution := BrandResolution{
+		Mode:          ModeGeneric,
+		AllowedBrands: []string{"1xbet"},
+	}
+
+	text := "betona betregeln h2avsnitt maxbetbonusregel myt1gratispengar mytmaxvinstochmaxbet"
+	got := ValidateText(text, resolution)
+	if !got.OK {
+		t.Fatalf("expected validation ok for lexical noise, got: %v", got.Violations)
+	}
+}
