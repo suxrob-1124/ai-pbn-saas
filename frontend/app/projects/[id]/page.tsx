@@ -2015,7 +2015,7 @@ export default function ProjectDetailPage() {
             </div>
 
             <PromptOverridesPanel
-              title="Prompt Overrides (Project)"
+              title="Переопределения промптов (проект)"
               endpoint={`/api/projects/${projectId}/prompts`}
               canEdit={canEditPrompts}
             />

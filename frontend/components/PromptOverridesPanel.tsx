@@ -36,6 +36,25 @@ type PromptOverridesPanelProps = {
   canEdit: boolean;
 };
 
+const SOURCE_LABELS: Record<string, string> = {
+  domain: "домен",
+  project: "проект",
+  global: "базовый",
+};
+
+const STAGE_LABELS: Record<string, string> = {
+  competitor_analysis: "Анализ конкурентов",
+  technical_spec: "Техническое задание",
+  content_generation: "Генерация контента",
+  design_architecture: "Дизайн-архитектура",
+  logo_generation: "Генерация логотипа",
+  html_generation: "Генерация HTML",
+  css_generation: "Генерация CSS",
+  js_generation: "Генерация JavaScript",
+  image_prompt_generation: "Промпты для изображений",
+  "404_page": "Генерация 404",
+};
+
 const MODEL_OPTIONS = [
   { value: "", label: `По умолчанию (${process.env.NEXT_PUBLIC_GEMINI_DEFAULT_MODEL || "gemini-2.5-pro"})` },
   { value: "gemini-3-pro-preview", label: "gemini-3-pro-preview" },
@@ -93,7 +112,7 @@ export function PromptOverridesPanel({ title, endpoint, canEdit }: PromptOverrid
       showToast({
         type: "error",
         title: "Ошибка загрузки промптов",
-        message: err?.message || "Не удалось загрузить prompt overrides",
+        message: err?.message || "Не удалось загрузить переопределения промптов",
       });
     } finally {
       setLoading(false);
@@ -108,7 +127,7 @@ export function PromptOverridesPanel({ title, endpoint, canEdit }: PromptOverrid
     const body = (drafts[stage] || "").trim();
     const model = (modelDrafts[stage] || "").trim();
     if (!body) {
-      showToast({ type: "error", title: "Пустой override", message: "Введите текст промпта перед сохранением." });
+      showToast({ type: "error", title: "Пустой оверрайд", message: "Введите текст промпта перед сохранением." });
       return;
     }
     setLoading(true);
@@ -118,7 +137,7 @@ export function PromptOverridesPanel({ title, endpoint, canEdit }: PromptOverrid
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ body, model }),
       });
-      showToast({ type: "success", title: "Override сохранен", message: stage });
+      showToast({ type: "success", title: "Оверрайд сохранен", message: formatStageLabel(stage) });
       await load();
     } catch (err: any) {
       showToast({ type: "error", title: "Ошибка сохранения", message: err?.message || stage });
@@ -132,7 +151,7 @@ export function PromptOverridesPanel({ title, endpoint, canEdit }: PromptOverrid
     try {
       await authFetch(`${endpoint}/${stage}`, { method: "DELETE" });
       setDrafts((prev) => ({ ...prev, [stage]: "" }));
-      showToast({ type: "success", title: "Override удален", message: stage });
+      showToast({ type: "success", title: "Оверрайд удален", message: formatStageLabel(stage) });
       await load();
     } catch (err: any) {
       showToast({ type: "error", title: "Ошибка удаления", message: err?.message || stage });
@@ -147,6 +166,10 @@ export function PromptOverridesPanel({ title, endpoint, canEdit }: PromptOverrid
     if (source === "global") return "amber";
     return "slate";
   };
+
+  const formatSourceLabel = (source: string) => SOURCE_LABELS[source] || source;
+
+  const formatStageLabel = (stage: string) => STAGE_LABELS[stage] || stage;
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white/80 p-4 shadow dark:border-slate-800 dark:bg-slate-900/60 space-y-3">
@@ -173,15 +196,18 @@ export function PromptOverridesPanel({ title, endpoint, canEdit }: PromptOverrid
             return (
               <div key={item.stage} className="rounded-lg border border-slate-200 bg-slate-50/70 p-3 dark:border-slate-800 dark:bg-slate-900/60 space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
-                  <div className="text-sm font-semibold">{item.stage}</div>
-                  <Badge label={`source: ${item.source}`} tone={sourceTone(item.source)} className="text-[11px]" />
+                  <div className="text-sm font-semibold">{formatStageLabel(item.stage)}</div>
+                  <code className="rounded bg-slate-200/80 px-1.5 py-0.5 text-[10px] text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                    {item.stage}
+                  </code>
+                  <Badge label={`Источник: ${formatSourceLabel(item.source)}`} tone={sourceTone(item.source)} className="text-[11px]" />
                   {item.model && (
-                    <span className="text-[11px] text-slate-500 dark:text-slate-400">model: {item.model}</span>
+                    <span className="text-[11px] text-slate-500 dark:text-slate-400">Модель: {item.model}</span>
                   )}
                 </div>
                 <details className="rounded-lg border border-slate-200 bg-white/70 p-2 dark:border-slate-700 dark:bg-slate-900/40">
                   <summary className="cursor-pointer text-xs font-semibold text-slate-600 dark:text-slate-300">
-                    Резолвнутый промпт ({item.source})
+                    Итоговый промпт (источник: {formatSourceLabel(item.source)})
                   </summary>
                   <pre className="mt-2 max-h-56 overflow-auto rounded-lg bg-slate-100/80 p-2 text-xs text-slate-700 dark:bg-slate-900/70 dark:text-slate-200 whitespace-pre-wrap">
                     {item.body || "(пусто)"}
@@ -189,7 +215,7 @@ export function PromptOverridesPanel({ title, endpoint, canEdit }: PromptOverrid
                 </details>
                 <div className="space-y-1">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs text-slate-500 dark:text-slate-400">Override body</span>
+                    <span className="text-xs text-slate-500 dark:text-slate-400">Текст оверрайда</span>
                     <PromptVariablesHelp />
                   </div>
                   <textarea
@@ -223,7 +249,7 @@ export function PromptOverridesPanel({ title, endpoint, canEdit }: PromptOverrid
                       disabled={loading}
                       className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-1 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
                     >
-                      <FiSave /> Сохранить override
+                      <FiSave /> Сохранить оверрайд
                     </button>
                     <button
                       type="button"
@@ -231,7 +257,7 @@ export function PromptOverridesPanel({ title, endpoint, canEdit }: PromptOverrid
                       disabled={loading}
                       className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
                     >
-                      <FiTrash2 /> Сбросить override
+                      <FiTrash2 /> Сбросить оверрайд
                     </button>
                   </div>
                 )}

@@ -140,6 +140,7 @@ export default function DomainPage() {
   const [liveResultLoading, setLiveResultLoading] = useState(false);
   const [liveResultError, setLiveResultError] = useState<string | null>(null);
   const [deployments, setDeployments] = useState<DeploymentAttempt[]>([]);
+  const [showDomainPromptOverrides, setShowDomainPromptOverrides] = useState(false);
 
   const load = async (force = false) => {
     if (!id) return;
@@ -842,11 +843,34 @@ export default function DomainPage() {
         </button>
       </div>
 
-      <PromptOverridesPanel
-        title="Prompt Overrides (Domain)"
-        endpoint={`/api/domains/${id}/prompts`}
-        canEdit={canEditPrompts}
-      />
+      <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 className="font-semibold">Промпты домена</h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Переопределения промптов и моделей для этапов генерации.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowDomainPromptOverrides((prev) => !prev)}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+          >
+            {showDomainPromptOverrides ? "Скрыть блок" : "Показать блок"}
+          </button>
+        </div>
+        {showDomainPromptOverrides ? (
+          <PromptOverridesPanel
+            title="Переопределения промптов (домен)"
+            endpoint={`/api/domains/${id}/prompts`}
+            canEdit={canEditPrompts}
+          />
+        ) : (
+          <div className="rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-900/50 dark:text-slate-300">
+            Блок скрыт. Нажмите «Показать блок», чтобы открыть настройки промптов домена.
+          </div>
+        )}
+      </div>
 
       <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
