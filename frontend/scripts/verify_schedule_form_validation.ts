@@ -23,7 +23,7 @@ if (daily.ok) {
 const weekly = buildScheduleConfig({ ...base, strategy: "weekly" });
 assert.equal(weekly.ok, true);
 if (weekly.ok) {
-  assert.equal(weekly.config.day, "mon");
+  assert.equal(weekly.config.weekday, "mon");
 }
 
 const custom = buildScheduleConfig({ ...base, strategy: "custom", customCron: "*/5 * * * *" });
