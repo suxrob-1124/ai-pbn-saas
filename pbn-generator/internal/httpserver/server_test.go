@@ -1660,6 +1660,19 @@ func (s *stubDomainStore) UpdateStatus(ctx context.Context, id, status string) e
 	return errors.New("not found")
 }
 
+func (s *stubDomainStore) UpdateLinkStatus(ctx context.Context, id, status string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if d, ok := s.domains[id]; ok {
+		d.LinkStatus = sqlstore.NullableString(status)
+		d.LinkUpdatedAt = sql.NullTime{Time: time.Now().UTC(), Valid: true}
+		d.UpdatedAt = time.Now().UTC()
+		s.domains[id] = d
+		return nil
+	}
+	return errors.New("not found")
+}
+
 func (s *stubDomainStore) UpdateKeyword(ctx context.Context, id, keyword string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

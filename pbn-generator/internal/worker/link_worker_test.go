@@ -83,6 +83,17 @@ func (s *stubDomainStore) Get(ctx context.Context, id string) (sqlstore.Domain, 
 	return d, nil
 }
 
+func (s *stubDomainStore) UpdateLinkStatus(ctx context.Context, id string, status string) error {
+	d, ok := s.domains[id]
+	if !ok {
+		return sql.ErrNoRows
+	}
+	d.LinkStatus = sqlstore.NullableString(status)
+	d.LinkUpdatedAt = sql.NullTime{Time: time.Now().UTC(), Valid: true}
+	s.domains[id] = d
+	return nil
+}
+
 func (s *stubDomainStore) UpdateLinkState(ctx context.Context, id string, status string, lastTaskID string, filePath string, anchorSnapshot string) error {
 	d, ok := s.domains[id]
 	if !ok {

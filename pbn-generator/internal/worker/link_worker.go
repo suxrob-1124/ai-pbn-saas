@@ -36,6 +36,7 @@ type LinkTaskStore interface {
 // DomainStore описывает операции над доменами.
 type DomainStore interface {
 	Get(ctx context.Context, id string) (sqlstore.Domain, error)
+	UpdateLinkStatus(ctx context.Context, id string, status string) error
 	UpdateLinkState(ctx context.Context, id string, status string, lastTaskID string, filePath string, anchorSnapshot string) error
 }
 
@@ -126,6 +127,9 @@ func (w *LinkWorker) ProcessTask(ctx context.Context, taskID string) error {
 	domain, err := w.Domains.Get(ctx, task.DomainID)
 	if err != nil {
 		return w.failTask(ctx, taskID, attempts, task.CreatedAt, &logLines, fmt.Errorf("domain not found: %w", err))
+	}
+	if err := w.Domains.UpdateLinkStatus(ctx, domain.ID, statusSearching); err != nil {
+		return w.failTask(ctx, taskID, attempts, task.CreatedAt, &logLines, fmt.Errorf("update domain link status: %w", err))
 	}
 	baseDir, err := w.ensureBaseDir()
 	if err != nil {
@@ -518,7 +522,22 @@ func (w *LinkWorker) failTask(ctx context.Context, taskID string, attempts int, 
 	if w.Tasks != nil {
 		_ = w.Tasks.Update(ctx, taskID, updates)
 	}
+	w.updateDomainStatusByTask(ctx, taskID, status)
 	return cause
+}
+
+func (w *LinkWorker) updateDomainStatusByTask(ctx context.Context, taskID string, status string) {
+	if w.Tasks == nil || w.Domains == nil {
+		return
+	}
+	task, err := w.Tasks.Get(ctx, taskID)
+	if err != nil || task == nil {
+		return
+	}
+	if strings.TrimSpace(task.DomainID) == "" {
+		return
+	}
+	_ = w.Domains.UpdateLinkStatus(ctx, task.DomainID, status)
 }
 
 func isRetryableLinkError(msg string) bool {

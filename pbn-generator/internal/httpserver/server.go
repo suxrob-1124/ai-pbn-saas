@@ -53,6 +53,7 @@ type DomainStore interface {
 	ListByIDs(ctx context.Context, ids []string) ([]sqlstore.Domain, error)
 	Get(ctx context.Context, id string) (sqlstore.Domain, error)
 	UpdateStatus(ctx context.Context, id, status string) error
+	UpdateLinkStatus(ctx context.Context, id, status string) error
 	UpdateKeyword(ctx context.Context, id, keyword string) error
 	SetLastGeneration(ctx context.Context, id, genID string) error
 	SetLastSuccessGeneration(ctx context.Context, id, genID string) error
@@ -2439,16 +2440,21 @@ func (s *Server) handleDomainLinks(w http.ResponseWriter, r *http.Request, domai
 				CreatedBy:    user.Email,
 				CreatedAt:    now,
 			}
-			if err := s.linkTasks.Create(r.Context(), task); err != nil {
-				if s.logger != nil {
-					s.logger.Warnf("import link task failed: %v", err)
+				if err := s.linkTasks.Create(r.Context(), task); err != nil {
+					if s.logger != nil {
+						s.logger.Warnf("import link task failed: %v", err)
+					}
+					continue
 				}
-				continue
+				if err := s.domains.UpdateLinkStatus(r.Context(), domain.ID, "pending"); err != nil {
+					if s.logger != nil {
+						s.logger.Warnf("import link task status update failed: %v", err)
+					}
+				}
+				created++
 			}
-			created++
-		}
-		writeJSON(w, http.StatusCreated, map[string]any{"created": created})
-		return
+			writeJSON(w, http.StatusCreated, map[string]any{"created": created})
+			return
 	}
 
 	switch r.Method {
@@ -2521,6 +2527,10 @@ func (s *Server) handleDomainLinks(w http.ResponseWriter, r *http.Request, domai
 		}
 		if err := s.linkTasks.Create(r.Context(), task); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to create link task")
+			return
+		}
+		if err := s.domains.UpdateLinkStatus(r.Context(), domain.ID, "pending"); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to update domain link status")
 			return
 		}
 		writeJSON(w, http.StatusCreated, toLinkTaskDTO(task))
@@ -2893,6 +2903,10 @@ func (s *Server) handleDomainLinkRun(w http.ResponseWriter, r *http.Request, dom
 			writeError(w, http.StatusInternalServerError, "failed to update link task")
 			return
 		}
+		if err := s.domains.UpdateLinkStatus(r.Context(), domain.ID, "pending"); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to update domain link status")
+			return
+		}
 		updated, _ := s.linkTasks.Get(r.Context(), activeTask.ID)
 		if updated == nil {
 			writeJSON(w, http.StatusOK, map[string]string{"status": "queued"})
@@ -2918,11 +2932,15 @@ func (s *Server) handleDomainLinkRun(w http.ResponseWriter, r *http.Request, dom
 		writeError(w, http.StatusInternalServerError, "failed to create link task")
 		return
 	}
+	if err := s.domains.UpdateLinkStatus(r.Context(), domain.ID, "pending"); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update domain link status")
+		return
+	}
 	writeJSON(w, http.StatusCreated, toLinkTaskDTO(task))
 }
 
 func (s *Server) findActiveLinkTask(ctx context.Context, domainID string) (*sqlstore.LinkTask, error) {
-	activeStatuses := []string{"pending", "searching", "found", "removing"}
+	activeStatuses := []string{"pending", "searching", "removing"}
 	for _, status := range activeStatuses {
 		filters := sqlstore.LinkTaskFilters{Status: &status, Limit: 1}
 		list, err := s.linkTasks.ListByDomain(ctx, domainID, filters)
@@ -4448,6 +4466,10 @@ func (s *Server) handleProjectLinkScheduleTrigger(w http.ResponseWriter, r *http
 				writeError(w, http.StatusInternalServerError, "failed to update link task")
 				return
 			}
+			if err := s.domains.UpdateLinkStatus(r.Context(), d.ID, "pending"); err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to update domain link status")
+				return
+			}
 			updated++
 			continue
 		}
@@ -4469,6 +4491,10 @@ func (s *Server) handleProjectLinkScheduleTrigger(w http.ResponseWriter, r *http
 		}
 		if err := s.linkTasks.Create(r.Context(), task); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to create link task")
+			return
+		}
+		if err := s.domains.UpdateLinkStatus(r.Context(), d.ID, "pending"); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to update domain link status")
 			return
 		}
 		created++
@@ -5138,6 +5164,10 @@ func (s *Server) handleLinkByID(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := s.linkTasks.Update(r.Context(), taskID, updates); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to retry link task")
+			return
+		}
+		if err := s.domains.UpdateLinkStatus(r.Context(), domain.ID, "pending"); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to update domain link status")
 			return
 		}
 		updated, _ := s.linkTasks.Get(r.Context(), taskID)
@@ -7047,7 +7077,7 @@ func isDomainWaiting(d sqlstore.Domain) bool {
 }
 
 func listActiveLinkTasksByProject(ctx context.Context, linkTaskStore LinkTaskStore, projectID string) ([]sqlstore.LinkTask, error) {
-	activeStatuses := []string{"pending", "searching", "found", "removing"}
+	activeStatuses := []string{"pending", "searching", "removing"}
 	var res []sqlstore.LinkTask
 	for _, status := range activeStatuses {
 		status := status
