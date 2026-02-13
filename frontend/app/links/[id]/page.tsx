@@ -10,6 +10,7 @@ import { showToast } from "../../../lib/toastStore";
 import { deleteLinkTask, retryLinkTask } from "../../../lib/linkTasksApi";
 import type { LinkTaskDTO } from "../../../types/linkTasks";
 import { Badge } from "../../../components/Badge";
+import { getLinkTaskStatusMeta, isLinkTaskInProgress } from "../../../lib/linkTaskStatus";
 
 type Domain = {
   id: string;
@@ -55,7 +56,7 @@ export default function LinkTaskPage() {
   }, [load]);
 
   useEffect(() => {
-    if (!task || !["pending", "searching", "removing"].includes(task.status)) {
+    if (!task || !isLinkTaskInProgress(task.status)) {
       return;
     }
     const timer = window.setInterval(load, 5000);
@@ -216,20 +217,8 @@ export default function LinkTaskPage() {
 }
 
 function LinkTaskStatusBadge({ status }: { status: string }) {
-  const map: Record<string, { text: string; tone: "amber" | "blue" | "orange" | "sky" | "green" | "yellow" | "slate" | "red"; icon: ReactNode }> = {
-    pending: { text: "Ожидает", tone: "amber", icon: <FiClock /> },
-    searching: { text: "Поиск", tone: "blue", icon: <FiRefreshCw /> },
-    removing: { text: "Удаление", tone: "orange", icon: <FiRefreshCw /> },
-    found: { text: "Найдено", tone: "sky", icon: <FiCheck /> },
-    inserted: { text: "Вставлено", tone: "green", icon: <FiCheck /> },
-    generated: { text: "Вставлено (ген. текст)", tone: "yellow", icon: <FiCheck /> },
-    removed: { text: "Удалено", tone: "slate", icon: <FiCheck /> },
-    failed: { text: "Ошибка", tone: "red", icon: <FiAlertTriangle /> },
-  };
-  const cfg = map[status] || {
-    text: status,
-    tone: "slate" as const,
-    icon: <FiClock />,
-  };
-  return <Badge label={cfg.text} tone={cfg.tone} icon={cfg.icon} className="text-xs" />;
+  const meta = getLinkTaskStatusMeta(status);
+  const icon =
+    meta.icon === "refresh" ? <FiRefreshCw /> : meta.icon === "check" ? <FiCheck /> : meta.icon === "alert" ? <FiAlertTriangle /> : <FiClock />;
+  return <Badge label={meta.text} tone={meta.tone} icon={icon} className="text-xs" />;
 }

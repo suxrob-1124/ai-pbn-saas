@@ -12,6 +12,7 @@ import { ArtifactsViewer, LogsViewer } from "../../../components/ArtifactsViewer
 import { PromptOverridesPanel } from "../../../components/PromptOverridesPanel";
 import PipelineSteps from "../../../components/PipelineSteps";
 import { computeDisplayProgress } from "../../../lib/pipelineProgress";
+import { getLinkTaskStatusMeta, hasInsertedLink, isLinkTaskInProgress, normalizeLinkTaskStatus } from "../../../lib/linkTaskStatus";
 import { AuditReport } from "../../../components/AuditReport";
 import { Badge } from "../../../components/Badge";
 
@@ -213,6 +214,17 @@ export default function DomainPage() {
     if (!id) return;
     setLinkTasksError(null);
     setLinkNotice(null);
+    const linkInProgressNow =
+      isLinkTaskInProgress(domain?.link_status) ||
+      linkTasks.some((task) => isLinkTaskInProgress(task.status));
+    if (linkInProgressNow) {
+      showToast({
+        type: "error",
+        title: "Задача уже выполняется",
+        message: "Дождитесь завершения текущей задачи по ссылке."
+      });
+      return;
+    }
     if (!linkAnchor.trim() || !linkAcceptor.trim()) {
       setLinkTasksError("Заполните анкор и акцептор");
       showToast({
@@ -247,6 +259,17 @@ export default function DomainPage() {
 
   const removeLinkTask = async () => {
     if (!id) return;
+    const linkInProgressNow =
+      isLinkTaskInProgress(domain?.link_status) ||
+      linkTasks.some((task) => isLinkTaskInProgress(task.status));
+    if (linkInProgressNow) {
+      showToast({
+        type: "error",
+        title: "Задача уже выполняется",
+        message: "Дождитесь завершения текущей задачи по ссылке."
+      });
+      return;
+    }
     if (!canRemoveLink) {
       showToast({
         type: "error",
@@ -422,15 +445,15 @@ export default function DomainPage() {
   const mainButtonIcon = isRegenerate ? <FiRefreshCw /> : <FiPlay />;
   const mainButtonDisabled = loading || Boolean(currentAttempt && activeStatusesList.includes(currentAttempt.status));
   const visibleLinkTasks = showAllLinkTasks ? linkTasks : linkTasks.slice(0, 2);
-  const normalizedLinkStatus = (domain?.link_status || "").toLowerCase();
-  const hasActiveLink = ["inserted", "generated"].includes(normalizedLinkStatus);
+  const normalizedLinkStatus = normalizeLinkTaskStatus(domain?.link_status);
+  const hasActiveLink = hasInsertedLink(domain?.link_status);
   const hasLinkInTasks =
-    !normalizedLinkStatus &&
-    linkTasks.some((task) => (task.action || "insert") !== "remove" && ["inserted", "generated"].includes(task.status));
-  const removingInFlight =
-    normalizedLinkStatus === "removing" ||
-    linkTasks.some((task) => (task.action || "") === "remove" && ["pending", "searching", "removing"].includes(task.status));
-  const canRemoveLink = (hasActiveLink || hasLinkInTasks) && !removingInFlight;
+    !normalizedLinkStatus && linkTasks.some((task) => (task.action || "insert") !== "remove" && hasInsertedLink(task.status));
+  const linkInProgress =
+    isLinkTaskInProgress(domain?.link_status) ||
+    linkTasks.some((task) => isLinkTaskInProgress(task.status));
+  const canRemoveLink = (hasActiveLink || hasLinkInTasks) && !linkInProgress;
+  const linkActionLabel = linkInProgress ? "Задача в работе..." : hasActiveLink ? "Обновить ссылку" : "Добавить ссылку";
   const latestArtifacts = useMemo<Record<string, any> | null>(() => {
     if (latestSuccessDetail?.artifacts && typeof latestSuccessDetail.artifacts === "object") {
       return latestSuccessDetail.artifacts;
@@ -904,10 +927,10 @@ export default function DomainPage() {
             </button>
             <button
               onClick={runLinkTask}
-              disabled={linkTasksLoading || !linkAnchor.trim() || !linkAcceptor.trim()}
+              disabled={linkTasksLoading || linkInProgress || !linkAnchor.trim() || !linkAcceptor.trim()}
               className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
             >
-              <FiPlay /> Запустить добавление
+              <FiPlay /> {linkActionLabel}
             </button>
             {canRemoveLink ? (
               <button
@@ -918,9 +941,17 @@ export default function DomainPage() {
                 <FiTrash2 /> Удалить ссылку
               </button>
             ) : (
-              <span className="hidden sm:inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
-                <FiInfo className="h-3 w-3" /> Нет ссылки
-              </span>
+              <>
+                {linkInProgress ? (
+                  <span className="hidden sm:inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-600 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
+                    <FiRefreshCw className="h-3 w-3" /> Выполняется
+                  </span>
+                ) : (
+                  <span className="hidden sm:inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
+                    <FiInfo className="h-3 w-3" /> Нет ссылки
+                  </span>
+                )}
+              </>
             )}
           </div>
         </div>
@@ -1061,22 +1092,21 @@ export default function DomainPage() {
                   : [
                       { id: "pending", label: "В очереди" },
                       { id: "searching", label: "Поиск места" },
-                      { id: "found", label: "Место найдено" },
                       { id: "inserted", label: "Вставка ссылки" },
                       { id: "generated", label: "Генерация текста" }
                     ];
                 const reached = new Set<string>();
-                if (["pending", "searching", "found", "inserted", "generated", "removing", "removed", "failed"].includes(task.status)) {
+                const normalizedTaskStatus = normalizeLinkTaskStatus(task.status) || task.status;
+                if (["pending", "searching", "inserted", "generated", "removing", "removed", "failed"].includes(normalizedTaskStatus)) {
                   reached.add("pending");
                 }
-                if (["searching", "found", "inserted", "generated", "removing", "removed"].includes(task.status)) reached.add("searching");
+                if (["searching", "inserted", "generated", "removing", "removed"].includes(normalizedTaskStatus)) reached.add("searching");
                 if (!isRemove) {
-                  if (["found", "inserted", "generated"].includes(task.status)) reached.add("found");
-                  if (["inserted"].includes(task.status)) reached.add("inserted");
-                  if (["generated"].includes(task.status)) reached.add("generated");
+                  if (["inserted"].includes(normalizedTaskStatus)) reached.add("inserted");
+                  if (["generated"].includes(normalizedTaskStatus)) reached.add("generated");
                 } else {
-                  if (["removing", "removed"].includes(task.status)) reached.add("removing");
-                  if (["removed"].includes(task.status)) reached.add("removed");
+                  if (["removing", "removed"].includes(normalizedTaskStatus)) reached.add("removing");
+                  if (["removed"].includes(normalizedTaskStatus)) reached.add("removed");
                 }
                 return (
                   <div key={task.id} className="rounded-lg border border-slate-200 dark:border-slate-800 p-3 bg-slate-50/60 dark:bg-slate-900/60 space-y-3">
@@ -1621,16 +1651,8 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 function LinkTaskStatusBadge({ status }: { status: string }) {
-  const map: Record<string, { text: string; tone: "amber" | "blue" | "orange" | "sky" | "green" | "yellow" | "slate" | "red"; icon: ReactNode }> = {
-    pending: { text: "Ожидает", tone: "amber", icon: <FiClock /> },
-    searching: { text: "Поиск", tone: "blue", icon: <FiRefreshCw /> },
-    removing: { text: "Удаление", tone: "orange", icon: <FiRefreshCw /> },
-    found: { text: "Найдено", tone: "sky", icon: <FiCheck /> },
-    inserted: { text: "Вставлено", tone: "green", icon: <FiCheck /> },
-    generated: { text: "Вставлено (ген. текст)", tone: "yellow", icon: <FiCheck /> },
-    removed: { text: "Удалено", tone: "slate", icon: <FiCheck /> },
-    failed: { text: "Ошибка", tone: "red", icon: <FiAlertTriangle /> },
-  };
-  const cfg = map[status] || { text: status, tone: "slate" as const, icon: <FiClock /> };
-  return <Badge label={cfg.text} tone={cfg.tone} icon={cfg.icon} className="text-xs" />;
+  const meta = getLinkTaskStatusMeta(status);
+  const icon =
+    meta.icon === "refresh" ? <FiRefreshCw /> : meta.icon === "check" ? <FiCheck /> : meta.icon === "alert" ? <FiAlertTriangle /> : <FiClock />;
+  return <Badge label={meta.text} tone={meta.tone} icon={icon} className="text-xs" />;
 }
