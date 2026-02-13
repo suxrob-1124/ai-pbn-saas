@@ -49,16 +49,15 @@ export function computeDisplayProgress(
 
   const active = status === "pending" || status === "processing" || status === "pause_requested" || status === "cancelling";
   if (active) {
-    const lowerBound = artifactProgress;
-    const upperBound = completedSteps >= totalSteps
-      ? 99
-      : Math.min(99, Math.round(((completedSteps + 1) / totalSteps) * 100) - 1);
-    const boundedBackend = clampInt(backendProgress, lowerBound, upperBound);
-    const computed = Math.max(lowerBound, boundedBackend);
-    if (computed === 0 && status === "processing") {
-      return 1;
+    // Для активных запусков доверяем backend progress как единому источнику.
+    // Это устраняет рассинхрон между экранами, где артефакты могут быть неполными/обрезанными.
+    if (backendProgress > 0) {
+      return backendProgress;
     }
-    return computed;
+    if (artifactProgress > 0) {
+      return clampInt(artifactProgress, 1, 99);
+    }
+    return status === "processing" ? 1 : 0;
   }
 
   return clampInt(Math.max(artifactProgress, backendProgress), 0, 99);
