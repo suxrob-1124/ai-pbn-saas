@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+CHECKER="$ROOT/scripts/check_no_secrets.sh"
+ZERO_SHA="0000000000000000000000000000000000000000"
+TMP_DIFF="$(mktemp "${TMPDIR:-/tmp}/pre-push-secrets.XXXXXX")"
+trap 'rm -f "$TMP_DIFF"' EXIT
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [[ -z "${local_ref:-}" ]] && continue
+
+  # delete branch/tag
+  if [[ "$local_sha" == "$ZERO_SHA" ]]; then
+    continue
+  fi
+
+  if [[ "$remote_sha" == "$ZERO_SHA" ]]; then
+    commits="$(git rev-list "$local_sha" --not --remotes || true)"
+    if [[ -z "$commits" ]]; then
+      commits="$local_sha"
+    fi
+    while IFS= read -r commit; do
+      [[ -z "$commit" ]] && continue
+      git show --format= --unified=0 --no-color "$commit" >> "$TMP_DIFF"
+      printf '\n' >> "$TMP_DIFF"
+    done <<< "$commits"
+  else
+    git diff --unified=0 --no-color "$remote_sha" "$local_sha" >> "$TMP_DIFF"
+    printf '\n' >> "$TMP_DIFF"
+  fi
+done
+
+if [[ -s "$TMP_DIFF" ]]; then
+  "$CHECKER" --diff-file "$TMP_DIFF"
+fi

@@ -33,9 +33,25 @@ tests/e2e/state.json
 tests/e2e/.cookies/
 tests/e2e/logs/
 
-# Environment
+# Environment / secrets
 .env
-.env.prod
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+
+# Private keys / certificates
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.key
+!*.pub
 
 # Build
 dist/

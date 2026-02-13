@@ -745,6 +745,38 @@ docker compose up --build
 
 Подробнее: `docs/SEEDING.md`
 
+### Защита от утечки секретов в Git
+
+В репозитории есть локальная проверка секретов перед `commit` и `push`.
+
+Установка:
+
+```bash
+./scripts/install_git_hooks.sh
+```
+
+Ручной запуск проверки:
+
+```bash
+./scripts/check_no_secrets.sh --staged
+```
+
+Проверка сканирует добавленные строки diff и блокирует:
+- потенциальные ключи/токены/секреты;
+- коммит `.env` и ключевых файлов (`.pem`, `.key`, `id_rsa` и т.п.).
+
+### Импорт legacy-сайтов (CSV -> DB)
+
+CLI импортера:
+
+```bash
+cd pbn-generator
+go run ./cmd/import_legacy --help
+```
+
+Полная инструкция (режимы `dry-run/apply`, формат CSV, troubleshooting):  
+`pbn-generator/cmd/import_legacy/README.md`
+
 ### Production
 
 Используйте `docker-compose.prod.yml`:
