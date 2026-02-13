@@ -3,6 +3,7 @@ package legacy
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -37,11 +38,23 @@ type domainStore interface {
 	UpdatePublishState(ctx context.Context, id, publishedPath string, fileCount int, totalSizeBytes int64) error
 	UpdateLinkSettings(ctx context.Context, id string, anchorText, acceptorURL sql.NullString) (bool, error)
 	UpdateLinkState(ctx context.Context, id string, status string, lastTaskID string, filePath string, anchorSnapshot string) error
+	SetLastGeneration(ctx context.Context, id, genID string) error
 	EnsureDefaultServer(ctx context.Context, email string) error
 }
 
 type linkTaskStore interface {
 	Create(ctx context.Context, task sqlstore.LinkTask) error
+}
+
+type generationStore interface {
+	ListByDomain(ctx context.Context, domainID string) ([]sqlstore.Generation, error)
+	Create(ctx context.Context, g sqlstore.Generation) error
+	UpdateFull(ctx context.Context, id, status string, progress int, errText *string, logs, artifacts []byte, started, finished *time.Time, promptID *string) error
+}
+
+type promptStore interface {
+	Get(ctx context.Context, id string) (sqlstore.SystemPrompt, error)
+	Create(ctx context.Context, p sqlstore.SystemPrompt) error
 }
 
 // Importer выполняет импорт legacy-сайтов из server/* в БД.
@@ -51,16 +64,24 @@ type Importer struct {
 	domains  domainStore
 	files    publisher.SiteFileStore
 	links    linkTaskStore
+	gens     generationStore
+	prompts  promptStore
 }
 
 // NewImporter создает сервис импорта.
-func NewImporter(users userStore, projects projectStore, domains domainStore, files publisher.SiteFileStore, links linkTaskStore) *Importer {
+func NewImporter(users userStore, projects projectStore, domains domainStore, files publisher.SiteFileStore, links linkTaskStore, gens generationStore, prompts ...promptStore) *Importer {
+	var ps promptStore
+	if len(prompts) > 0 {
+		ps = prompts[0]
+	}
 	return &Importer{
 		users:    users,
 		projects: projects,
 		domains:  domains,
 		files:    files,
 		links:    links,
+		gens:     gens,
+		prompts:  ps,
 	}
 }
 
@@ -100,6 +121,20 @@ func (i *Importer) Run(ctx context.Context, opts RunOptions) (Report, error) {
 			report.Summary.Warned++
 		case "failed":
 			report.Summary.Failed++
+		}
+		for _, action := range res.Actions {
+			if action == "legacy_artifacts_created" || action == "legacy_artifacts_updated" {
+				report.Summary.Decoded++
+			}
+			if action == "legacy_artifacts_updated" {
+				report.Summary.Updated++
+			}
+			if action == "legacy_artifacts_unchanged" {
+				report.Summary.Unchanged++
+			}
+			if action == "legacy_artifacts_skipped_non_legacy_exists" || action == "legacy_artifacts_decode_skipped" {
+				report.Summary.Skipped++
+			}
 		}
 	}
 	report.FinishedAt = time.Now().UTC()
@@ -142,86 +177,118 @@ func (i *Importer) processRow(ctx context.Context, row ManifestRow, opts RunOpti
 	}
 	res.DomainURL = normalizedDomain
 
-	project, projectActions, err := i.resolveProject(ctx, row, opts.Mode)
-	if err != nil {
-		return fail(err)
-	}
-	res.Actions = append(res.Actions, projectActions...)
-
-	domain, domainExisted, domainActions, err := i.resolveDomain(ctx, row, project, normalizedDomain, opts.Mode)
-	if err != nil {
-		return fail(err)
-	}
-	res.Actions = append(res.Actions, domainActions...)
+	var domain sqlstore.Domain
 
 	domainDir, err := resolveDomainDir(opts.ServerDir, normalizedDomain)
 	if err != nil {
 		return fail(err)
 	}
 
-	fileCount, totalSize, err := i.syncDomainFiles(ctx, opts.Mode, domain.ID, opts.ServerDir, normalizedDomain, domainDir)
-	if err != nil {
-		return fail(err)
-	}
-	res.FileCount = fileCount
-	res.TotalSizeBytes = totalSize
-	if opts.Mode == ModeApply {
-		res.Actions = append(res.Actions, "files_synced", "domain_published")
+	if opts.DecodeOnly {
+		domain, err = i.domains.GetByURL(ctx, normalizedDomain)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fail(fmt.Errorf("domain not found in db: %s", normalizedDomain))
+			}
+			return fail(fmt.Errorf("get domain by url: %w", err))
+		}
+		res.Actions = append(res.Actions, "domain_reused")
 	} else {
-		res.Actions = append(res.Actions, "files_sync_preview", "domain_publish_preview")
-	}
+		project, projectActions, err := i.resolveProject(ctx, row, opts.Mode)
+		if err != nil {
+			return fail(err)
+		}
+		res.Actions = append(res.Actions, projectActions...)
 
-	indexPath := filepath.Join(domainDir, "index.html")
-	decoded, err := DecodePrimaryHTTPSLinkFromFile(indexPath, normalizedDomain)
-	if err != nil {
-		return fail(err)
-	}
-	if decoded == nil {
-		if domainExisted {
-			warn("external https link not found in body/index.html; existing link fields are preserved")
+		domain, domainExisted, domainActions, err := i.resolveDomain(ctx, row, project, normalizedDomain, opts.Mode)
+		if err != nil {
+			return fail(err)
+		}
+		res.Actions = append(res.Actions, domainActions...)
+
+		fileCount, totalSize, err := i.syncDomainFiles(ctx, opts.Mode, domain.ID, opts.ServerDir, normalizedDomain, domainDir)
+		if err != nil {
+			return fail(err)
+		}
+		res.FileCount = fileCount
+		res.TotalSizeBytes = totalSize
+		if opts.Mode == ModeApply {
+			res.Actions = append(res.Actions, "files_synced", "domain_published")
 		} else {
-			warn("external https link not found in body/index.html")
+			res.Actions = append(res.Actions, "files_sync_preview", "domain_publish_preview")
 		}
-		return res
+
+		indexPath := filepath.Join(domainDir, "index.html")
+		decoded, err := DecodePrimaryHTTPSLinkFromFile(indexPath, normalizedDomain)
+		if err != nil {
+			return fail(err)
+		}
+		if decoded == nil {
+			if domainExisted {
+				warn("external https link not found in body/index.html; existing link fields are preserved")
+			} else {
+				warn("external https link not found in body/index.html")
+			}
+		} else if opts.Mode == ModeApply {
+			if shouldSkipLinkBaseline(domain, decoded) {
+				res.Actions = append(res.Actions, "link_baseline_skipped")
+			} else {
+				if _, err := i.domains.UpdateLinkSettings(ctx, domain.ID,
+					sqlstore.NullableString(decoded.AnchorText),
+					sqlstore.NullableString(decoded.TargetURL)); err != nil {
+					return fail(fmt.Errorf("update link settings: %w", err))
+				}
+				now := time.Now().UTC()
+				taskID := uuid.NewString()
+				task := sqlstore.LinkTask{
+					ID:            taskID,
+					DomainID:      domain.ID,
+					AnchorText:    decoded.AnchorText,
+					TargetURL:     decoded.TargetURL,
+					ScheduledFor:  now,
+					Action:        "insert",
+					Status:        "inserted",
+					FoundLocation: sql.NullString{String: decoded.FoundLocation, Valid: true},
+					Attempts:      0,
+					CreatedBy:     owner,
+					CreatedAt:     now,
+					CompletedAt:   sql.NullTime{Time: now, Valid: true},
+				}
+				if err := i.links.Create(ctx, task); err != nil {
+					return fail(fmt.Errorf("create synthetic link task: %w", err))
+				}
+				if err := i.domains.UpdateLinkState(ctx, domain.ID, "inserted", taskID, decoded.FoundPath, decoded.AnchorText); err != nil {
+					return fail(fmt.Errorf("update link state: %w", err))
+				}
+				res.Actions = append(res.Actions, "link_decoded", "link_baseline_created")
+			}
+		} else {
+			res.Actions = append(res.Actions, "link_decode_preview")
+		}
 	}
 
-	if opts.Mode == ModeApply {
-		if shouldSkipLinkBaseline(domain, decoded) {
-			res.Actions = append(res.Actions, "link_baseline_skipped")
-			return res
+	decodeSource := strings.TrimSpace(opts.DecodeSource)
+	if decodeSource == "" {
+		if opts.DecodeOnly {
+			decodeSource = "decode_backfill"
+		} else {
+			decodeSource = "import_legacy"
 		}
-		if _, err := i.domains.UpdateLinkSettings(ctx, domain.ID,
-			sqlstore.NullableString(decoded.AnchorText),
-			sqlstore.NullableString(decoded.TargetURL)); err != nil {
-			return fail(fmt.Errorf("update link settings: %w", err))
-		}
-		now := time.Now().UTC()
-		taskID := uuid.NewString()
-		task := sqlstore.LinkTask{
-			ID:            taskID,
-			DomainID:      domain.ID,
-			AnchorText:    decoded.AnchorText,
-			TargetURL:     decoded.TargetURL,
-			ScheduledFor:  now,
-			Action:        "insert",
-			Status:        "inserted",
-			FoundLocation: sql.NullString{String: decoded.FoundLocation, Valid: true},
-			Attempts:      0,
-			CreatedBy:     owner,
-			CreatedAt:     now,
-			CompletedAt:   sql.NullTime{Time: now, Valid: true},
-		}
-		if err := i.links.Create(ctx, task); err != nil {
-			return fail(fmt.Errorf("create synthetic link task: %w", err))
-		}
-		if err := i.domains.UpdateLinkState(ctx, domain.ID, "inserted", taskID, decoded.FoundPath, decoded.AnchorText); err != nil {
-			return fail(fmt.Errorf("update link state: %w", err))
-		}
-		res.Actions = append(res.Actions, "link_decoded", "link_baseline_created")
-		return res
 	}
 
-	res.Actions = append(res.Actions, "link_decode_preview")
+	artifactActions, artifactWarnings, artifactErr := i.syncLegacyArtifacts(ctx, domain, owner, domainDir, normalizedDomain, decodeSource, opts.Mode, opts.Force)
+	res.Actions = append(res.Actions, artifactActions...)
+	for _, w := range artifactWarnings {
+		warn(w)
+	}
+	if artifactErr != nil {
+		if opts.DecodeOnly {
+			return fail(artifactErr)
+		}
+		warn(artifactErr.Error())
+		res.Actions = append(res.Actions, "legacy_artifacts_decode_skipped")
+	}
+
 	return res
 }
 
@@ -411,6 +478,156 @@ func (i *Importer) syncDomainFiles(ctx context.Context, mode Mode, domainID, ser
 	return count, size, nil
 }
 
+func (i *Importer) syncLegacyArtifacts(ctx context.Context, domain sqlstore.Domain, ownerEmail, domainDir, domainURL, source string, mode Mode, force bool) ([]string, []string, error) {
+	if i.gens == nil {
+		return nil, []string{"generation store is not configured; legacy artifacts sync skipped"}, nil
+	}
+	if mode == ModeApply {
+		if err := i.ensureLegacyPrompt(ctx); err != nil {
+			return nil, nil, fmt.Errorf("ensure legacy synthetic prompt: %w", err)
+		}
+	}
+
+	artifacts, meta, err := BuildLegacyArtifacts(domainDir, domainURL, source)
+	if err != nil {
+		return nil, nil, fmt.Errorf("build legacy artifacts: %w", err)
+	}
+
+	artifactBytes, err := json.Marshal(artifacts)
+	if err != nil {
+		return nil, nil, fmt.Errorf("marshal legacy artifacts: %w", err)
+	}
+
+	gens, err := i.gens.ListByDomain(ctx, domain.ID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("list domain generations: %w", err)
+	}
+
+	legacyGen, hasNonLegacy := findLegacyGeneration(gens)
+	if hasNonLegacy && !force {
+		return []string{"legacy_artifacts_skipped_non_legacy_exists"}, nil, nil
+	}
+	if legacyGen != nil {
+		existingHash := extractLegacyArtifactHash(legacyGen.Artifacts)
+		if existingHash != "" && existingHash == meta.ArtifactHash {
+			return []string{"legacy_artifacts_unchanged"}, nil, nil
+		}
+	}
+
+	if mode == ModeDryRun {
+		if legacyGen != nil {
+			return []string{"legacy_artifacts_would_update"}, nil, nil
+		}
+		return []string{"legacy_artifacts_would_create"}, nil, nil
+	}
+
+	now := time.Now().UTC()
+	promptID := LegacyDecodePromptID
+	logs := []byte(`["legacy decode artifacts synthetic generation"]`)
+
+	var generationID string
+	if legacyGen != nil {
+		generationID = legacyGen.ID
+		if err := i.gens.UpdateFull(ctx, legacyGen.ID, "success", 100, nil, logs, artifactBytes, &now, &now, &promptID); err != nil {
+			return nil, nil, fmt.Errorf("update legacy synthetic generation: %w", err)
+		}
+	} else {
+		genID := uuid.NewString()
+		generationID = genID
+		gen := sqlstore.Generation{
+			ID:          genID,
+			DomainID:    domain.ID,
+			RequestedBy: sqlstore.NullableString(ownerEmail),
+			Status:      "success",
+			Progress:    100,
+			Logs:        logs,
+			Artifacts:   artifactBytes,
+			StartedAt:   sql.NullTime{Time: now, Valid: true},
+			FinishedAt:  sql.NullTime{Time: now, Valid: true},
+			PromptID:    sqlstore.NullableString(promptID),
+		}
+		if err := i.gens.Create(ctx, gen); err != nil {
+			return nil, nil, fmt.Errorf("create legacy synthetic generation: %w", err)
+		}
+	}
+
+	if shouldUpdateLastGeneration(domain, gens) {
+		if err := i.domains.SetLastGeneration(ctx, domain.ID, generationID); err != nil {
+			return nil, nil, fmt.Errorf("update domain last_generation_id: %w", err)
+		}
+	}
+
+	if legacyGen != nil {
+		return []string{"legacy_artifacts_updated"}, nil, nil
+	}
+	return []string{"legacy_artifacts_created"}, nil, nil
+}
+
+func (i *Importer) ensureLegacyPrompt(ctx context.Context) error {
+	if i.prompts == nil {
+		return nil
+	}
+	if _, err := i.prompts.Get(ctx, LegacyDecodePromptID); err == nil {
+		return nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+
+	prompt := sqlstore.SystemPrompt{
+		ID:       LegacyDecodePromptID,
+		Name:     "Legacy Decode v2 (Synthetic)",
+		Body:     "Synthetic prompt marker for imported legacy decode artifacts.",
+		IsActive: false,
+	}
+	if err := i.prompts.Create(ctx, prompt); err != nil {
+		// Запуски могут быть параллельными: если запись уже создали, продолжаем.
+		_, getErr := i.prompts.Get(ctx, LegacyDecodePromptID)
+		if getErr == nil {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+func findLegacyGeneration(gens []sqlstore.Generation) (*sqlstore.Generation, bool) {
+	var legacy *sqlstore.Generation
+	hasNonLegacy := false
+	for idx := range gens {
+		g := gens[idx]
+		promptID := strings.TrimSpace(g.PromptID.String)
+		if promptID == LegacyDecodePromptID && legacy == nil {
+			cp := g
+			legacy = &cp
+			continue
+		}
+		if promptID != "" && promptID != LegacyDecodePromptID {
+			hasNonLegacy = true
+			continue
+		}
+		// legacy synthetic существует только с нашим marker prompt_id.
+		// Все остальные генерации считаем пользовательскими.
+		if promptID == "" {
+			hasNonLegacy = true
+		}
+	}
+	return legacy, hasNonLegacy
+}
+
+func shouldUpdateLastGeneration(domain sqlstore.Domain, gens []sqlstore.Generation) bool {
+	lastID := strings.TrimSpace(domain.LastGenerationID.String)
+	if !domain.LastGenerationID.Valid || lastID == "" {
+		return true
+	}
+	for _, g := range gens {
+		if g.ID != lastID {
+			continue
+		}
+		return strings.TrimSpace(g.PromptID.String) == LegacyDecodePromptID
+	}
+	return false
+}
+
 func shouldSkipLinkBaseline(domain sqlstore.Domain, decoded *DecodedLink) bool {
 	if decoded == nil {
 		return true
@@ -440,6 +657,11 @@ func validateRunOptions(opts RunOptions) error {
 	}
 	if opts.Batch.BatchNumber <= 0 {
 		return fmt.Errorf("--batch-number must be > 0")
+	}
+	if src := strings.TrimSpace(opts.DecodeSource); src != "" {
+		if src != "import_legacy" && src != "decode_backfill" {
+			return fmt.Errorf("--decode-source must be import_legacy or decode_backfill")
+		}
 	}
 	return nil
 }

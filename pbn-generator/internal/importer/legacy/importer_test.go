@@ -3,9 +3,11 @@ package legacy
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -113,6 +115,9 @@ func (s *stubDomains) UpdateStatus(ctx context.Context, id, status string) error
 func (s *stubDomains) UpdatePublishState(ctx context.Context, id, publishedPath string, fileCount int, totalSizeBytes int64) error {
 	d := s.byID[id]
 	d.PublishedAt = sql.NullTime{Time: time.Now().UTC(), Valid: true}
+	d.PublishedPath = sql.NullString{String: publishedPath, Valid: strings.TrimSpace(publishedPath) != ""}
+	d.FileCount = fileCount
+	d.TotalSizeBytes = totalSizeBytes
 	s.byID[id] = d
 	s.byURL[d.URL] = d
 	return nil
@@ -139,6 +144,14 @@ func (s *stubDomains) UpdateLinkState(ctx context.Context, id string, status str
 }
 
 func (s *stubDomains) EnsureDefaultServer(ctx context.Context, email string) error {
+	return nil
+}
+
+func (s *stubDomains) SetLastGeneration(ctx context.Context, id, genID string) error {
+	d := s.byID[id]
+	d.LastGenerationID = sql.NullString{String: genID, Valid: strings.TrimSpace(genID) != ""}
+	s.byID[id] = d
+	s.byURL[d.URL] = d
 	return nil
 }
 
@@ -210,6 +223,52 @@ func (s *stubLinks) Create(ctx context.Context, task sqlstore.LinkTask) error {
 	return nil
 }
 
+type stubGenerations struct {
+	byDomain map[string][]sqlstore.Generation
+	created  []sqlstore.Generation
+	updated  []sqlstore.Generation
+}
+
+func (s *stubGenerations) ListByDomain(ctx context.Context, domainID string) ([]sqlstore.Generation, error) {
+	items := s.byDomain[domainID]
+	out := make([]sqlstore.Generation, len(items))
+	copy(out, items)
+	return out, nil
+}
+
+func (s *stubGenerations) Create(ctx context.Context, g sqlstore.Generation) error {
+	s.created = append(s.created, g)
+	s.byDomain[g.DomainID] = append([]sqlstore.Generation{g}, s.byDomain[g.DomainID]...)
+	return nil
+}
+
+func (s *stubGenerations) UpdateFull(ctx context.Context, id, status string, progress int, errText *string, logs, artifacts []byte, started, finished *time.Time, promptID *string) error {
+	for domainID, items := range s.byDomain {
+		for idx := range items {
+			if items[idx].ID != id {
+				continue
+			}
+			items[idx].Status = status
+			items[idx].Progress = progress
+			items[idx].Logs = logs
+			items[idx].Artifacts = artifacts
+			if started != nil {
+				items[idx].StartedAt = sql.NullTime{Time: *started, Valid: true}
+			}
+			if finished != nil {
+				items[idx].FinishedAt = sql.NullTime{Time: *finished, Valid: true}
+			}
+			if promptID != nil {
+				items[idx].PromptID = sql.NullString{String: *promptID, Valid: true}
+			}
+			s.byDomain[domainID] = items
+			s.updated = append(s.updated, items[idx])
+			return nil
+		}
+	}
+	return errors.New("generation not found")
+}
+
 func TestImporterRunApplyCreatesDomainAndBaseline(t *testing.T) {
 	dir := t.TempDir()
 	manifest := filepath.Join(dir, "manifest.csv")
@@ -235,8 +294,9 @@ func TestImporterRunApplyCreatesDomainAndBaseline(t *testing.T) {
 	domains := &stubDomains{byURL: map[string]sqlstore.Domain{}, byID: map[string]sqlstore.Domain{}}
 	files := &stubSiteFiles{byDomainPath: map[string]map[string]sqlstore.SiteFile{}}
 	links := &stubLinks{}
+	gens := &stubGenerations{byDomain: map[string][]sqlstore.Generation{}}
 
-	imp := NewImporter(users, projects, domains, files, links)
+	imp := NewImporter(users, projects, domains, files, links, gens)
 	report, err := imp.Run(context.Background(), RunOptions{
 		ManifestPath: manifest,
 		ServerDir:    serverDir,
@@ -261,6 +321,12 @@ func TestImporterRunApplyCreatesDomainAndBaseline(t *testing.T) {
 	if len(projects.created) != 1 {
 		t.Fatalf("expected 1 created project, got %d", len(projects.created))
 	}
+	if len(gens.created) != 1 {
+		t.Fatalf("expected 1 synthetic generation, got %d", len(gens.created))
+	}
+	if strings.TrimSpace(gens.created[0].PromptID.String) != LegacyDecodePromptID {
+		t.Fatalf("unexpected prompt_id: %s", gens.created[0].PromptID.String)
+	}
 }
 
 func TestImporterRunFailsOnDuplicateProjectName(t *testing.T) {
@@ -282,8 +348,9 @@ func TestImporterRunFailsOnDuplicateProjectName(t *testing.T) {
 	domains := &stubDomains{byURL: map[string]sqlstore.Domain{}, byID: map[string]sqlstore.Domain{}}
 	files := &stubSiteFiles{byDomainPath: map[string]map[string]sqlstore.SiteFile{}}
 	links := &stubLinks{}
+	gens := &stubGenerations{byDomain: map[string][]sqlstore.Generation{}}
 
-	imp := NewImporter(users, projects, domains, files, links)
+	imp := NewImporter(users, projects, domains, files, links, gens)
 	report, err := imp.Run(context.Background(), RunOptions{
 		ManifestPath: manifest,
 		ServerDir:    dir,
@@ -299,4 +366,235 @@ func TestImporterRunFailsOnDuplicateProjectName(t *testing.T) {
 	if report.Rows[0].Error == "" {
 		t.Fatalf("expected error message in row report")
 	}
+}
+
+func TestImporterRunApplySkipsLegacyArtifactsWhenNonLegacyExists(t *testing.T) {
+	dir := t.TempDir()
+	domainDir := filepath.Join(dir, "example.com")
+	if err := os.MkdirAll(domainDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(domainDir, "index.html"), []byte(`<html><body>skip</body></html>`), 0o644); err != nil {
+		t.Fatalf("write index: %v", err)
+	}
+
+	domainID := "dom-1"
+	gens := &stubGenerations{
+		byDomain: map[string][]sqlstore.Generation{
+			domainID: {
+				{ID: "real-1", DomainID: domainID, PromptID: sql.NullString{String: "manual_prompt", Valid: true}},
+			},
+		},
+	}
+
+	imp := NewImporter(&stubUsers{}, &stubProjects{}, &stubDomains{}, &stubSiteFiles{byDomainPath: map[string]map[string]sqlstore.SiteFile{}}, &stubLinks{}, gens)
+	actions, _, err := imp.syncLegacyArtifacts(
+		context.Background(),
+		sqlstore.Domain{ID: domainID, URL: "example.com"},
+		"owner@example.com",
+		domainDir,
+		"example.com",
+		"import_legacy",
+		ModeApply,
+		false,
+	)
+	if err != nil {
+		t.Fatalf("syncLegacyArtifacts failed: %v", err)
+	}
+	if !containsAction(actions, "legacy_artifacts_skipped_non_legacy_exists") {
+		t.Fatalf("expected skip action, got %#v", actions)
+	}
+	if len(gens.created) != 0 {
+		t.Fatalf("expected no create")
+	}
+}
+
+func TestImporterRunApplyForceCreatesLegacyArtifacts(t *testing.T) {
+	dir := t.TempDir()
+	manifest := filepath.Join(dir, "manifest.csv")
+	serverDir := filepath.Join(dir, "server")
+	if err := os.MkdirAll(filepath.Join(serverDir, "example.com"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(serverDir, "example.com", "index.html"), []byte(`<html><body>Hello</body></html>`), 0o644); err != nil {
+		t.Fatalf("write index: %v", err)
+	}
+	csvData := "project_name,owner_email,project_country,project_language,domain_url,main_keyword\n" +
+		"proj,owner@example.com,se,sv,example.com,keyword\n"
+	if err := os.WriteFile(manifest, []byte(csvData), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	projectID := "proj-1"
+	domainID := "dom-1"
+	users := &stubUsers{users: map[string]auth.User{"owner@example.com": {Email: "owner@example.com"}}}
+	projects := &stubProjects{listByName: map[string][]sqlstore.Project{
+		"proj": {{ID: projectID, Name: "proj", UserEmail: "owner@example.com"}},
+	}}
+	domains := &stubDomains{
+		byURL: map[string]sqlstore.Domain{
+			"example.com": {ID: domainID, ProjectID: projectID, URL: "example.com", Status: "published"},
+		},
+		byID: map[string]sqlstore.Domain{
+			domainID: {ID: domainID, ProjectID: projectID, URL: "example.com", Status: "published"},
+		},
+	}
+	files := &stubSiteFiles{byDomainPath: map[string]map[string]sqlstore.SiteFile{}}
+	links := &stubLinks{}
+	gens := &stubGenerations{
+		byDomain: map[string][]sqlstore.Generation{
+			domainID: {
+				{ID: "real-1", DomainID: domainID, PromptID: sql.NullString{String: "manual_prompt", Valid: true}},
+			},
+		},
+	}
+
+	imp := NewImporter(users, projects, domains, files, links, gens)
+	report, err := imp.Run(context.Background(), RunOptions{
+		ManifestPath: manifest,
+		ServerDir:    serverDir,
+		Mode:         ModeApply,
+		Force:        true,
+		Batch:        BatchConfig{BatchSize: 50, BatchNumber: 1},
+	})
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	if len(report.Rows) != 1 {
+		t.Fatalf("expected 1 row")
+	}
+	if !containsAction(report.Rows[0].Actions, "legacy_artifacts_created") {
+		t.Fatalf("expected create action, got %#v", report.Rows[0].Actions)
+	}
+	if len(gens.created) != 1 {
+		t.Fatalf("expected one synthetic generation, got %d", len(gens.created))
+	}
+}
+
+func TestImporterRunApplyKeepsLegacyArtifactsWhenHashUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	domainDir := filepath.Join(dir, "example.com")
+	if err := os.MkdirAll(domainDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(domainDir, "index.html"), []byte(`<html><body>Hello</body></html>`), 0o644); err != nil {
+		t.Fatalf("write index: %v", err)
+	}
+
+	artifacts, _, err := BuildLegacyArtifacts(domainDir, "example.com", "import_legacy")
+	if err != nil {
+		t.Fatalf("BuildLegacyArtifacts failed: %v", err)
+	}
+	artifactBytes, err := json.Marshal(artifacts)
+	if err != nil {
+		t.Fatalf("marshal artifacts: %v", err)
+	}
+
+	domainID := "dom-1"
+	gens := &stubGenerations{
+		byDomain: map[string][]sqlstore.Generation{
+			domainID: {
+				{
+					ID:        "legacy-1",
+					DomainID:  domainID,
+					PromptID:  sql.NullString{String: LegacyDecodePromptID, Valid: true},
+					Artifacts: artifactBytes,
+				},
+			},
+		},
+	}
+
+	imp := NewImporter(&stubUsers{}, &stubProjects{}, &stubDomains{}, &stubSiteFiles{byDomainPath: map[string]map[string]sqlstore.SiteFile{}}, &stubLinks{}, gens)
+	actions, _, err := imp.syncLegacyArtifacts(
+		context.Background(),
+		sqlstore.Domain{ID: domainID, URL: "example.com"},
+		"owner@example.com",
+		domainDir,
+		"example.com",
+		"import_legacy",
+		ModeApply,
+		false,
+	)
+	if err != nil {
+		t.Fatalf("syncLegacyArtifacts failed: %v", err)
+	}
+	if !containsAction(actions, "legacy_artifacts_unchanged") {
+		t.Fatalf("expected unchanged action, got %#v", actions)
+	}
+	if len(gens.created) != 0 {
+		t.Fatalf("expected no create")
+	}
+	if len(gens.updated) != 0 {
+		t.Fatalf("expected no update")
+	}
+}
+
+func TestImporterRunDecodeOnlyApplyCreatesSyntheticGeneration(t *testing.T) {
+	dir := t.TempDir()
+	manifest := filepath.Join(dir, "manifest.csv")
+	serverDir := filepath.Join(dir, "server")
+	if err := os.MkdirAll(filepath.Join(serverDir, "example.com"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(serverDir, "example.com", "index.html"), []byte(`<html><body>decode</body></html>`), 0o644); err != nil {
+		t.Fatalf("write index: %v", err)
+	}
+	csvData := "project_name,owner_email,project_country,project_language,domain_url,main_keyword\n" +
+		"proj,owner@example.com,se,sv,example.com,keyword\n"
+	if err := os.WriteFile(manifest, []byte(csvData), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	projectID := "proj-1"
+	domainID := "dom-1"
+	users := &stubUsers{users: map[string]auth.User{"owner@example.com": {Email: "owner@example.com"}}}
+	projects := &stubProjects{listByName: map[string][]sqlstore.Project{}}
+	domains := &stubDomains{
+		byURL: map[string]sqlstore.Domain{
+			"example.com": {ID: domainID, ProjectID: projectID, URL: "example.com", Status: "published"},
+		},
+		byID: map[string]sqlstore.Domain{
+			domainID: {ID: domainID, ProjectID: projectID, URL: "example.com", Status: "published"},
+		},
+	}
+	files := &stubSiteFiles{byDomainPath: map[string]map[string]sqlstore.SiteFile{}}
+	links := &stubLinks{}
+	gens := &stubGenerations{byDomain: map[string][]sqlstore.Generation{}}
+
+	imp := NewImporter(users, projects, domains, files, links, gens)
+	report, err := imp.Run(context.Background(), RunOptions{
+		ManifestPath: manifest,
+		ServerDir:    serverDir,
+		Mode:         ModeApply,
+		DecodeOnly:   true,
+		DecodeSource: "decode_backfill",
+		Batch:        BatchConfig{BatchSize: 50, BatchNumber: 1},
+	})
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	if len(report.Rows) != 1 {
+		t.Fatalf("expected 1 row")
+	}
+	if !containsAction(report.Rows[0].Actions, "legacy_artifacts_created") {
+		t.Fatalf("expected created action, got %#v", report.Rows[0].Actions)
+	}
+	if len(projects.created) != 0 {
+		t.Fatalf("decode-only must not create projects")
+	}
+	if len(links.created) != 0 {
+		t.Fatalf("decode-only must not create link tasks")
+	}
+	if len(gens.created) != 1 {
+		t.Fatalf("expected one synthetic generation")
+	}
+}
+
+func containsAction(actions []string, want string) bool {
+	for _, action := range actions {
+		if action == want {
+			return true
+		}
+	}
+	return false
 }

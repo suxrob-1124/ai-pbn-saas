@@ -777,6 +777,37 @@ go run ./cmd/import_legacy --help
 Полная инструкция (режимы `dry-run/apply`, формат CSV, troubleshooting):  
 `pbn-generator/cmd/import_legacy/README.md`
 
+### UI-редактор файлов домена (Sprint 4)
+
+- Маршрут: `/domains/:id/editor`
+- Поддерживается редактирование опубликованных сайтов (импортированных и сгенерированных)
+- Права:
+  - `viewer` — только чтение
+  - `owner/editor/admin` — чтение и сохранение
+- История изменений в v1: metadata-only (без diff/revert)
+
+Актуальный backlog и DoD по спринту: `todo-v4.md`
+
+### V2: Domain Result & Legacy Decode
+
+- На странице домена `/domains/:id` добавлен явный action `Открыть в редакторе`.
+- Добавлен блок `Результат` с быстрыми действиями:
+  - `Просмотр HTML` (final_html)
+  - `Скачать ZIP` (zip_archive)
+  - `К артефактам`
+- Для legacy-импортов поддержан synthetic generation decode (`prompt_id=legacy_decode_v2`).
+
+Backfill для уже импортированных доменов:
+
+```bash
+cd pbn-generator
+go run ./cmd/backfill_legacy_artifacts --help
+```
+
+Документация:
+- `pbn-generator/cmd/import_legacy/README.md`
+- `pbn-generator/cmd/backfill_legacy_artifacts/README.md`
+
 ### Production
 
 Используйте `docker-compose.prod.yml`:

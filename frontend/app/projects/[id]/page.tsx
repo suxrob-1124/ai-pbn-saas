@@ -9,6 +9,7 @@ import {
   FiPlay,
   FiRefreshCw,
   FiList,
+  FiEdit2,
   FiClock,
   FiPauseCircle,
   FiCheck,
@@ -75,6 +76,7 @@ type ProjectSummary = {
   project: Project;
   domains: Domain[];
   members: Array<{ email: string; role: string; createdAt: string }>;
+  my_role?: "admin" | "owner" | "editor" | "viewer";
 };
 
 type ProjectTab = "domains" | "schedules" | "errors" | "settings";
@@ -1506,6 +1508,40 @@ export default function ProjectDetailPage() {
                   >
                     <FiList />
                   </button>
+                  {isPublished ? (
+                    <>
+                      <Link
+                        href={{ pathname: `/domains/${d.id}/editor` } as UrlObject}
+                        className="hidden sm:inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                      >
+                        <FiEdit2 /> Редактор
+                      </Link>
+                      <Link
+                        href={{ pathname: `/domains/${d.id}/editor` } as UrlObject}
+                        className="inline-flex sm:hidden items-center justify-center rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                        title="Редактор"
+                        aria-label="Открыть редактор"
+                      >
+                        <FiEdit2 />
+                      </Link>
+                    </>
+                  ) : (
+                    <>
+                      <span
+                        title="Редактор доступен после публикации сайта"
+                        className="hidden sm:inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400"
+                      >
+                        <FiEdit2 /> Редактор
+                      </span>
+                      <span
+                        title="Редактор доступен после публикации сайта"
+                        aria-label="Редактор доступен после публикации"
+                        className="inline-flex sm:hidden items-center justify-center rounded-lg border border-slate-200 bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400"
+                      >
+                        <FiEdit2 />
+                      </span>
+                    </>
+                  )}
                   {isPublished ? (
                     <>
                       <Link

@@ -1243,6 +1243,7 @@ func (s *Server) handleProjectSummary(w http.ResponseWriter, r *http.Request, pr
 		respondAuthzError(w, err, "project not found")
 		return
 	}
+	myRole := s.resolveProjectRole(r.Context(), project, user)
 	domains, err := s.domains.ListByProject(r.Context(), projectID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not list domains")
@@ -1280,6 +1281,7 @@ func (s *Server) handleProjectSummary(w http.ResponseWriter, r *http.Request, pr
 		Project: s.toProjectDTO(r.Context(), project),
 		Domains: toDomainDTOs(domains),
 		Members: memberDTOs,
+		MyRole:  myRole,
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -1294,6 +1296,12 @@ func (s *Server) handleDomainSummary(w http.ResponseWriter, r *http.Request, dom
 		respondAuthzError(w, err, "domain not found")
 		return
 	}
+	user, ok := currentUserFromContext(r.Context())
+	if !ok || user.Email == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	myRole := s.resolveProjectRole(r.Context(), project, user)
 
 	genLimit := 10
 	if v := r.URL.Query().Get("gen_limit"); v != "" {
@@ -1343,6 +1351,7 @@ func (s *Server) handleDomainSummary(w http.ResponseWriter, r *http.Request, dom
 		ProjectName: project.Name,
 		Generations: genDTOs,
 		LinkTasks:   linkDTOs,
+		MyRole:      myRole,
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -5524,6 +5533,9 @@ type domainDTO struct {
 	Status             string     `json:"status"`
 	LastGenerationID   *string    `json:"last_generation_id,omitempty"`
 	PublishedAt        *time.Time `json:"published_at,omitempty"`
+	PublishedPath      *string    `json:"published_path,omitempty"`
+	FileCount          int        `json:"file_count,omitempty"`
+	TotalSizeBytes     int64      `json:"total_size_bytes,omitempty"`
 	LinkAnchorText     *string    `json:"link_anchor_text,omitempty"`
 	LinkAcceptorURL    *string    `json:"link_acceptor_url,omitempty"`
 	LinkStatus         *string    `json:"link_status,omitempty"`
@@ -5730,6 +5742,7 @@ type projectSummaryDTO struct {
 	Project projectDTO         `json:"project"`
 	Domains []domainDTO        `json:"domains"`
 	Members []projectMemberDTO `json:"members"`
+	MyRole  string             `json:"my_role"`
 }
 
 type domainSummaryDTO struct {
@@ -5737,6 +5750,7 @@ type domainSummaryDTO struct {
 	ProjectName string          `json:"project_name"`
 	Generations []generationDTO `json:"generations"`
 	LinkTasks   []linkTaskDTO   `json:"link_tasks"`
+	MyRole      string          `json:"my_role"`
 }
 
 func (s *Server) toProjectDTO(ctx context.Context, p sqlstore.Project) projectDTO {
@@ -5808,6 +5822,9 @@ func toDomainDTO(d sqlstore.Domain) domainDTO {
 		Status:             d.Status,
 		LastGenerationID:   nullableStringPtr(d.LastGenerationID),
 		PublishedAt:        nullableTimePtr(d.PublishedAt),
+		PublishedPath:      nullableStringPtr(d.PublishedPath),
+		FileCount:          d.FileCount,
+		TotalSizeBytes:     d.TotalSizeBytes,
 		LinkAnchorText:     nullableStringPtr(d.LinkAnchorText),
 		LinkAcceptorURL:    nullableStringPtr(d.LinkAcceptorURL),
 		LinkStatus:         nullableStringPtr(d.LinkStatus),
@@ -6780,6 +6797,26 @@ func (s *Server) getProjectMemberRole(ctx context.Context, projectID, email stri
 	}
 
 	return "", errors.New("user is not a member of this project")
+}
+
+func (s *Server) resolveProjectRole(ctx context.Context, project sqlstore.Project, user auth.User) string {
+	if strings.EqualFold(user.Role, "admin") {
+		return "admin"
+	}
+	if strings.EqualFold(project.UserEmail, user.Email) {
+		return "owner"
+	}
+	if s.projectMembers != nil {
+		member, err := s.projectMembers.Get(ctx, project.ID, user.Email)
+		if err == nil {
+			role := strings.ToLower(strings.TrimSpace(member.Role))
+			switch role {
+			case "viewer", "editor", "owner":
+				return role
+			}
+		}
+	}
+	return "viewer"
 }
 
 // hasProjectPermission проверяет, имеет ли пользователь достаточные права для действия

@@ -2,18 +2,19 @@ package httpserver
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"database/sql"
-
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/hibiken/asynq"
 	"go.uber.org/zap"
 
@@ -477,6 +478,145 @@ func TestGetProjectMemberRole_AdminBypass(t *testing.T) {
 	}
 	if role != "admin" {
 		t.Fatalf("expected admin role, got %q", role)
+	}
+}
+
+func TestProjectSummaryIncludesMyRoleOwner(t *testing.T) {
+	s := setupServer(t)
+	projectID := "project-summary-owner"
+	s.projects.(*stubProjectStore).projects[projectID] = sqlstore.Project{
+		ID:        projectID,
+		UserEmail: "owner@example.com",
+		Name:      "Owner Project",
+		Status:    "active",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+
+	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: "owner@example.com",
+		Role:  "manager",
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/summary", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	s.handleProjectSummary(rec, req, projectID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp projectSummaryDTO
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.MyRole != "owner" {
+		t.Fatalf("expected my_role=owner, got %q", resp.MyRole)
+	}
+}
+
+func TestProjectSummaryIncludesMyRoleAdmin(t *testing.T) {
+	s := setupServer(t)
+	projectID := "project-summary-admin"
+	s.projects.(*stubProjectStore).projects[projectID] = sqlstore.Project{
+		ID:        projectID,
+		UserEmail: "owner@example.com",
+		Name:      "Admin Project",
+		Status:    "active",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+
+	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: "admin@example.com",
+		Role:  "admin",
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/summary", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	s.handleProjectSummary(rec, req, projectID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp projectSummaryDTO
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.MyRole != "admin" {
+		t.Fatalf("expected my_role=admin, got %q", resp.MyRole)
+	}
+}
+
+func TestDomainSummaryIncludesMyRoleEditor(t *testing.T) {
+	s := setupServer(t)
+	projectID := "project-summary-editor"
+	domainID := "domain-summary-editor"
+	memberEmail := "editor@example.com"
+	now := time.Now().UTC()
+
+	s.projects.(*stubProjectStore).projects[projectID] = sqlstore.Project{
+		ID:        projectID,
+		UserEmail: "owner@example.com",
+		Name:      "Editor Project",
+		Status:    "active",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	s.domains.(*stubDomainStore).domains[domainID] = sqlstore.Domain{
+		ID:             domainID,
+		ProjectID:      projectID,
+		URL:            "example.com",
+		Status:         "published",
+		PublishedAt:    sql.NullTime{Time: now, Valid: true},
+		PublishedPath:  sql.NullString{String: "/server/example.com/", Valid: true},
+		FileCount:      15,
+		TotalSizeBytes: 1024,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock new: %v", err)
+	}
+	defer db.Close()
+	s.projectMembers = sqlstore.NewProjectMemberStore(db)
+
+	rows := sqlmock.NewRows([]string{"project_id", "user_email", "role", "created_at"}).
+		AddRow(projectID, memberEmail, "editor", now)
+	query := regexp.QuoteMeta("SELECT project_id, user_email, role, created_at FROM project_members WHERE project_id=$1 AND user_email=$2")
+	mock.ExpectQuery(query).WithArgs(projectID, memberEmail).WillReturnRows(rows)
+	rows2 := sqlmock.NewRows([]string{"project_id", "user_email", "role", "created_at"}).
+		AddRow(projectID, memberEmail, "editor", now)
+	mock.ExpectQuery(query).WithArgs(projectID, memberEmail).WillReturnRows(rows2)
+
+	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: memberEmail,
+		Role:  "manager",
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/domains/"+domainID+"/summary", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	s.handleDomainSummary(rec, req, domainID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp domainSummaryDTO
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.MyRole != "editor" {
+		t.Fatalf("expected my_role=editor, got %q", resp.MyRole)
+	}
+	if resp.Domain.PublishedPath == nil || *resp.Domain.PublishedPath != "/server/example.com/" {
+		t.Fatalf("expected published_path in domain summary")
+	}
+	if resp.Domain.FileCount != 15 {
+		t.Fatalf("expected file_count=15, got %d", resp.Domain.FileCount)
+	}
+	if resp.Domain.TotalSizeBytes != 1024 {
+		t.Fatalf("expected total_size_bytes=1024, got %d", resp.Domain.TotalSizeBytes)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet sqlmock expectations: %v", err)
 	}
 }
 
@@ -1420,7 +1560,7 @@ func (s *stubProjectStore) Get(ctx context.Context, id, email string) (sqlstore.
 	defer s.mu.Unlock()
 	p, ok := s.projects[id]
 	if !ok || p.UserEmail != email {
-		return sqlstore.Project{}, errors.New("not found")
+		return sqlstore.Project{}, sql.ErrNoRows
 	}
 	return p, nil
 }
@@ -1430,7 +1570,7 @@ func (s *stubProjectStore) GetByID(ctx context.Context, id string) (sqlstore.Pro
 	defer s.mu.Unlock()
 	p, ok := s.projects[id]
 	if !ok {
-		return sqlstore.Project{}, errors.New("not found")
+		return sqlstore.Project{}, sql.ErrNoRows
 	}
 	return p, nil
 }

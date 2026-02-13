@@ -165,7 +165,7 @@ type ArtifactGroup = {
   entries: ArtifactEntry[];
 };
 
-export function ArtifactsViewer({ artifacts }: { artifacts?: ArtifactRecord }) {
+export function ArtifactsViewer({ artifacts, domainName }: { artifacts?: ArtifactRecord; domainName?: string }) {
   const groups = useMemo(() => {
     if (!artifacts || typeof artifacts !== "object") return [];
     
@@ -249,6 +249,15 @@ export function ArtifactsViewer({ artifacts }: { artifacts?: ArtifactRecord }) {
 
   if (!groups.length) return null;
 
+  const legacyMeta = (() => {
+    const raw = artifacts?.legacy_decode_meta;
+    if (!raw || typeof raw !== "object") return null;
+    const source = typeof (raw as any).source === "string" ? (raw as any).source : "";
+    const decodedAt = typeof (raw as any).decoded_at === "string" ? (raw as any).decoded_at : "";
+    if (!source && !decodedAt) return null;
+    return { source, decodedAt };
+  })();
+
   const handleToggle = (entry: ArtifactEntry) => {
     setOpen((prev) => {
       const next = !prev[entry.key];
@@ -265,8 +274,13 @@ export function ArtifactsViewer({ artifacts }: { artifacts?: ArtifactRecord }) {
 
   return (
     <div className="space-y-4">
+      {legacyMeta && (
+        <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-300">
+          Legacy decoded {legacyMeta.decodedAt ? `· ${new Date(legacyMeta.decodedAt).toLocaleString()}` : ""}
+        </div>
+      )}
       {groups.map((group) => {
-        const isGroupOpen = groupOpen[group.id] ?? true; // По умолчанию открыты
+        const isGroupOpen = groupOpen[group.id] ?? (group.id === "final");
         return (
           <div key={group.id} className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/40">
             <button
@@ -301,7 +315,13 @@ export function ArtifactsViewer({ artifacts }: { artifacts?: ArtifactRecord }) {
                   <FiCopy /> Копировать
                 </button>
                 <button
-                  onClick={() => downloadText(`${entry.key}.txt`, textValue)}
+                  onClick={() => {
+                    if (entry.key === "zip_archive") {
+                      downloadZipBase64(textValue, domainName);
+                      return;
+                    }
+                    downloadText(`${entry.key}.txt`, textValue);
+                  }}
                   className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-100 dark:hover:bg-slate-800"
                 >
                   <FiDownload /> Скачать
@@ -329,6 +349,9 @@ function renderArtifactContent(type: ArtifactType, parsed: any, fallbackText: st
   // Спец-рендер списка файлов
   if (entryKey === "generated_files") {
     return <GeneratedFilesViewer value={parsed ?? entryValue} />;
+  }
+  if (entryKey === "final_html") {
+    return <FinalHTMLViewer html={fallbackText} />;
   }
 
   switch (type) {
@@ -435,6 +458,48 @@ function SvgViewer({ svg, raw }: { svg: string; raw: string }) {
       ) : (
         <pre className="text-xs bg-slate-100/70 dark:bg-slate-900/50 rounded-lg p-3 overflow-auto max-h-72 leading-relaxed font-mono whitespace-pre-wrap">
           {raw}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+function FinalHTMLViewer({ html }: { html: string }) {
+  const [view, setView] = useState<"preview" | "code">("preview");
+  return (
+    <div className="space-y-3">
+      <div className="flex gap-2">
+        <button
+          onClick={() => setView("preview")}
+          className={`rounded-lg px-3 py-1 text-xs font-semibold border ${
+            view === "preview"
+              ? "bg-indigo-600 border-indigo-600 text-white"
+              : "border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-200"
+          }`}
+        >
+          Preview
+        </button>
+        <button
+          onClick={() => setView("code")}
+          className={`rounded-lg px-3 py-1 text-xs font-semibold border ${
+            view === "code"
+              ? "bg-indigo-600 border-indigo-600 text-white"
+              : "border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-200"
+          }`}
+        >
+          Code
+        </button>
+      </div>
+      {view === "preview" ? (
+        <iframe
+          title="Final HTML Preview"
+          sandbox="allow-same-origin"
+          srcDoc={html}
+          className="h-[60vh] w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white"
+        />
+      ) : (
+        <pre className="text-xs bg-slate-100/70 dark:bg-slate-900/50 rounded-lg p-3 overflow-auto whitespace-pre-wrap leading-relaxed font-mono max-h-[60vh]">
+          {html}
         </pre>
       )}
     </div>
@@ -1054,4 +1119,28 @@ function downloadText(filename: string, text: string) {
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
+}
+
+function downloadZipBase64(base64Value: string, domainName?: string) {
+  try {
+    const binary = atob(base64Value);
+    const bytes = new Uint8Array(binary.length);
+    for (let idx = 0; idx < binary.length; idx += 1) {
+      bytes[idx] = binary.charCodeAt(idx);
+    }
+
+    const blob = new Blob([bytes], { type: "application/zip" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const safeDomain = (domainName || "").trim();
+    link.href = url;
+    link.download = safeDomain ? `${safeDomain}.zip` : "site.zip";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  } catch {
+    // eslint-disable-next-line no-console
+    console.error("failed to decode zip_archive");
+  }
 }

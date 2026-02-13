@@ -35,6 +35,9 @@ type Domain struct {
 	Status             string
 	LastGenerationID   sql.NullString
 	PublishedAt        sql.NullTime
+	PublishedPath      sql.NullString
+	FileCount          int
+	TotalSizeBytes     int64
 	LinkAnchorText     sql.NullString
 	LinkAcceptorURL    sql.NullString
 	LinkStatus         sql.NullString
@@ -228,7 +231,7 @@ func (s *DomainStore) Create(ctx context.Context, d Domain) error {
 }
 
 func (s *DomainStore) ListByProject(ctx context.Context, projectID string) ([]Domain, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, published_at, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, created_at, updated_at FROM domains WHERE project_id=$1 ORDER BY updated_at DESC`, projectID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, published_at, published_path, file_count, total_size_bytes, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, created_at, updated_at FROM domains WHERE project_id=$1 ORDER BY updated_at DESC`, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -237,7 +240,7 @@ func (s *DomainStore) ListByProject(ctx context.Context, projectID string) ([]Do
 	for rows.Next() {
 		var d Domain
 		var sb sql.NullString
-		if err := rows.Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.PublishedAt, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.LinkReadyAt, &d.CreatedAt, &d.UpdatedAt); err != nil {
+		if err := rows.Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.PublishedAt, &d.PublishedPath, &d.FileCount, &d.TotalSizeBytes, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.LinkReadyAt, &d.CreatedAt, &d.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if sb.Valid {
@@ -271,7 +274,7 @@ func (s *DomainStore) ListByIDs(ctx context.Context, ids []string) ([]Domain, er
 		placeholders[i] = fmt.Sprintf("$%d", i+1)
 		args[i] = id
 	}
-	query := fmt.Sprintf(`SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, published_at, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, created_at, updated_at FROM domains WHERE id IN (%s)`, strings.Join(placeholders, ","))
+	query := fmt.Sprintf(`SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, published_at, published_path, file_count, total_size_bytes, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, created_at, updated_at FROM domains WHERE id IN (%s)`, strings.Join(placeholders, ","))
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -281,7 +284,7 @@ func (s *DomainStore) ListByIDs(ctx context.Context, ids []string) ([]Domain, er
 	for rows.Next() {
 		var d Domain
 		var sb sql.NullString
-		if err := rows.Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.PublishedAt, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.LinkReadyAt, &d.CreatedAt, &d.UpdatedAt); err != nil {
+		if err := rows.Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.PublishedAt, &d.PublishedPath, &d.FileCount, &d.TotalSizeBytes, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.LinkReadyAt, &d.CreatedAt, &d.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if sb.Valid {
@@ -295,8 +298,8 @@ func (s *DomainStore) ListByIDs(ctx context.Context, ids []string) ([]Domain, er
 func (s *DomainStore) Get(ctx context.Context, id string) (Domain, error) {
 	var d Domain
 	var sb sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, published_at, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, created_at, updated_at FROM domains WHERE id=$1`, id).
-		Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.PublishedAt, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.LinkReadyAt, &d.CreatedAt, &d.UpdatedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, published_at, published_path, file_count, total_size_bytes, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, created_at, updated_at FROM domains WHERE id=$1`, id).
+		Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.PublishedAt, &d.PublishedPath, &d.FileCount, &d.TotalSizeBytes, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.LinkReadyAt, &d.CreatedAt, &d.UpdatedAt)
 	if err != nil {
 		return Domain{}, err
 	}
@@ -310,8 +313,8 @@ func (s *DomainStore) Get(ctx context.Context, id string) (Domain, error) {
 func (s *DomainStore) GetByURL(ctx context.Context, url string) (Domain, error) {
 	var d Domain
 	var sb sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, published_at, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, created_at, updated_at FROM domains WHERE url=$1`, url).
-		Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.PublishedAt, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.LinkReadyAt, &d.CreatedAt, &d.UpdatedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, published_at, published_path, file_count, total_size_bytes, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, created_at, updated_at FROM domains WHERE url=$1`, url).
+		Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.PublishedAt, &d.PublishedPath, &d.FileCount, &d.TotalSizeBytes, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.LinkReadyAt, &d.CreatedAt, &d.UpdatedAt)
 	if err != nil {
 		return Domain{}, err
 	}
@@ -466,8 +469,8 @@ func (s *GenerationStore) Get(ctx context.Context, id string) (Generation, error
 }
 
 func (s *GenerationStore) Create(ctx context.Context, g Generation) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO generations(id, domain_id, requested_by, status, progress, error, logs, artifacts, checkpoint_data, attempts, retryable, next_retry_at, last_error_at, started_at, finished_at, created_at)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW())`,
+	_, err := s.db.ExecContext(ctx, `INSERT INTO generations(id, domain_id, requested_by, status, progress, error, logs, artifacts, checkpoint_data, attempts, retryable, next_retry_at, last_error_at, started_at, finished_at, prompt_id, created_at)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW())`,
 		g.ID,
 		g.DomainID,
 		nullableString(g.RequestedBy),
@@ -483,6 +486,7 @@ func (s *GenerationStore) Create(ctx context.Context, g Generation) error {
 		nullableTime(g.LastErrorAt),
 		nullableTime(g.StartedAt),
 		nullableTime(g.FinishedAt),
+		nullableString(g.PromptID),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create generation: %w", err)

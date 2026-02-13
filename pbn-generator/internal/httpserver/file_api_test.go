@@ -10,11 +10,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/DATA-DOG/go-sqlmock"
 
 	"obzornik-pbn-generator/internal/auth"
 	"obzornik-pbn-generator/internal/store/sqlstore"
@@ -154,6 +157,65 @@ func (s *memoryFileEditStore) ListByFile(ctx context.Context, fileID string, lim
 		items = items[:limit]
 	}
 	return items, nil
+}
+
+func setupFileAPIDomainFixture(t *testing.T) (*Server, string, string, string, *memorySiteFileStore) {
+	t.Helper()
+	tempDir := t.TempDir()
+	serverDir := filepath.Join(tempDir, "server")
+	domainDir := filepath.Join(serverDir, "example.com")
+	if err := os.MkdirAll(domainDir, 0o755); err != nil {
+		t.Fatalf("mkdir server: %v", err)
+	}
+	content := []byte("<h1>Hello</h1>")
+	if err := os.WriteFile(filepath.Join(domainDir, "index.html"), content, 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	origWD, _ := os.Getwd()
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(origWD)
+	})
+
+	s := setupServer(t)
+	siteStore := newMemorySiteFileStore()
+	editStore := newMemoryFileEditStore()
+	s.siteFiles = siteStore
+	s.fileEdits = editStore
+
+	projectID := "project-1"
+	domainID := "domain-1"
+	s.projects.(*stubProjectStore).projects[projectID] = sqlstore.Project{
+		ID:        projectID,
+		UserEmail: "owner@example.com",
+		Name:      "Project",
+		Status:    "active",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+	s.domains.(*stubDomainStore).domains[domainID] = sqlstore.Domain{
+		ID:          domainID,
+		ProjectID:   projectID,
+		URL:         "example.com",
+		MainKeyword: "keyword",
+		Status:      "published",
+		CreatedAt:   time.Now().UTC(),
+		UpdatedAt:   time.Now().UTC(),
+	}
+	siteStore.add(sqlstore.SiteFile{
+		ID:        "file-1",
+		DomainID:  domainID,
+		Path:      "index.html",
+		SizeBytes: int64(len(content)),
+		MimeType:  "text/html",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	})
+
+	return s, projectID, domainID, domainDir, siteStore
 }
 
 func TestFileAPI_ListReadSaveHistory(t *testing.T) {
@@ -342,5 +404,106 @@ func TestFileAPI_ReadMissingFile(t *testing.T) {
 	s.handleDomainActions(getRec, getReq)
 	if getRec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d: %s", getRec.Code, getRec.Body.String())
+	}
+}
+
+func TestFileAPI_OwnerCanUpdate(t *testing.T) {
+	s, _, domainID, domainDir, _ := setupFileAPIDomainFixture(t)
+	ownerCtx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: "owner@example.com",
+		Role:  "manager",
+	})
+
+	updateReq := httptest.NewRequest(http.MethodPut, "/api/domains/"+domainID+"/files/index.html", strings.NewReader(`{"content":"<h1>Owner Edit</h1>"}`)).WithContext(ownerCtx)
+	updateReq.Header.Set("Content-Type", "application/json")
+	updateRec := httptest.NewRecorder()
+	s.handleDomainActions(updateRec, updateReq)
+	if updateRec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", updateRec.Code, updateRec.Body.String())
+	}
+
+	updatedBytes, err := os.ReadFile(filepath.Join(domainDir, "index.html"))
+	if err != nil {
+		t.Fatalf("read updated file: %v", err)
+	}
+	if string(updatedBytes) != "<h1>Owner Edit</h1>" {
+		t.Fatalf("unexpected file content: %s", string(updatedBytes))
+	}
+}
+
+func TestFileAPI_ViewerCannotUpdate(t *testing.T) {
+	s, projectID, domainID, _, _ := setupFileAPIDomainFixture(t)
+	viewerEmail := "viewer@example.com"
+
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock new: %v", err)
+	}
+	defer db.Close()
+	s.projectMembers = sqlstore.NewProjectMemberStore(db)
+
+	query := regexp.QuoteMeta("SELECT project_id, user_email, role, created_at FROM project_members WHERE project_id=$1 AND user_email=$2")
+	rows := sqlmock.NewRows([]string{"project_id", "user_email", "role", "created_at"}).AddRow(projectID, viewerEmail, "viewer", time.Now().UTC())
+	mock.ExpectQuery(query).WithArgs(projectID, viewerEmail).WillReturnRows(rows)
+	rows2 := sqlmock.NewRows([]string{"project_id", "user_email", "role", "created_at"}).AddRow(projectID, viewerEmail, "viewer", time.Now().UTC())
+	mock.ExpectQuery(query).WithArgs(projectID, viewerEmail).WillReturnRows(rows2)
+
+	viewerCtx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: viewerEmail,
+		Role:  "manager",
+	})
+	updateReq := httptest.NewRequest(http.MethodPut, "/api/domains/"+domainID+"/files/index.html", strings.NewReader(`{"content":"<h1>Viewer Edit</h1>"}`)).WithContext(viewerCtx)
+	updateReq.Header.Set("Content-Type", "application/json")
+	updateRec := httptest.NewRecorder()
+	s.handleDomainActions(updateRec, updateReq)
+	if updateRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", updateRec.Code, updateRec.Body.String())
+	}
+	if !strings.Contains(updateRec.Body.String(), "editor role required") {
+		t.Fatalf("expected editor permission error, got %s", updateRec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet sqlmock expectations: %v", err)
+	}
+}
+
+func TestFileAPI_EditorCanUpdate(t *testing.T) {
+	s, projectID, domainID, domainDir, _ := setupFileAPIDomainFixture(t)
+	editorEmail := "editor@example.com"
+
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock new: %v", err)
+	}
+	defer db.Close()
+	s.projectMembers = sqlstore.NewProjectMemberStore(db)
+
+	query := regexp.QuoteMeta("SELECT project_id, user_email, role, created_at FROM project_members WHERE project_id=$1 AND user_email=$2")
+	rows := sqlmock.NewRows([]string{"project_id", "user_email", "role", "created_at"}).AddRow(projectID, editorEmail, "editor", time.Now().UTC())
+	mock.ExpectQuery(query).WithArgs(projectID, editorEmail).WillReturnRows(rows)
+	rows2 := sqlmock.NewRows([]string{"project_id", "user_email", "role", "created_at"}).AddRow(projectID, editorEmail, "editor", time.Now().UTC())
+	mock.ExpectQuery(query).WithArgs(projectID, editorEmail).WillReturnRows(rows2)
+
+	editorCtx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: editorEmail,
+		Role:  "manager",
+	})
+	updateReq := httptest.NewRequest(http.MethodPut, "/api/domains/"+domainID+"/files/index.html", strings.NewReader(`{"content":"<h1>Editor Edit</h1>"}`)).WithContext(editorCtx)
+	updateReq.Header.Set("Content-Type", "application/json")
+	updateRec := httptest.NewRecorder()
+	s.handleDomainActions(updateRec, updateReq)
+	if updateRec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", updateRec.Code, updateRec.Body.String())
+	}
+
+	updatedBytes, err := os.ReadFile(filepath.Join(domainDir, "index.html"))
+	if err != nil {
+		t.Fatalf("read updated file: %v", err)
+	}
+	if string(updatedBytes) != "<h1>Editor Edit</h1>" {
+		t.Fatalf("unexpected file content: %s", string(updatedBytes))
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet sqlmock expectations: %v", err)
 	}
 }

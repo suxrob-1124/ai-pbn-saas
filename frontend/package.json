@@ -26,7 +26,15 @@
     "verify:index-table": "node --import tsx scripts/verify_index_table.ts",
     "verify:index-stats": "node --import tsx scripts/verify_index_stats.ts",
     "verify:failed-checks-alert": "node --import tsx scripts/verify_failed_checks_alert.ts",
-    "verify:csv-import": "node --import tsx scripts/verify_csv_import.ts"
+    "verify:csv-import": "node --import tsx scripts/verify_csv_import.ts",
+    "verify:file-editor-route": "node --import tsx scripts/verify_file_editor_route.ts",
+    "verify:file-editor-permissions": "node --import tsx scripts/verify_file_editor_permissions.ts",
+    "verify:file-editor-query-open": "node --import tsx scripts/verify_file_editor_query_open.ts",
+    "verify:domain-editor-button": "node --import tsx scripts/verify_domain_editor_button.ts",
+    "verify:domain-result-block": "node --import tsx scripts/verify_domain_result_block.ts",
+    "verify:artifacts-final-highlight": "node --import tsx scripts/verify_artifacts_viewer_final_highlight.ts",
+    "verify:artifacts-zip-download": "node --import tsx scripts/verify_artifacts_zip_download.ts",
+    "verify:artifacts-final-html-preview": "node --import tsx scripts/verify_artifacts_final_html_preview.ts"
   },
   "dependencies": {
     "@mdx-js/loader": "3.0.1",

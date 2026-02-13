@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import type { UrlObject } from "url";
 import { authFetch, authFetchCached, patch, del } from "../../../lib/http";
 import { showToast } from "../../../lib/toastStore";
 import { useAuthGuard } from "../../../lib/useAuth";
-import { FiClock, FiPlay, FiCheck, FiAlertTriangle, FiRefreshCw, FiTrash2, FiPause, FiX, FiInfo } from "react-icons/fi";
+import { FiClock, FiPlay, FiCheck, FiAlertTriangle, FiRefreshCw, FiTrash2, FiPause, FiX, FiInfo, FiEdit3, FiCode, FiDownload } from "react-icons/fi";
 import { ArtifactsViewer, LogsViewer } from "../../../components/ArtifactsViewer";
 import PipelineSteps from "../../../components/PipelineSteps";
 import { computeDisplayProgress } from "../../../lib/pipelineProgress";
@@ -24,6 +25,10 @@ type Domain = {
   exclude_domains?: string;
   status: string;
   last_generation_id?: string;
+  published_at?: string;
+  published_path?: string;
+  file_count?: number;
+  total_size_bytes?: number;
   updated_at?: string;
   link_anchor_text?: string;
   link_acceptor_url?: string;
@@ -63,6 +68,7 @@ type DomainSummary = {
   project_name: string;
   generations: Generation[];
   link_tasks: LinkTask[];
+  my_role?: "admin" | "owner" | "editor" | "viewer";
 };
 
 export default function DomainPage() {
@@ -90,6 +96,8 @@ export default function DomainPage() {
   const [linkTab, setLinkTab] = useState<"summary" | "logs">("summary");
   const [linkDiffs, setLinkDiffs] = useState<Record<string, { filePath: string; line: number; before: string; after: string }>>({});
   const [showAllLinkTasks, setShowAllLinkTasks] = useState(false);
+  const [showResultHTMLModal, setShowResultHTMLModal] = useState(false);
+  const [resultHTMLTab, setResultHTMLTab] = useState<"preview" | "code">("preview");
 
   const load = async (force = false) => {
     if (!id) return;
@@ -363,6 +371,23 @@ export default function DomainPage() {
     normalizedLinkStatus === "removing" ||
     linkTasks.some((task) => (task.action || "") === "remove" && ["pending", "searching", "removing"].includes(task.status));
   const canRemoveLink = (hasActiveLink || hasLinkInTasks) && !removingInFlight;
+  const latestArtifacts = useMemo<Record<string, any> | null>(() => {
+    if (!latestGen?.artifacts || typeof latestGen.artifacts !== "object") {
+      return null;
+    }
+    return latestGen.artifacts;
+  }, [latestGen?.artifacts]);
+  const legacyDecodeMeta = useMemo(() => getLegacyDecodeMeta(latestArtifacts), [latestArtifacts]);
+  const hasArtifacts = Boolean(latestArtifacts && Object.keys(latestArtifacts).length > 0);
+  const finalHTML = useMemo(() => getArtifactText(latestArtifacts, "final_html") || getArtifactText(latestArtifacts, "html_raw"), [latestArtifacts]);
+  const zipArchive = useMemo(() => getArtifactText(latestArtifacts, "zip_archive"), [latestArtifacts]);
+  const canOpenEditor = Boolean(
+    domain &&
+      domain.status === "published" &&
+      ((typeof domain.file_count === "number" && domain.file_count > 0) || Boolean(domain.published_at))
+  );
+  const showResultBlock = hasArtifacts || domain?.status === "published";
+  const resultSourceLabel = legacyDecodeMeta ? "Legacy Decoded" : "Generated";
 
   useEffect(() => {
     load();
@@ -374,6 +399,53 @@ export default function DomainPage() {
       .map((part) => encodeURIComponent(part))
       .join("/");
     return `/api/domains/${id}/files/${safe}`;
+  };
+
+  const buildEditorUrl = (filePath: string, line?: number): UrlObject => {
+    const query: Record<string, string> = { path: filePath };
+    if (line && line > 0) {
+      query.line = String(line);
+    }
+    return {
+      pathname: `/domains/${id}/editor`,
+      query
+    };
+  };
+
+  const editorHref: UrlObject = { pathname: `/domains/${id}/editor` };
+
+  const downloadZipArchive = () => {
+    if (!zipArchive) return;
+    try {
+      const binary = atob(zipArchive);
+      const bytes = new Uint8Array(binary.length);
+      for (let idx = 0; idx < binary.length; idx += 1) {
+        bytes[idx] = binary.charCodeAt(idx);
+      }
+      const blob = new Blob([bytes], { type: "application/zip" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const fileName = domain?.url ? `${domain.url}.zip` : "site.zip";
+      a.download = fileName;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      showToast({
+        type: "error",
+        title: "Ошибка скачивания ZIP",
+        message: "Не удалось декодировать zip_archive"
+      });
+    }
+  };
+
+  const parseFoundLocation = (value?: string) => {
+    if (!value) return null;
+    const [filePathRaw, lineRaw] = value.split(":");
+    const filePath = (filePathRaw || "").trim();
+    const line = parseInt(lineRaw || "0", 10) || 1;
+    if (!filePath) return null;
+    return { filePath, line };
   };
 
   const computeSnippet = (lines: string[], lineIndex: number, padding = 2) => {
@@ -522,6 +594,21 @@ export default function DomainPage() {
             >
               <FiRefreshCw /> Обновить
             </button>
+            {canOpenEditor ? (
+              <Link
+                href={editorHref}
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              >
+                <FiEdit3 /> Открыть в редакторе
+              </Link>
+            ) : (
+              <span
+                title="Редактор доступен после публикации и синхронизации файлов"
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400"
+              >
+                <FiEdit3 /> Открыть в редакторе
+              </span>
+            )}
             {domain?.project_id ? (
               <Link
                 href={`/projects/${domain.project_id}`}
@@ -808,6 +895,7 @@ export default function DomainPage() {
             ) : (
               visibleLinkTasks.map((task, idx) => {
                 const isRemove = (task.action || "insert") === "remove";
+                const foundMeta = parseFoundLocation(task.found_location);
                 const steps = isRemove
                   ? [
                       { id: "pending", label: "В очереди" },
@@ -886,14 +974,13 @@ export default function DomainPage() {
                               Открыть файл
                             </a>
                           )}
-                          {linkDiffs[task.id]?.filePath && (
-                            <button
-                              disabled
-                              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white/60 px-2 py-1 text-xs font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400 cursor-not-allowed"
-                              title="Маршрут редактора появится позже"
+                          {foundMeta && (
+                            <Link
+                              href={buildEditorUrl(foundMeta.filePath, foundMeta.line)}
+                              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                             >
                               Открыть в редакторе
-                            </button>
+                            </Link>
                           )}
                         </div>
                         {linkDiffs[task.id] && (
@@ -933,6 +1020,79 @@ export default function DomainPage() {
           </div>
         )}
       </div>
+
+      {showResultBlock && (
+        <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 className="font-semibold">Результат</h3>
+              <div className="mt-1 flex items-center gap-2">
+                <Badge
+                  label={resultSourceLabel}
+                  tone={legacyDecodeMeta ? "sky" : "emerald"}
+                  icon={<FiCheck />}
+                  className="text-xs"
+                />
+                {legacyDecodeMeta?.decoded_at && (
+                  <span className="text-xs text-slate-500 dark:text-slate-400">
+                    Декодировано: {new Date(legacyDecodeMeta.decoded_at).toLocaleString()}
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setResultHTMLTab("preview");
+                  setShowResultHTMLModal(true);
+                }}
+                disabled={!finalHTML}
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              >
+                <FiCode /> Просмотр HTML
+              </button>
+              <button
+                type="button"
+                onClick={downloadZipArchive}
+                disabled={!zipArchive}
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              >
+                <FiDownload /> Скачать ZIP
+              </button>
+              {hasArtifacts && (
+                <a
+                  href="#domain-artifacts"
+                  className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                >
+                  К артефактам
+                </a>
+              )}
+              {canOpenEditor ? (
+                <Link
+                  href={editorHref}
+                  className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-500"
+                >
+                  <FiEdit3 /> Открыть в редакторе
+                </Link>
+              ) : (
+                <span
+                  title="Редактор доступен после публикации и синхронизации файлов"
+                  className="inline-flex items-center gap-2 rounded-lg bg-slate-300 px-3 py-2 text-xs font-semibold text-slate-600"
+                >
+                  <FiEdit3 /> Открыть в редакторе
+                </span>
+              )}
+            </div>
+          </div>
+
+          {!hasArtifacts && domain?.status === "published" && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">
+              Артефакты еще не заполнены. Запустите decode backfill: `go run ./cmd/backfill_legacy_artifacts --mode apply ...`
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3">
         <div className="flex items-center justify-between">
@@ -1043,7 +1203,7 @@ export default function DomainPage() {
       </div>
 
       {gens.length > 0 && (
-        <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-4">
+        <div id="domain-artifacts" className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-4">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="font-semibold">Последний запуск</h3>
@@ -1057,11 +1217,80 @@ export default function DomainPage() {
           </div>
           <AuditReport report={gens[0].artifacts?.audit_report} />
           <LogsViewer logs={gens[0].logs} />
-          <ArtifactsViewer artifacts={gens[0].artifacts} />
+          <ArtifactsViewer artifacts={gens[0].artifacts} domainName={domain?.url} />
+        </div>
+      )}
+
+      {showResultHTMLModal && finalHTML && (
+        <div className="fixed inset-0 z-50 bg-black/60 px-3 py-6 md:px-8 overflow-auto">
+          <div className="mx-auto max-w-6xl rounded-xl border border-slate-200 bg-white p-4 shadow-2xl dark:border-slate-800 dark:bg-slate-950">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h4 className="text-sm font-semibold">Финальный HTML</h4>
+              <button
+                type="button"
+                onClick={() => setShowResultHTMLModal(false)}
+                className="rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800"
+              >
+                Закрыть
+              </button>
+            </div>
+            <div className="mt-3 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setResultHTMLTab("preview")}
+                className={`rounded-lg border px-3 py-1 text-xs font-semibold ${
+                  resultHTMLTab === "preview"
+                    ? "bg-indigo-600 border-indigo-600 text-white"
+                    : "border-slate-200 text-slate-700 dark:border-slate-700 dark:text-slate-100"
+                }`}
+              >
+                Preview
+              </button>
+              <button
+                type="button"
+                onClick={() => setResultHTMLTab("code")}
+                className={`rounded-lg border px-3 py-1 text-xs font-semibold ${
+                  resultHTMLTab === "code"
+                    ? "bg-indigo-600 border-indigo-600 text-white"
+                    : "border-slate-200 text-slate-700 dark:border-slate-700 dark:text-slate-100"
+                }`}
+              >
+                Code
+              </button>
+            </div>
+            {resultHTMLTab === "preview" ? (
+              <iframe
+                title="Final HTML Preview"
+                sandbox="allow-same-origin"
+                srcDoc={finalHTML}
+                className="mt-3 h-[70vh] w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white"
+              />
+            ) : (
+              <pre className="mt-3 h-[70vh] overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs dark:border-slate-700 dark:bg-slate-900/60">
+                {finalHTML}
+              </pre>
+            )}
+          </div>
         </div>
       )}
     </div>
   );
+}
+
+function getArtifactText(artifacts: Record<string, any> | null, key: string): string {
+  if (!artifacts) return "";
+  const value = artifacts[key];
+  if (typeof value === "string") return value;
+  return "";
+}
+
+function getLegacyDecodeMeta(artifacts: Record<string, any> | null): { source?: string; decoded_at?: string } | null {
+  if (!artifacts) return null;
+  const raw = artifacts.legacy_decode_meta;
+  if (!raw || typeof raw !== "object") return null;
+  const source = typeof (raw as any).source === "string" ? (raw as any).source : undefined;
+  const decodedAt = typeof (raw as any).decoded_at === "string" ? (raw as any).decoded_at : undefined;
+  return { source, decoded_at: decodedAt };
 }
 
 function StatusBadge({ status }: { status: string }) {

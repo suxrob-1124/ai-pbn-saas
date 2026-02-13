@@ -1964,6 +1964,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ProjectMember"
+        my_role:
+          type: string
     ProjectMember:
       type: object
       properties:
@@ -2022,6 +2024,14 @@ components:
           type: string
           format: date-time
           nullable: true
+        published_path:
+          type: string
+          nullable: true
+        file_count:
+          type: integer
+        total_size_bytes:
+          type: integer
+          format: int64
         link_anchor_text:
           type: string
           nullable: true
@@ -2481,6 +2491,8 @@ components:
         domain:
           $ref: "#/components/schemas/Domain"
         project_name:
+          type: string
+        my_role:
           type: string
         generations:
           type: array
