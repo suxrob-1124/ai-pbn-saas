@@ -1390,7 +1390,7 @@ func (s *Server) handleDomainSummary(w http.ResponseWriter, r *http.Request, dom
 
 	linkDTOs := make([]linkTaskDTO, 0)
 	if s.linkTasks != nil {
-		tasks, err := s.linkTasks.ListByDomain(r.Context(), domainID, sqlstore.LinkTaskFilters{Limit: linkLimit})
+		tasks, err := s.linkTasks.ListByDomain(r.Context(), domainID, sqlstore.LinkTaskFilters{Limit: linkLimit, SortDesc: true})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "could not list link tasks")
 			return
@@ -5216,7 +5216,7 @@ func (s *Server) handleLinkByID(w http.ResponseWriter, r *http.Request) {
 
 func parseLinkTaskFilters(r *http.Request) (sqlstore.LinkTaskFilters, error) {
 	query := r.URL.Query()
-	filters := sqlstore.LinkTaskFilters{}
+	filters := sqlstore.LinkTaskFilters{SortDesc: true}
 
 	if status := strings.TrimSpace(query.Get("status")); status != "" {
 		filters.Status = &status
@@ -5261,6 +5261,16 @@ func parseLinkTaskFilters(r *http.Request) (sqlstore.LinkTaskFilters, error) {
 	}
 	if search := strings.TrimSpace(query.Get("search")); search != "" {
 		filters.Search = &search
+	}
+	if sortOrder := strings.ToLower(strings.TrimSpace(query.Get("sort"))); sortOrder != "" {
+		switch sortOrder {
+		case "asc":
+			filters.SortDesc = false
+		case "desc":
+			filters.SortDesc = true
+		default:
+			return filters, fmt.Errorf("invalid sort")
+		}
 	}
 	if pageStr := strings.TrimSpace(query.Get("page")); pageStr != "" {
 		page, err := strconv.Atoi(pageStr)

@@ -36,6 +36,7 @@ type LinkTaskFilters struct {
 	Limit           int
 	Offset          int
 	Search          *string
+	SortDesc        bool
 }
 
 // LinkTaskUpdates описывает изменения задачи.
@@ -384,7 +385,11 @@ func buildLinkTaskQuery(table string, baseClause string, baseArgs []interface{},
 	if len(clauses) > 0 {
 		query += " WHERE " + strings.Join(clauses, " AND ")
 	}
-	query += fmt.Sprintf(" ORDER BY %sscheduled_for ASC, %screated_at ASC", selectPrefix, selectPrefix)
+	orderDir := "ASC"
+	if filters.SortDesc {
+		orderDir = "DESC"
+	}
+	query += fmt.Sprintf(" ORDER BY %sscheduled_for %s, %screated_at %s", selectPrefix, orderDir, selectPrefix, orderDir)
 	if filters.Limit > 0 {
 		query += fmt.Sprintf(" LIMIT $%d", idx)
 		args = append(args, filters.Limit)
