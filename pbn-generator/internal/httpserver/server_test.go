@@ -59,6 +59,8 @@ func setupServer(t *testing.T) *Server {
 	dom := newStubDomainStore()
 	gen := newStubGenerationStore()
 	prompts := newStubPromptStore()
+	promptOverrides := newStubPromptOverrideStore()
+	deployments := newStubDeploymentAttemptStore()
 	schedules := newStubScheduleStore()
 	linkSchedules := newStubLinkScheduleStore()
 	siteFiles := newStubSiteFileStore()
@@ -67,7 +69,7 @@ func setupServer(t *testing.T) *Server {
 	genQueue := newStubGenQueueStore()
 	indexChecks := newStubIndexCheckStore()
 	checkHistory := newStubCheckHistoryStore()
-	return New(cfg, svc, logger, proj, nil, dom, gen, prompts, schedules, linkSchedules, nil, siteFiles, fileEdits, linkTasks, genQueue, indexChecks, checkHistory, newStubEnqueuer())
+	return New(cfg, svc, logger, proj, nil, dom, gen, prompts, promptOverrides, deployments, schedules, linkSchedules, nil, siteFiles, fileEdits, linkTasks, genQueue, indexChecks, checkHistory, newStubEnqueuer())
 }
 
 func TestRegisterAndLogin(t *testing.T) {
@@ -1708,6 +1710,26 @@ func (s *stubDomainStore) SetLastGeneration(ctx context.Context, id, genID strin
 	return errors.New("not found")
 }
 
+func (s *stubDomainStore) SetLastSuccessGeneration(ctx context.Context, id, genID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if d, ok := s.domains[id]; ok {
+		d.LastSuccessGenID = sqlstore.NullableString(genID)
+		s.domains[id] = d
+		return nil
+	}
+	return errors.New("not found")
+}
+
+func (s *stubDomainStore) RecalculateGenerationPointers(ctx context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.domains[id]; !ok {
+		return errors.New("not found")
+	}
+	return nil
+}
+
 func (s *stubDomainStore) Delete(ctx context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1874,6 +1896,18 @@ func (s *stubGenerationStore) UpdateFull(ctx context.Context, id, status string,
 		if promptID != nil {
 			g.PromptID = sqlstore.NullableString(*promptID)
 		}
+		g.UpdatedAt = time.Now().UTC()
+		s.generations[id] = g
+		return nil
+	}
+	return errors.New("not found")
+}
+
+func (s *stubGenerationStore) UpdateArtifactsSummary(ctx context.Context, id string, artifactsSummary []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if g, ok := s.generations[id]; ok {
+		g.ArtifactsSummary = append([]byte(nil), artifactsSummary...)
 		g.UpdatedAt = time.Now().UTC()
 		s.generations[id] = g
 		return nil
@@ -3010,6 +3044,114 @@ func (s *stubPromptStore) Get(ctx context.Context, id string) (sqlstore.SystemPr
 		return sqlstore.SystemPrompt{}, sql.ErrNoRows
 	}
 	return p, nil
+}
+
+type stubPromptOverrideStore struct {
+	mu        sync.Mutex
+	overrides map[string]sqlstore.PromptOverride
+}
+
+func newStubPromptOverrideStore() *stubPromptOverrideStore {
+	return &stubPromptOverrideStore{overrides: make(map[string]sqlstore.PromptOverride)}
+}
+
+func (s *stubPromptOverrideStore) key(scopeType, scopeID, stage string) string {
+	return scopeType + "|" + scopeID + "|" + stage
+}
+
+func (s *stubPromptOverrideStore) Upsert(ctx context.Context, item sqlstore.PromptOverride) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now().UTC()
+	if item.CreatedAt.IsZero() {
+		item.CreatedAt = now
+	}
+	item.UpdatedAt = now
+	s.overrides[s.key(item.ScopeType, item.ScopeID, item.Stage)] = item
+	return nil
+}
+
+func (s *stubPromptOverrideStore) Delete(ctx context.Context, scopeType, scopeID, stage string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.overrides, s.key(scopeType, scopeID, stage))
+	return nil
+}
+
+func (s *stubPromptOverrideStore) ListByScope(ctx context.Context, scopeType, scopeID string) ([]sqlstore.PromptOverride, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	res := make([]sqlstore.PromptOverride, 0)
+	for _, item := range s.overrides {
+		if item.ScopeType == scopeType && item.ScopeID == scopeID {
+			res = append(res, item)
+		}
+	}
+	sort.Slice(res, func(i, j int) bool {
+		return res[i].Stage < res[j].Stage
+	})
+	return res, nil
+}
+
+func (s *stubPromptOverrideStore) ResolveForDomainStage(ctx context.Context, domainID, projectID, stage string) (sqlstore.ResolvedPrompt, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if domainID != "" {
+		if item, ok := s.overrides[s.key(sqlstore.PromptScopeDomain, domainID, stage)]; ok {
+			return sqlstore.ResolvedPrompt{
+				Stage:           stage,
+				Source:          sqlstore.PromptScopeDomain,
+				OverrideID:      sqlstore.NullableString(item.ID),
+				Body:            item.Body,
+				Model:           item.Model,
+				BasedOnPromptID: item.BasedOnPrompt,
+			}, nil
+		}
+	}
+	if projectID != "" {
+		if item, ok := s.overrides[s.key(sqlstore.PromptScopeProject, projectID, stage)]; ok {
+			return sqlstore.ResolvedPrompt{
+				Stage:           stage,
+				Source:          sqlstore.PromptScopeProject,
+				OverrideID:      sqlstore.NullableString(item.ID),
+				Body:            item.Body,
+				Model:           item.Model,
+				BasedOnPromptID: item.BasedOnPrompt,
+			}, nil
+		}
+	}
+	return sqlstore.ResolvedPrompt{
+		Stage:  stage,
+		Source: "global",
+		Body:   "",
+	}, nil
+}
+
+type stubDeploymentAttemptStore struct {
+	mu       sync.Mutex
+	attempts []sqlstore.DeploymentAttempt
+}
+
+func newStubDeploymentAttemptStore() *stubDeploymentAttemptStore {
+	return &stubDeploymentAttemptStore{attempts: make([]sqlstore.DeploymentAttempt, 0)}
+}
+
+func (s *stubDeploymentAttemptStore) ListByDomain(ctx context.Context, domainID string, limit int) ([]sqlstore.DeploymentAttempt, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	res := make([]sqlstore.DeploymentAttempt, 0)
+	for _, item := range s.attempts {
+		if item.DomainID == domainID {
+			res = append(res, item)
+		}
+	}
+	sort.Slice(res, func(i, j int) bool {
+		return res[i].CreatedAt.After(res[j].CreatedAt)
+	})
+	if limit > 0 && len(res) > limit {
+		res = res[:limit]
+	}
+	return res, nil
 }
 
 func TestParseIndexCheckFiltersSortAndSearch(t *testing.T) {

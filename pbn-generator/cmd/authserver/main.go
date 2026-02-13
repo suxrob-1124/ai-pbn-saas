@@ -40,6 +40,8 @@ func main() {
 	domainStore := sqlstore.NewDomainStore(database)
 	generationStore := sqlstore.NewGenerationStore(database)
 	promptStore := sqlstore.NewPromptStore(database)
+	promptOverrideStore := sqlstore.NewPromptOverrideStore(database)
+	deploymentStore := sqlstore.NewDeploymentAttemptStore(database)
 	scheduleStore := sqlstore.NewScheduleStore(database)
 	linkScheduleStore := sqlstore.NewLinkScheduleStore(database)
 	auditStore := sqlstore.NewAuditStore(database)
@@ -68,7 +70,28 @@ func main() {
 		Logger:             logger,
 	})
 
-	srv := httpserver.New(cfg, svc, logger, projectStore, projectMemberStore, domainStore, generationStore, promptStore, scheduleStore, linkScheduleStore, auditStore, siteFileStore, fileEditStore, linkTaskStore, genQueueStore, indexCheckStore, checkHistoryStore, taskClient)
+	srv := httpserver.New(
+		cfg,
+		svc,
+		logger,
+		projectStore,
+		projectMemberStore,
+		domainStore,
+		generationStore,
+		promptStore,
+		promptOverrideStore,
+		deploymentStore,
+		scheduleStore,
+		linkScheduleStore,
+		auditStore,
+		siteFileStore,
+		fileEditStore,
+		linkTaskStore,
+		genQueueStore,
+		indexCheckStore,
+		checkHistoryStore,
+		taskClient,
+	)
 	handler := srv.Handler()
 
 	go startSessionCleanup(svc, cfg.SessionCleanInterval)

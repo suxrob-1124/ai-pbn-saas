@@ -2017,7 +2017,10 @@ components:
           nullable: true
         status:
           type: string
-        last_generation_id:
+        last_attempt_generation_id:
+          type: string
+          nullable: true
+        last_success_generation_id:
           type: string
           nullable: true
         published_at:
@@ -2032,6 +2035,9 @@ components:
         total_size_bytes:
           type: integer
           format: int64
+        deployment_mode:
+          type: string
+          nullable: true
         link_anchor_text:
           type: string
           nullable: true
@@ -2319,6 +2325,9 @@ components:
         artifacts:
           type: object
           nullable: true
+        artifacts_summary:
+          type: object
+          nullable: true
       required: [id, domain_id, status, progress, created_at, updated_at]
     LinkTask:
       type: object
@@ -2498,6 +2507,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Generation"
+        latest_attempt:
+          $ref: "#/components/schemas/Generation"
+        latest_success:
+          $ref: "#/components/schemas/Generation"
         link_tasks:
           type: array
           items:

@@ -14,6 +14,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
+
+	"obzornik-pbn-generator/internal/store/sqlstore"
 )
 
 // PublishStep публикует собранную статику в локальное хранилище.
@@ -31,6 +35,10 @@ func (s *PublishStep) Execute(ctx context.Context, state *PipelineState) (map[st
 		return nil, fmt.Errorf("publish: publisher is not configured")
 	}
 	now := time.Now().UTC()
+	deployMode := strings.TrimSpace(state.DeploymentMode)
+	if deployMode == "" {
+		deployMode = "local_mock"
+	}
 	zipB64, _ := state.Artifacts["zip_archive"].(string)
 	if strings.TrimSpace(zipB64) == "" {
 		return nil, fmt.Errorf("publish: zip_archive artifact is empty")
@@ -43,7 +51,33 @@ func (s *PublishStep) Execute(ctx context.Context, state *PipelineState) (map[st
 	if err != nil {
 		return nil, fmt.Errorf("publish: unzip: %w", err)
 	}
+	publishedPath := state.Publisher.GetPublishedPath(state.DomainID)
+
+	deploymentAttemptID := ""
+	if state.Deployments != nil {
+		deploymentAttemptID = uuid.NewString()
+		item := sqlstore.DeploymentAttempt{
+			ID:           deploymentAttemptID,
+			DomainID:     state.DomainID,
+			GenerationID: state.GenerationID,
+			Mode:         deployMode,
+			TargetPath:   publishedPath,
+			OwnerBefore:  sqlstore.NullableString("mock:www-data"),
+			Status:       "processing",
+		}
+		if err := state.Deployments.Create(ctx, item); err != nil && state.AppendLog != nil {
+			state.AppendLog(fmt.Sprintf("publish: failed to create deployment attempt: %v", err))
+		}
+	}
+
 	if err := state.Publisher.Publish(ctx, state.DomainID, files); err != nil {
+		if state.Deployments != nil && deploymentAttemptID != "" {
+			errMsg := err.Error()
+			ownerAfter := "mock:www-data"
+			if finishErr := state.Deployments.Finish(ctx, deploymentAttemptID, "error", &errMsg, &ownerAfter, 0, 0, time.Now().UTC()); finishErr != nil && state.AppendLog != nil {
+				state.AppendLog(fmt.Sprintf("publish: failed to finish deployment attempt with error: %v", finishErr))
+			}
+		}
 		return nil, fmt.Errorf("publish: %w", err)
 	}
 	if err := state.DomainStore.UpdateStatus(ctx, state.DomainID, "published"); err != nil {
@@ -76,9 +110,33 @@ func (s *PublishStep) Execute(ctx context.Context, state *PipelineState) (map[st
 		}
 	}
 
-	publishedPath := state.Publisher.GetPublishedPath(state.DomainID)
+	fileCount := 0
+	totalSizeBytes := int64(0)
+	if state.DomainStore != nil {
+		if refreshed, err := state.DomainStore.Get(ctx, state.DomainID); err == nil {
+			fileCount = refreshed.FileCount
+			totalSizeBytes = refreshed.TotalSizeBytes
+			if state.Domain != nil {
+				state.Domain.Status = "published"
+				state.Domain.PublishedPath = refreshed.PublishedPath
+				state.Domain.PublishedAt = refreshed.PublishedAt
+				state.Domain.FileCount = refreshed.FileCount
+				state.Domain.TotalSizeBytes = refreshed.TotalSizeBytes
+			}
+		}
+	}
+	if state.Deployments != nil && deploymentAttemptID != "" {
+		ownerAfter := "mock:www-data"
+		if err := state.Deployments.Finish(ctx, deploymentAttemptID, "success", nil, &ownerAfter, fileCount, totalSizeBytes, time.Now().UTC()); err != nil && state.AppendLog != nil {
+			state.AppendLog(fmt.Sprintf("publish: failed to finish deployment attempt: %v", err))
+		}
+	}
 	artifacts := map[string]any{
-		"published_path": publishedPath,
+		"published_path":    publishedPath,
+		"file_count":        fileCount,
+		"total_size_bytes":  totalSizeBytes,
+		"deployment_mode":   deployMode,
+		"deployment_status": "success",
 	}
 	return artifacts, nil
 }

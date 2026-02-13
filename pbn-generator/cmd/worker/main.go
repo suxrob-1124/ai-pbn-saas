@@ -32,8 +32,10 @@ func main() {
 	domainStore := sqlstore.NewDomainStore(dbConn)
 	genStore := sqlstore.NewGenerationStore(dbConn)
 	promptStore := sqlstore.NewPromptStore(dbConn)
+	promptOverrideStore := sqlstore.NewPromptOverrideStore(dbConn)
 	projectStore := sqlstore.NewProjectStore(dbConn)
 	linkScheduleStore := sqlstore.NewLinkScheduleStore(dbConn)
+	deploymentStore := sqlstore.NewDeploymentAttemptStore(dbConn)
 	userStore := sqlstore.NewUserStore(dbConn)
 	apiKeyUsageStore := sqlstore.NewAPIKeyUsageStore(dbConn)
 	siteFileStore := sqlstore.NewSiteFileStore(dbConn)
@@ -58,8 +60,10 @@ func main() {
 			domainStore,
 			genStore,
 			promptStore,
+			promptOverrideStore,
 			projectStore,
 			linkScheduleStore,
+			deploymentStore,
 			userStore,
 			apiKeyUsageStore,
 			siteFileStore,
@@ -67,7 +71,7 @@ func main() {
 		)
 	})
 	linkWorker := &worker.LinkWorker{
-		BaseDir:   "server",
+		BaseDir:   cfg.DeployBaseDir,
 		Config:    cfg,
 		Logger:    sugar,
 		Tasks:     linkTaskStore,

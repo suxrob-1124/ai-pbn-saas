@@ -152,6 +152,8 @@ func migrationStatements() []string {
 		`ALTER TABLE domains ADD COLUMN IF NOT EXISTS published_path TEXT;`,
 		`ALTER TABLE domains ADD COLUMN IF NOT EXISTS file_count INT DEFAULT 0;`,
 		`ALTER TABLE domains ADD COLUMN IF NOT EXISTS total_size_bytes BIGINT DEFAULT 0;`,
+		`ALTER TABLE domains ADD COLUMN IF NOT EXISTS last_success_generation_id TEXT;`,
+		`ALTER TABLE domains ADD COLUMN IF NOT EXISTS deployment_mode TEXT NOT NULL DEFAULT 'local_mock';`,
 		`ALTER TABLE domains ADD COLUMN IF NOT EXISTS link_anchor_text TEXT;`,
 		`ALTER TABLE domains ADD COLUMN IF NOT EXISTS link_acceptor_url TEXT;`,
 		`ALTER TABLE domains ADD COLUMN IF NOT EXISTS link_status TEXT;`,
@@ -227,11 +229,54 @@ func migrationStatements() []string {
 		);`,
 		`ALTER TABLE generations ADD COLUMN IF NOT EXISTS requested_by TEXT;`,
 		`ALTER TABLE generations ADD COLUMN IF NOT EXISTS checkpoint_data JSONB;`,
+		`ALTER TABLE generations ADD COLUMN IF NOT EXISTS artifacts_summary JSONB;`,
 		`ALTER TABLE generations ADD COLUMN IF NOT EXISTS attempts INT NOT NULL DEFAULT 0;`,
 		`ALTER TABLE generations ADD COLUMN IF NOT EXISTS retryable BOOLEAN NOT NULL DEFAULT FALSE;`,
 		`ALTER TABLE generations ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMPTZ;`,
 		`ALTER TABLE generations ADD COLUMN IF NOT EXISTS last_error_at TIMESTAMPTZ;`,
 		`CREATE INDEX IF NOT EXISTS idx_generations_domain ON generations(domain_id);`,
+		`UPDATE domains d
+			SET last_success_generation_id = sub.id
+		FROM (
+			SELECT DISTINCT ON (domain_id) id, domain_id
+			FROM generations
+			WHERE status='success'
+			ORDER BY domain_id, created_at DESC
+		) sub
+		WHERE d.id = sub.domain_id
+		  AND (d.last_success_generation_id IS NULL OR d.last_success_generation_id = '');`,
+		`CREATE TABLE IF NOT EXISTS prompt_overrides (
+			id TEXT PRIMARY KEY,
+			scope_type TEXT NOT NULL,
+			scope_id TEXT NOT NULL,
+			stage TEXT NOT NULL,
+			body TEXT NOT NULL,
+			model TEXT,
+			based_on_prompt_id TEXT REFERENCES system_prompts(id),
+			updated_by TEXT NOT NULL REFERENCES users(email),
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE(scope_type, scope_id, stage)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_prompt_overrides_scope ON prompt_overrides(scope_type, scope_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_prompt_overrides_stage ON prompt_overrides(stage);`,
+		`CREATE TABLE IF NOT EXISTS deployment_attempts (
+			id TEXT PRIMARY KEY,
+			domain_id TEXT NOT NULL REFERENCES domains(id) ON DELETE CASCADE,
+			generation_id TEXT NOT NULL REFERENCES generations(id) ON DELETE CASCADE,
+			mode TEXT NOT NULL,
+			target_path TEXT NOT NULL,
+			owner_before TEXT,
+			owner_after TEXT,
+			status TEXT NOT NULL,
+			error_message TEXT,
+			file_count INT NOT NULL DEFAULT 0,
+			total_size_bytes BIGINT NOT NULL DEFAULT 0,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			finished_at TIMESTAMPTZ
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_deployment_attempts_domain_created ON deployment_attempts(domain_id, created_at DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_deployment_attempts_generation ON deployment_attempts(generation_id);`,
 		`CREATE TABLE IF NOT EXISTS generation_schedules (
 		  id TEXT PRIMARY KEY,
 		  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,

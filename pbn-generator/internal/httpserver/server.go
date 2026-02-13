@@ -55,6 +55,8 @@ type DomainStore interface {
 	UpdateStatus(ctx context.Context, id, status string) error
 	UpdateKeyword(ctx context.Context, id, keyword string) error
 	SetLastGeneration(ctx context.Context, id, genID string) error
+	SetLastSuccessGeneration(ctx context.Context, id, genID string) error
+	RecalculateGenerationPointers(ctx context.Context, id string) error
 	UpdateExtras(ctx context.Context, id, country, language string, exclude, server sql.NullString) (bool, error)
 	UpdateLinkSettings(ctx context.Context, id string, anchorText, acceptorURL sql.NullString) (bool, error)
 	Delete(ctx context.Context, id string) error
@@ -72,6 +74,7 @@ type GenerationStore interface {
 	CountsByStatus(ctx context.Context) (map[string]int, error)
 	UpdateStatus(ctx context.Context, id, status string, progress int, errText *string) error
 	UpdateFull(ctx context.Context, id, status string, progress int, errText *string, logs, artifacts []byte, started, finished *time.Time, promptID *string) error
+	UpdateArtifactsSummary(ctx context.Context, id string, artifactsSummary []byte) error
 	Delete(ctx context.Context, id string) error
 	SaveCheckpoint(ctx context.Context, id string, checkpointData []byte) error
 	ClearCheckpoint(ctx context.Context, id string) error
@@ -86,6 +89,17 @@ type PromptStore interface {
 	Delete(ctx context.Context, id string) error
 	List(ctx context.Context) ([]sqlstore.SystemPrompt, error)
 	Get(ctx context.Context, id string) (sqlstore.SystemPrompt, error)
+}
+
+type PromptOverrideStore interface {
+	Upsert(ctx context.Context, item sqlstore.PromptOverride) error
+	Delete(ctx context.Context, scopeType, scopeID, stage string) error
+	ListByScope(ctx context.Context, scopeType, scopeID string) ([]sqlstore.PromptOverride, error)
+	ResolveForDomainStage(ctx context.Context, domainID, projectID, stage string) (sqlstore.ResolvedPrompt, error)
+}
+
+type DeploymentAttemptStore interface {
+	ListByDomain(ctx context.Context, domainID string, limit int) ([]sqlstore.DeploymentAttempt, error)
 }
 
 type ScheduleStore interface {
@@ -163,31 +177,33 @@ type CheckHistoryStore interface {
 }
 
 type Server struct {
-	cfg            config.Config
-	svc            *auth.Service
-	projects       ProjectStore
-	projectMembers *sqlstore.ProjectMemberStore
-	domains        DomainStore
-	generations    GenerationStore
-	prompts        PromptStore
-	schedules      ScheduleStore
-	linkSchedules  LinkScheduleStore
-	auditRules     *sqlstore.AuditStore
-	siteFiles      SiteFileStore
-	fileEdits      FileEditStore
-	linkTasks      LinkTaskStore
-	genQueue       GenQueueStore
-	indexChecks    IndexCheckStore
-	checkHistory   CheckHistoryStore
-	tasks          tasks.Enqueuer
-	reqDuration    *prometheus.HistogramVec
-	reqCounter     *prometheus.CounterVec
-	genStatus      *prometheus.GaugeVec
-	registry       *prometheus.Registry
-	logger         *zap.SugaredLogger
+	cfg             config.Config
+	svc             *auth.Service
+	projects        ProjectStore
+	projectMembers  *sqlstore.ProjectMemberStore
+	domains         DomainStore
+	generations     GenerationStore
+	prompts         PromptStore
+	promptOverrides PromptOverrideStore
+	deployments     DeploymentAttemptStore
+	schedules       ScheduleStore
+	linkSchedules   LinkScheduleStore
+	auditRules      *sqlstore.AuditStore
+	siteFiles       SiteFileStore
+	fileEdits       FileEditStore
+	linkTasks       LinkTaskStore
+	genQueue        GenQueueStore
+	indexChecks     IndexCheckStore
+	checkHistory    CheckHistoryStore
+	tasks           tasks.Enqueuer
+	reqDuration     *prometheus.HistogramVec
+	reqCounter      *prometheus.CounterVec
+	genStatus       *prometheus.GaugeVec
+	registry        *prometheus.Registry
+	logger          *zap.SugaredLogger
 }
 
-func New(cfg config.Config, svc *auth.Service, logger *zap.SugaredLogger, projects ProjectStore, projectMembers *sqlstore.ProjectMemberStore, domains DomainStore, generations GenerationStore, prompts PromptStore, schedules ScheduleStore, linkSchedules LinkScheduleStore, auditRules *sqlstore.AuditStore, siteFiles SiteFileStore, fileEdits FileEditStore, linkTasks LinkTaskStore, genQueue GenQueueStore, indexChecks IndexCheckStore, checkHistory CheckHistoryStore, tq tasks.Enqueuer) *Server {
+func New(cfg config.Config, svc *auth.Service, logger *zap.SugaredLogger, projects ProjectStore, projectMembers *sqlstore.ProjectMemberStore, domains DomainStore, generations GenerationStore, prompts PromptStore, promptOverrides PromptOverrideStore, deployments DeploymentAttemptStore, schedules ScheduleStore, linkSchedules LinkScheduleStore, auditRules *sqlstore.AuditStore, siteFiles SiteFileStore, fileEdits FileEditStore, linkTasks LinkTaskStore, genQueue GenQueueStore, indexChecks IndexCheckStore, checkHistory CheckHistoryStore, tq tasks.Enqueuer) *Server {
 	if logger == nil {
 		logger = zap.NewNop().Sugar()
 	}
@@ -211,28 +227,30 @@ func New(cfg config.Config, svc *auth.Service, logger *zap.SugaredLogger, projec
 	registry.MustRegister(reqDuration, reqCounter, genStatus)
 
 	s := &Server{
-		cfg:            cfg,
-		svc:            svc,
-		projects:       projects,
-		projectMembers: projectMembers,
-		domains:        domains,
-		generations:    generations,
-		prompts:        prompts,
-		schedules:      schedules,
-		linkSchedules:  linkSchedules,
-		auditRules:     auditRules,
-		siteFiles:      siteFiles,
-		fileEdits:      fileEdits,
-		linkTasks:      linkTasks,
-		genQueue:       genQueue,
-		indexChecks:    indexChecks,
-		checkHistory:   checkHistory,
-		tasks:          tq,
-		reqDuration:    reqDuration,
-		reqCounter:     reqCounter,
-		genStatus:      genStatus,
-		registry:       registry,
-		logger:         logger,
+		cfg:             cfg,
+		svc:             svc,
+		projects:        projects,
+		projectMembers:  projectMembers,
+		domains:         domains,
+		generations:     generations,
+		prompts:         prompts,
+		promptOverrides: promptOverrides,
+		deployments:     deployments,
+		schedules:       schedules,
+		linkSchedules:   linkSchedules,
+		auditRules:      auditRules,
+		siteFiles:       siteFiles,
+		fileEdits:       fileEdits,
+		linkTasks:       linkTasks,
+		genQueue:        genQueue,
+		indexChecks:     indexChecks,
+		checkHistory:    checkHistory,
+		tasks:           tq,
+		reqDuration:     reqDuration,
+		reqCounter:      reqCounter,
+		genStatus:       genStatus,
+		registry:        registry,
+		logger:          logger,
 	}
 	s.startGenerationMetricsLoop()
 	return s
@@ -1146,6 +1164,14 @@ func (s *Server) handleProjectByID(w http.ResponseWriter, r *http.Request) {
 		s.handleProjectIndexChecks(w, r, projectID, parts[2:])
 		return
 	}
+	if len(parts) > 1 && parts[1] == "prompts" {
+		stage := ""
+		if len(parts) > 2 {
+			stage, _ = url.PathUnescape(parts[2])
+		}
+		s.handleProjectPrompts(w, r, projectID, stage)
+		return
+	}
 
 	user, ok := currentUserFromContext(r.Context())
 	if !ok || user.Email == "" {
@@ -1321,17 +1347,45 @@ func (s *Server) handleDomainSummary(w http.ResponseWriter, r *http.Request, dom
 		writeError(w, http.StatusInternalServerError, "could not list generations")
 		return
 	}
-	if len(gens) > genLimit {
-		gens = gens[:genLimit]
-	}
-	genDTOs := make([]generationDTO, 0, len(gens))
-	for i, g := range gens {
-		dto := toGenerationDTO(g)
-		if i > 0 {
-			dto.Logs = nil
-			dto.Artifacts = nil
+	genDTOs := make([]generationDTO, 0, minInt(len(gens), genLimit))
+	for idx, g := range gens {
+		if idx >= genLimit {
+			break
 		}
-		genDTOs = append(genDTOs, dto)
+		genDTOs = append(genDTOs, toGenerationLightDTO(g))
+	}
+
+	var latestAttempt *generationDTO
+	if len(gens) > 0 {
+		dto := toGenerationLightDTO(gens[0])
+		latestAttempt = &dto
+	}
+
+	var latestSuccess *generationDTO
+	if domain.LastSuccessGenID.Valid && strings.TrimSpace(domain.LastSuccessGenID.String) != "" {
+		targetID := strings.TrimSpace(domain.LastSuccessGenID.String)
+		for _, g := range gens {
+			if g.ID == targetID {
+				dto := toGenerationLightDTO(g)
+				latestSuccess = &dto
+				break
+			}
+		}
+		if latestSuccess == nil {
+			if g, err := s.generations.Get(r.Context(), targetID); err == nil {
+				dto := toGenerationLightDTO(g)
+				latestSuccess = &dto
+			}
+		}
+	}
+	if latestSuccess == nil {
+		for _, g := range gens {
+			if g.Status == "success" {
+				dto := toGenerationLightDTO(g)
+				latestSuccess = &dto
+				break
+			}
+		}
 	}
 
 	linkDTOs := make([]linkTaskDTO, 0)
@@ -1347,13 +1401,291 @@ func (s *Server) handleDomainSummary(w http.ResponseWriter, r *http.Request, dom
 	}
 
 	resp := domainSummaryDTO{
-		Domain:      toDomainDTO(domain),
-		ProjectName: project.Name,
-		Generations: genDTOs,
-		LinkTasks:   linkDTOs,
-		MyRole:      myRole,
+		Domain:        toDomainDTO(domain),
+		ProjectName:   project.Name,
+		Generations:   genDTOs,
+		LatestAttempt: latestAttempt,
+		LatestSuccess: latestSuccess,
+		LinkTasks:     linkDTOs,
+		MyRole:        myRole,
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleDomainDeployments(w http.ResponseWriter, r *http.Request, domainID string) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if _, _, err := s.authorizeDomain(r.Context(), domainID); err != nil {
+		respondAuthzError(w, err, "domain not found")
+		return
+	}
+	if s.deployments == nil {
+		writeJSON(w, http.StatusOK, []deploymentAttemptDTO{})
+		return
+	}
+	limit := 20
+	if v := strings.TrimSpace(r.URL.Query().Get("limit")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 200 {
+			limit = n
+		}
+	}
+	list, err := s.deployments.ListByDomain(r.Context(), domainID, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not list deployments")
+		return
+	}
+	resp := make([]deploymentAttemptDTO, 0, len(list))
+	for _, item := range list {
+		resp = append(resp, toDeploymentAttemptDTO(item))
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleProjectPrompts(w http.ResponseWriter, r *http.Request, projectID, stage string) {
+	if s.promptOverrides == nil {
+		writeError(w, http.StatusInternalServerError, "prompt overrides not configured")
+		return
+	}
+	project, err := s.authorizeProject(r.Context(), projectID)
+	if err != nil {
+		respondAuthzError(w, err, "project not found")
+		return
+	}
+	user, ok := currentUserFromContext(r.Context())
+	if !ok || user.Email == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	requireEditor := func() bool {
+		memberRole := ""
+		if !strings.EqualFold(user.Role, "admin") {
+			role, err := s.getProjectMemberRole(r.Context(), project.ID, user.Email)
+			if err != nil {
+				writeError(w, http.StatusForbidden, "access denied")
+				return false
+			}
+			memberRole = role
+		}
+		if !hasProjectPermission(user.Role, memberRole, "editor") {
+			writeError(w, http.StatusForbidden, "insufficient permissions: editor role required")
+			return false
+		}
+		return true
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		overrides, err := s.promptOverrides.ListByScope(r.Context(), sqlstore.PromptScopeProject, projectID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not list project prompt overrides")
+			return
+		}
+		resolved := make([]resolvedPromptDTO, 0, len(sqlstore.GenerationPromptStages))
+		for _, st := range sqlstore.GenerationPromptStages {
+			item, err := s.promptOverrides.ResolveForDomainStage(r.Context(), "", projectID, st)
+			if err == nil {
+				resolved = append(resolved, toResolvedPromptDTO(item))
+			}
+		}
+		resp := domainPromptsDTO{
+			Overrides: toPromptOverrideDTOs(overrides),
+			Resolved:  resolved,
+		}
+		writeJSON(w, http.StatusOK, resp)
+	case http.MethodPut:
+		if !requireEditor() {
+			return
+		}
+		stage = strings.TrimSpace(stage)
+		if !isGenerationPromptStage(stage) {
+			writeError(w, http.StatusBadRequest, "invalid stage")
+			return
+		}
+		if !ensureJSON(w, r) {
+			return
+		}
+		defer r.Body.Close()
+		var body struct {
+			Body            string  `json:"body"`
+			Model           *string `json:"model"`
+			BasedOnPromptID *string `json:"based_on_prompt_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid body")
+			return
+		}
+		pBody := strings.TrimSpace(body.Body)
+		if pBody == "" {
+			writeError(w, http.StatusBadRequest, "body is required")
+			return
+		}
+		item := sqlstore.PromptOverride{
+			ID:        uuid.NewString(),
+			ScopeType: sqlstore.PromptScopeProject,
+			ScopeID:   projectID,
+			Stage:     stage,
+			Body:      pBody,
+			UpdatedBy: user.Email,
+		}
+		if body.Model != nil {
+			model := strings.TrimSpace(*body.Model)
+			if model != "" {
+				item.Model = sqlstore.NullableString(model)
+			}
+		}
+		if body.BasedOnPromptID != nil {
+			ref := strings.TrimSpace(*body.BasedOnPromptID)
+			if ref != "" {
+				item.BasedOnPrompt = sqlstore.NullableString(ref)
+			}
+		}
+		if err := s.promptOverrides.Upsert(r.Context(), item); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to save override")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	case http.MethodDelete:
+		if !requireEditor() {
+			return
+		}
+		stage = strings.TrimSpace(stage)
+		if !isGenerationPromptStage(stage) {
+			writeError(w, http.StatusBadRequest, "invalid stage")
+			return
+		}
+		if err := s.promptOverrides.Delete(r.Context(), sqlstore.PromptScopeProject, projectID, stage); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to delete override")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) handleDomainPrompts(w http.ResponseWriter, r *http.Request, domainID, stage string) {
+	if s.promptOverrides == nil {
+		writeError(w, http.StatusInternalServerError, "prompt overrides not configured")
+		return
+	}
+	_, project, err := s.authorizeDomain(r.Context(), domainID)
+	if err != nil {
+		respondAuthzError(w, err, "domain not found")
+		return
+	}
+	user, ok := currentUserFromContext(r.Context())
+	if !ok || user.Email == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	requireEditor := func() bool {
+		memberRole := ""
+		if !strings.EqualFold(user.Role, "admin") {
+			role, err := s.getProjectMemberRole(r.Context(), project.ID, user.Email)
+			if err != nil {
+				writeError(w, http.StatusForbidden, "access denied")
+				return false
+			}
+			memberRole = role
+		}
+		if !hasProjectPermission(user.Role, memberRole, "editor") {
+			writeError(w, http.StatusForbidden, "insufficient permissions: editor role required")
+			return false
+		}
+		return true
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		overrides, err := s.promptOverrides.ListByScope(r.Context(), sqlstore.PromptScopeDomain, domainID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not list domain prompt overrides")
+			return
+		}
+		resolved := make([]resolvedPromptDTO, 0, len(sqlstore.GenerationPromptStages))
+		for _, st := range sqlstore.GenerationPromptStages {
+			item, err := s.promptOverrides.ResolveForDomainStage(r.Context(), domainID, project.ID, st)
+			if err == nil {
+				resolved = append(resolved, toResolvedPromptDTO(item))
+			}
+		}
+		resp := domainPromptsDTO{
+			Overrides: toPromptOverrideDTOs(overrides),
+			Resolved:  resolved,
+		}
+		writeJSON(w, http.StatusOK, resp)
+	case http.MethodPut:
+		if !requireEditor() {
+			return
+		}
+		stage = strings.TrimSpace(stage)
+		if !isGenerationPromptStage(stage) {
+			writeError(w, http.StatusBadRequest, "invalid stage")
+			return
+		}
+		if !ensureJSON(w, r) {
+			return
+		}
+		defer r.Body.Close()
+		var body struct {
+			Body            string  `json:"body"`
+			Model           *string `json:"model"`
+			BasedOnPromptID *string `json:"based_on_prompt_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid body")
+			return
+		}
+		pBody := strings.TrimSpace(body.Body)
+		if pBody == "" {
+			writeError(w, http.StatusBadRequest, "body is required")
+			return
+		}
+		item := sqlstore.PromptOverride{
+			ID:        uuid.NewString(),
+			ScopeType: sqlstore.PromptScopeDomain,
+			ScopeID:   domainID,
+			Stage:     stage,
+			Body:      pBody,
+			UpdatedBy: user.Email,
+		}
+		if body.Model != nil {
+			model := strings.TrimSpace(*body.Model)
+			if model != "" {
+				item.Model = sqlstore.NullableString(model)
+			}
+		}
+		if body.BasedOnPromptID != nil {
+			ref := strings.TrimSpace(*body.BasedOnPromptID)
+			if ref != "" {
+				item.BasedOnPrompt = sqlstore.NullableString(ref)
+			}
+		}
+		if err := s.promptOverrides.Upsert(r.Context(), item); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to save override")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	case http.MethodDelete:
+		if !requireEditor() {
+			return
+		}
+		stage = strings.TrimSpace(stage)
+		if !isGenerationPromptStage(stage) {
+			writeError(w, http.StatusBadRequest, "invalid stage")
+			return
+		}
+		if err := s.promptOverrides.Delete(r.Context(), sqlstore.PromptScopeDomain, domainID, stage); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to delete override")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
 }
 
 func (s *Server) handleProjectDomains(w http.ResponseWriter, r *http.Request, projectID string, action string) {
@@ -1591,6 +1923,14 @@ func (s *Server) handleDomainActions(w http.ResponseWriter, r *http.Request) {
 		s.handleDomainFiles(w, r, domainID, parts[2:])
 	case "index-checks":
 		s.handleDomainIndexChecks(w, r, domainID, parts[2:])
+	case "prompts":
+		stage := ""
+		if len(parts) > 2 {
+			stage, _ = url.PathUnescape(parts[2])
+		}
+		s.handleDomainPrompts(w, r, domainID, stage)
+	case "deployments":
+		s.handleDomainDeployments(w, r, domainID)
 	case "":
 		s.handleDomainBase(w, r, domainID)
 	default:
@@ -1815,10 +2155,12 @@ func (s *Server) handleDomainGenerate(w http.ResponseWriter, r *http.Request, do
 		writeError(w, http.StatusInternalServerError, "could not create generation")
 		return
 	}
-	_ = s.domains.SetLastGeneration(r.Context(), domainID, genID)
-	_ = s.domains.UpdateStatus(r.Context(), domainID, "processing")
 
 	if s.tasks == nil {
+		errMsg := "queue unavailable"
+		now := time.Now().UTC()
+		_ = s.generations.UpdateFull(r.Context(), genID, "error", 0, &errMsg, json.RawMessage(`[]`), nil, &now, &now, nil)
+		_ = s.domains.UpdateStatus(r.Context(), domainID, stableDomainStatusFromDomain(d))
 		writeError(w, http.StatusServiceUnavailable, "queue unavailable")
 		return
 	}
@@ -1828,9 +2170,15 @@ func (s *Server) handleDomainGenerate(w http.ResponseWriter, r *http.Request, do
 		if s.logger != nil {
 			s.logger.Warnf("failed to enqueue generation: %v", err)
 		}
+		errMsg := "enqueue failed"
+		now := time.Now().UTC()
+		_ = s.generations.UpdateFull(r.Context(), genID, "error", 0, &errMsg, json.RawMessage(`[]`), nil, &now, &now, nil)
+		_ = s.domains.UpdateStatus(r.Context(), domainID, stableDomainStatusFromDomain(d))
 		writeError(w, http.StatusInternalServerError, "could not enqueue generation")
 		return
 	}
+	_ = s.domains.SetLastGeneration(r.Context(), domainID, genID)
+	_ = s.domains.UpdateStatus(r.Context(), domainID, "processing")
 
 	writeJSON(w, http.StatusAccepted, map[string]string{"id": genID, "status": "queued"})
 }
@@ -2622,6 +2970,16 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request, domain sq
 	if mimeType == "" {
 		mimeType = detectMimeType(relPath, content)
 	}
+	if r.URL.Query().Get("raw") == "1" {
+		if strings.HasPrefix(mimeType, "text/") && !strings.Contains(strings.ToLower(mimeType), "charset=") {
+			mimeType = mimeType + "; charset=utf-8"
+		}
+		w.Header().Set("Content-Type", mimeType)
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(content)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"content":  string(content),
 		"mimeType": mimeType,
@@ -2930,6 +3288,7 @@ func (s *Server) handleGenerationByID(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "could not delete generation")
 			return
 		}
+		_ = s.domains.RecalculateGenerationPointers(r.Context(), gen.DomainID)
 		writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -2988,7 +3347,7 @@ func (s *Server) handleGenerationAction(w http.ResponseWriter, r *http.Request, 
 				writeError(w, http.StatusInternalServerError, "could not pause generation")
 				return
 			}
-			_ = s.domains.UpdateStatus(r.Context(), gen.DomainID, "waiting")
+			_ = s.domains.UpdateStatus(r.Context(), gen.DomainID, stableDomainStatusFromDomain(d))
 			writeJSON(w, http.StatusOK, map[string]string{"status": "paused", "message": "generation paused"})
 			return
 		}
@@ -3043,7 +3402,7 @@ func (s *Server) handleGenerationAction(w http.ResponseWriter, r *http.Request, 
 				writeError(w, http.StatusInternalServerError, "could not cancel generation")
 				return
 			}
-			_ = s.domains.UpdateStatus(r.Context(), gen.DomainID, "waiting")
+			_ = s.domains.UpdateStatus(r.Context(), gen.DomainID, stableDomainStatusFromDomain(d))
 			writeJSON(w, http.StatusOK, map[string]string{"status": "cancelled", "message": "generation cancelled"})
 			return
 		}
@@ -3062,18 +3421,18 @@ func (s *Server) handleGenerationAction(w http.ResponseWriter, r *http.Request, 
 				writeError(w, http.StatusInternalServerError, "could not cancel generation")
 				return
 			}
-			// Очищаем artifacts и logs для отмененной задачи
-			emptyArtifacts, _ := json.Marshal(map[string]interface{}{})
-			emptyLogs, _ := json.Marshal([]string{})
-			_ = s.generations.UpdateFull(r.Context(), id, "cancelled", 0, nil, emptyLogs, emptyArtifacts, nil, nil, nil)
+			_ = s.domains.UpdateStatus(r.Context(), gen.DomainID, stableDomainStatusFromDomain(d))
+			writeJSON(w, http.StatusOK, map[string]string{"status": "cancelled", "message": "generation cancelled"})
+			return
 		} else {
 			// Если задача выполняется, устанавливаем CANCELLING - worker сам переведет в CANCELLED
 			if err := s.generations.UpdateStatus(r.Context(), id, "cancelling", gen.Progress, nil); err != nil {
 				writeError(w, http.StatusInternalServerError, "could not cancel generation")
 				return
 			}
+			writeJSON(w, http.StatusOK, map[string]string{"status": "cancelling", "message": "cancellation requested"})
+			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"status": gen.Status, "message": "cancellation requested"})
 
 	default:
 		writeError(w, http.StatusBadRequest, "invalid action: must be pause, resume, or cancel")
@@ -5531,11 +5890,13 @@ type domainDTO struct {
 	TargetLanguage     string     `json:"target_language,omitempty"`
 	ExcludeDomains     *string    `json:"exclude_domains,omitempty"`
 	Status             string     `json:"status"`
-	LastGenerationID   *string    `json:"last_generation_id,omitempty"`
+	LastAttemptGenID   *string    `json:"last_attempt_generation_id,omitempty"`
+	LastSuccessGenID   *string    `json:"last_success_generation_id,omitempty"`
 	PublishedAt        *time.Time `json:"published_at,omitempty"`
 	PublishedPath      *string    `json:"published_path,omitempty"`
 	FileCount          int        `json:"file_count,omitempty"`
 	TotalSizeBytes     int64      `json:"total_size_bytes,omitempty"`
+	DeploymentMode     *string    `json:"deployment_mode,omitempty"`
 	LinkAnchorText     *string    `json:"link_anchor_text,omitempty"`
 	LinkAcceptorURL    *string    `json:"link_acceptor_url,omitempty"`
 	LinkStatus         *string    `json:"link_status,omitempty"`
@@ -5638,19 +5999,64 @@ type indexCheckStatsDTO struct {
 }
 
 type generationDTO struct {
-	ID         string     `json:"id"`
-	DomainID   string     `json:"domain_id"`
-	DomainURL  *string    `json:"domain_url,omitempty"`
-	Status     string     `json:"status"`
-	Progress   int        `json:"progress"`
-	Error      *string    `json:"error,omitempty"`
-	PromptID   *string    `json:"prompt_id,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at"`
-	StartedAt  *time.Time `json:"started_at,omitempty"`
-	FinishedAt *time.Time `json:"finished_at,omitempty"`
-	Logs       any        `json:"logs,omitempty"`
-	Artifacts  any        `json:"artifacts,omitempty"`
+	ID               string     `json:"id"`
+	DomainID         string     `json:"domain_id"`
+	DomainURL        *string    `json:"domain_url,omitempty"`
+	Status           string     `json:"status"`
+	Progress         int        `json:"progress"`
+	Error            *string    `json:"error,omitempty"`
+	PromptID         *string    `json:"prompt_id,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+	StartedAt        *time.Time `json:"started_at,omitempty"`
+	FinishedAt       *time.Time `json:"finished_at,omitempty"`
+	Logs             any        `json:"logs,omitempty"`
+	Artifacts        any        `json:"artifacts,omitempty"`
+	ArtifactsSummary any        `json:"artifacts_summary,omitempty"`
+}
+
+type promptOverrideDTO struct {
+	ID            string    `json:"id"`
+	ScopeType     string    `json:"scope_type"`
+	ScopeID       string    `json:"scope_id"`
+	Stage         string    `json:"stage"`
+	Body          string    `json:"body"`
+	Model         *string   `json:"model,omitempty"`
+	BasedOnPrompt *string   `json:"based_on_prompt_id,omitempty"`
+	UpdatedBy     string    `json:"updated_by"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+type resolvedPromptDTO struct {
+	Stage           string  `json:"stage"`
+	Source          string  `json:"source"`
+	PromptID        *string `json:"prompt_id,omitempty"`
+	OverrideID      *string `json:"override_id,omitempty"`
+	Body            string  `json:"body"`
+	Model           *string `json:"model,omitempty"`
+	BasedOnPromptID *string `json:"based_on_prompt_id,omitempty"`
+}
+
+type domainPromptsDTO struct {
+	Overrides []promptOverrideDTO `json:"overrides"`
+	Resolved  []resolvedPromptDTO `json:"resolved"`
+}
+
+type deploymentAttemptDTO struct {
+	ID             string     `json:"id"`
+	DomainID       string     `json:"domain_id"`
+	GenerationID   string     `json:"generation_id"`
+	Mode           string     `json:"mode"`
+	TargetPath     string     `json:"target_path"`
+	OwnerBefore    *string    `json:"owner_before,omitempty"`
+	OwnerAfter     *string    `json:"owner_after,omitempty"`
+	Status         string     `json:"status"`
+	ErrorMessage   *string    `json:"error_message,omitempty"`
+	FileCount      int        `json:"file_count"`
+	TotalSizeBytes int64      `json:"total_size_bytes"`
+	CreatedAt      time.Time  `json:"created_at"`
+	FinishedAt     *time.Time `json:"finished_at,omitempty"`
 }
 
 type dashboardStatsDTO struct {
@@ -5746,11 +6152,13 @@ type projectSummaryDTO struct {
 }
 
 type domainSummaryDTO struct {
-	Domain      domainDTO       `json:"domain"`
-	ProjectName string          `json:"project_name"`
-	Generations []generationDTO `json:"generations"`
-	LinkTasks   []linkTaskDTO   `json:"link_tasks"`
-	MyRole      string          `json:"my_role"`
+	Domain        domainDTO       `json:"domain"`
+	ProjectName   string          `json:"project_name"`
+	Generations   []generationDTO `json:"generations"`
+	LatestAttempt *generationDTO  `json:"latest_attempt,omitempty"`
+	LatestSuccess *generationDTO  `json:"latest_success,omitempty"`
+	LinkTasks     []linkTaskDTO   `json:"link_tasks"`
+	MyRole        string          `json:"my_role"`
 }
 
 func (s *Server) toProjectDTO(ctx context.Context, p sqlstore.Project) projectDTO {
@@ -5820,11 +6228,13 @@ func toDomainDTO(d sqlstore.Domain) domainDTO {
 		TargetLanguage:     d.TargetLanguage,
 		ExcludeDomains:     nullableStringPtr(d.ExcludeDomains),
 		Status:             d.Status,
-		LastGenerationID:   nullableStringPtr(d.LastGenerationID),
+		LastAttemptGenID:   nullableStringPtr(d.LastGenerationID),
+		LastSuccessGenID:   nullableStringPtr(d.LastSuccessGenID),
 		PublishedAt:        nullableTimePtr(d.PublishedAt),
 		PublishedPath:      nullableStringPtr(d.PublishedPath),
 		FileCount:          d.FileCount,
 		TotalSizeBytes:     d.TotalSizeBytes,
+		DeploymentMode:     nullableStringPtr(d.DeploymentMode),
 		LinkAnchorText:     nullableStringPtr(d.LinkAnchorText),
 		LinkAcceptorURL:    nullableStringPtr(d.LinkAcceptorURL),
 		LinkStatus:         nullableStringPtr(d.LinkStatus),
@@ -5948,18 +6358,35 @@ func buildIndexCheckStatsDTO(
 
 func toGenerationDTO(g sqlstore.Generation) generationDTO {
 	return generationDTO{
-		ID:         g.ID,
-		DomainID:   g.DomainID,
-		Status:     g.Status,
-		Progress:   g.Progress,
-		Error:      nullableStringPtr(g.Error),
-		PromptID:   nullableStringPtr(g.PromptID),
-		CreatedAt:  g.CreatedAt,
-		UpdatedAt:  g.UpdatedAt,
-		StartedAt:  nullableTimePtr(g.StartedAt),
-		FinishedAt: nullableTimePtr(g.FinishedAt),
-		Logs:       rawJSONOrNil(g.Logs),
-		Artifacts:  rawJSONOrNil(g.Artifacts),
+		ID:               g.ID,
+		DomainID:         g.DomainID,
+		Status:           g.Status,
+		Progress:         g.Progress,
+		Error:            nullableStringPtr(g.Error),
+		PromptID:         nullableStringPtr(g.PromptID),
+		CreatedAt:        g.CreatedAt,
+		UpdatedAt:        g.UpdatedAt,
+		StartedAt:        nullableTimePtr(g.StartedAt),
+		FinishedAt:       nullableTimePtr(g.FinishedAt),
+		Logs:             rawJSONOrNil(g.Logs),
+		Artifacts:        rawJSONOrNil(g.Artifacts),
+		ArtifactsSummary: rawJSONOrNil(g.ArtifactsSummary),
+	}
+}
+
+func toGenerationLightDTO(g sqlstore.Generation) generationDTO {
+	return generationDTO{
+		ID:               g.ID,
+		DomainID:         g.DomainID,
+		Status:           g.Status,
+		Progress:         g.Progress,
+		Error:            nullableStringPtr(g.Error),
+		PromptID:         nullableStringPtr(g.PromptID),
+		CreatedAt:        g.CreatedAt,
+		UpdatedAt:        g.UpdatedAt,
+		StartedAt:        nullableTimePtr(g.StartedAt),
+		FinishedAt:       nullableTimePtr(g.FinishedAt),
+		ArtifactsSummary: rawJSONOrNil(g.ArtifactsSummary),
 	}
 }
 
@@ -5975,6 +6402,83 @@ func toGenerationDTOWithDomain(g sqlstore.Generation, domainURL *string) generat
 	dto := toGenerationDTO(g)
 	dto.DomainURL = domainURL
 	return dto
+}
+
+func toPromptOverrideDTO(item sqlstore.PromptOverride) promptOverrideDTO {
+	return promptOverrideDTO{
+		ID:            item.ID,
+		ScopeType:     item.ScopeType,
+		ScopeID:       item.ScopeID,
+		Stage:         item.Stage,
+		Body:          item.Body,
+		Model:         nullableStringPtr(item.Model),
+		BasedOnPrompt: nullableStringPtr(item.BasedOnPrompt),
+		UpdatedBy:     item.UpdatedBy,
+		CreatedAt:     item.CreatedAt,
+		UpdatedAt:     item.UpdatedAt,
+	}
+}
+
+func toPromptOverrideDTOs(list []sqlstore.PromptOverride) []promptOverrideDTO {
+	out := make([]promptOverrideDTO, 0, len(list))
+	for _, item := range list {
+		out = append(out, toPromptOverrideDTO(item))
+	}
+	return out
+}
+
+func toResolvedPromptDTO(item sqlstore.ResolvedPrompt) resolvedPromptDTO {
+	return resolvedPromptDTO{
+		Stage:           item.Stage,
+		Source:          item.Source,
+		PromptID:        nullableStringPtr(item.PromptID),
+		OverrideID:      nullableStringPtr(item.OverrideID),
+		Body:            item.Body,
+		Model:           nullableStringPtr(item.Model),
+		BasedOnPromptID: nullableStringPtr(item.BasedOnPromptID),
+	}
+}
+
+func toDeploymentAttemptDTO(item sqlstore.DeploymentAttempt) deploymentAttemptDTO {
+	return deploymentAttemptDTO{
+		ID:             item.ID,
+		DomainID:       item.DomainID,
+		GenerationID:   item.GenerationID,
+		Mode:           item.Mode,
+		TargetPath:     item.TargetPath,
+		OwnerBefore:    nullableStringPtr(item.OwnerBefore),
+		OwnerAfter:     nullableStringPtr(item.OwnerAfter),
+		Status:         item.Status,
+		ErrorMessage:   nullableStringPtr(item.ErrorMessage),
+		FileCount:      item.FileCount,
+		TotalSizeBytes: item.TotalSizeBytes,
+		CreatedAt:      item.CreatedAt,
+		FinishedAt:     nullableTimePtr(item.FinishedAt),
+	}
+}
+
+func isGenerationPromptStage(stage string) bool {
+	stage = strings.TrimSpace(stage)
+	for _, candidate := range sqlstore.GenerationPromptStages {
+		if stage == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func stableDomainStatusFromDomain(domain sqlstore.Domain) string {
+	if (domain.PublishedAt.Valid || strings.TrimSpace(domain.PublishedPath.String) != "") && domain.FileCount > 0 {
+		return "published"
+	}
+	return "waiting"
 }
 
 func (s *Server) buildIndexCheckResponse(ctx context.Context, list []sqlstore.IndexCheck) []indexCheckDTO {
