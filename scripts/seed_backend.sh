@@ -10,6 +10,9 @@ MANAGER2_EMAIL="${MANAGER2_EMAIL:-manager2@example.com}"
 MANAGER2_PASSWORD="${MANAGER2_PASSWORD:-Manager123!!}"
 USER_EMAIL="${USER_EMAIL:-user@example.com}"
 USER_PASSWORD="${USER_PASSWORD:-User123!!!}"
+SEED_USERS="${SEED_USERS:-true}"
+SEED_PROJECTS="${SEED_PROJECTS:-true}"
+SEED_DOMAINS="${SEED_DOMAINS:-true}"
 
 SURSTREM_PROJECT_NAME="${SURSTREM_PROJECT_NAME:-surstrem}"
 SURSTREM_COUNTRY="${SURSTREM_COUNTRY:-se}"
@@ -38,6 +41,15 @@ ENV_FILE="${ENV_FILE:-${WORK_DIR}/../.env}"
 
 log() {
   echo "[seed] $*"
+}
+
+is_enabled() {
+  local raw="${1:-}"
+  raw="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')"
+  case "$raw" in
+    1|true|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 wait_for_backend() {
@@ -264,47 +276,68 @@ import_domains() {
 }
 
 main() {
+  if ! is_enabled "$SEED_USERS" && ( is_enabled "$SEED_PROJECTS" || is_enabled "$SEED_DOMAINS" ); then
+    log "SEED_USERS=false is incompatible with project/domain seeding"
+    exit 1
+  fi
+  if ! is_enabled "$SEED_PROJECTS" && is_enabled "$SEED_DOMAINS"; then
+    log "SEED_PROJECTS=false is incompatible with domain seeding"
+    exit 1
+  fi
+
   log "waiting for backend at ${API_URL}"
   if ! wait_for_backend; then
     log "backend not ready"
     exit 1
   fi
 
-  log "ensure admin user"
-  ensure_login "$ADMIN_EMAIL" "$ADMIN_PASSWORD" "$ADMIN_COOKIE"
+  if is_enabled "$SEED_USERS"; then
+    log "ensure admin user"
+    ensure_login "$ADMIN_EMAIL" "$ADMIN_PASSWORD" "$ADMIN_COOKIE"
 
-  load_gemini_key
+    load_gemini_key
 
-  log "ensure manager users"
-  ensure_login "$MANAGER_EMAIL" "$MANAGER_PASSWORD" "$MANAGER_COOKIE"
-  ensure_login "$MANAGER2_EMAIL" "$MANAGER2_PASSWORD" "$MANAGER2_COOKIE"
-  ensure_login "$USER_EMAIL" "$USER_PASSWORD" "${TMP_DIR}/obz_seed_user.cookie"
+    log "ensure manager users"
+    ensure_login "$MANAGER_EMAIL" "$MANAGER_PASSWORD" "$MANAGER_COOKIE"
+    ensure_login "$MANAGER2_EMAIL" "$MANAGER2_PASSWORD" "$MANAGER2_COOKIE"
+    ensure_login "$USER_EMAIL" "$USER_PASSWORD" "${TMP_DIR}/obz_seed_user.cookie"
 
-  log "approve users via admin"
-  approve_user "$ADMIN_EMAIL" ""
-  approve_user "$MANAGER_EMAIL" "manager"
-  approve_user "$MANAGER2_EMAIL" "manager"
-  approve_user "$USER_EMAIL" "manager"
+    log "approve users via admin"
+    approve_user "$ADMIN_EMAIL" ""
+    approve_user "$MANAGER_EMAIL" "manager"
+    approve_user "$MANAGER2_EMAIL" "manager"
+    approve_user "$USER_EMAIL" "manager"
 
-  if [[ -n "${GEMINI_API_KEY:-}" ]]; then
-    log "save Gemini API key for users"
-    save_api_key "$ADMIN_COOKIE"
-    save_api_key "$MANAGER_COOKIE"
-    save_api_key "$MANAGER2_COOKIE"
-    save_api_key "${TMP_DIR}/obz_seed_user.cookie"
+    if [[ -n "${GEMINI_API_KEY:-}" ]]; then
+      log "save Gemini API key for users"
+      save_api_key "$ADMIN_COOKIE"
+      save_api_key "$MANAGER_COOKIE"
+      save_api_key "$MANAGER2_COOKIE"
+      save_api_key "${TMP_DIR}/obz_seed_user.cookie"
+    else
+      log "GEMINI_API_KEY is empty, skipping api key setup"
+    fi
   else
-    log "GEMINI_API_KEY is empty, skipping api key setup"
+    log "SEED_USERS=false, skip user seeding"
   fi
 
-  log "create projects"
-  local surstrem_id
-  surstrem_id="$(create_project "$MANAGER_COOKIE" "$SURSTREM_PROJECT_NAME" "$SURSTREM_COUNTRY" "$SURSTREM_LANG")"
-  local xbet_id
-  xbet_id="$(create_project "$MANAGER2_COOKIE" "$XBET_PROJECT_NAME" "$XBET_COUNTRY" "$XBET_LANG")"
+  if is_enabled "$SEED_PROJECTS"; then
+    log "create projects"
+    local surstrem_id
+    surstrem_id="$(create_project "$MANAGER_COOKIE" "$SURSTREM_PROJECT_NAME" "$SURSTREM_COUNTRY" "$SURSTREM_LANG")"
+    local xbet_id
+    xbet_id="$(create_project "$MANAGER2_COOKIE" "$XBET_PROJECT_NAME" "$XBET_COUNTRY" "$XBET_LANG")"
 
-  log "import domains"
-  import_domains "$MANAGER_COOKIE" "$surstrem_id" "${SURSTREM_DOMAINS[@]}"
-  import_domains "$MANAGER2_COOKIE" "$xbet_id" "${XBET_DOMAINS[@]}"
+    if is_enabled "$SEED_DOMAINS"; then
+      log "import domains"
+      import_domains "$MANAGER_COOKIE" "$surstrem_id" "${SURSTREM_DOMAINS[@]}"
+      import_domains "$MANAGER2_COOKIE" "$xbet_id" "${XBET_DOMAINS[@]}"
+    else
+      log "SEED_DOMAINS=false, skip domain import"
+    fi
+  else
+    log "SEED_PROJECTS=false, skip project creation"
+  fi
 
   log "done"
 }

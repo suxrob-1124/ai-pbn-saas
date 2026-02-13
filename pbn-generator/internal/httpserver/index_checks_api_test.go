@@ -575,7 +575,11 @@ func TestAdminIndexChecksRun(t *testing.T) {
 		ID:        "domain-1",
 		ProjectID: project.ID,
 		URL:       "example.com",
-		Status:    "waiting",
+		Status:    "published",
+		PublishedAt: sql.NullTime{
+			Time:  time.Now().UTC(),
+			Valid: true,
+		},
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),
 	}

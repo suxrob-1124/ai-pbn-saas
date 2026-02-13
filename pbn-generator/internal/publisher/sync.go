@@ -22,7 +22,9 @@ import (
 type SiteFileStore interface {
 	Create(ctx context.Context, file sqlstore.SiteFile) error
 	GetByPath(ctx context.Context, domainID, path string) (*sqlstore.SiteFile, error)
+	List(ctx context.Context, domainID string) ([]sqlstore.SiteFile, error)
 	Update(ctx context.Context, fileID string, content []byte) error
+	Delete(ctx context.Context, fileID string) error
 }
 
 // SyncPublishedFiles сканирует опубликованные файлы и синхронизирует их с БД.
@@ -44,6 +46,7 @@ func SyncPublishedFiles(ctx context.Context, baseDir, domainName, domainID strin
 
 	fileCount := 0
 	var totalSize int64
+	seenPaths := map[string]struct{}{}
 
 	err = filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -67,6 +70,7 @@ func SyncPublishedFiles(ctx context.Context, baseDir, domainName, domainID strin
 		if strings.HasPrefix(rel, "../") || rel == ".." {
 			return fmt.Errorf("sync files: invalid path %s", rel)
 		}
+		seenPaths[rel] = struct{}{}
 
 		content, err := os.ReadFile(path)
 		if err != nil {
@@ -105,6 +109,19 @@ func SyncPublishedFiles(ctx context.Context, baseDir, domainName, domainID strin
 	})
 	if err != nil {
 		return 0, 0, err
+	}
+
+	existingFiles, err := store.List(ctx, domainID)
+	if err != nil {
+		return 0, 0, err
+	}
+	for _, file := range existingFiles {
+		if _, ok := seenPaths[file.Path]; ok {
+			continue
+		}
+		if err := store.Delete(ctx, file.ID); err != nil {
+			return 0, 0, err
+		}
 	}
 
 	if fileCount == 0 {

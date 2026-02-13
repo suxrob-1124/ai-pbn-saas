@@ -165,6 +165,32 @@ func (s *ProjectStore) ListAll(ctx context.Context) ([]Project, error) {
 	return res, rows.Err()
 }
 
+// ListByNameExact возвращает проекты с точным совпадением имени.
+func (s *ProjectStore) ListByNameExact(ctx context.Context, name string) ([]Project, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, user_email, name, target_country, target_language, timezone, global_blacklist, default_server_id, status, created_at, updated_at
+FROM projects
+WHERE name=$1
+ORDER BY updated_at DESC`, name)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var res []Project
+	for rows.Next() {
+		var p Project
+		var gb sql.NullString
+		if err := rows.Scan(&p.ID, &p.UserEmail, &p.Name, &p.TargetCountry, &p.TargetLanguage, &p.Timezone, &gb, &p.DefaultServerID, &p.Status, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			return nil, err
+		}
+		if gb.Valid {
+			p.GlobalBlacklist = []byte(gb.String)
+		}
+		res = append(res, p)
+	}
+	return res, rows.Err()
+}
+
 func (s *ProjectStore) GetByID(ctx context.Context, id string) (Project, error) {
 	var p Project
 	var gb sql.NullString
@@ -280,6 +306,21 @@ func (s *DomainStore) Get(ctx context.Context, id string) (Domain, error) {
 	return d, nil
 }
 
+// GetByURL возвращает домен по точному URL.
+func (s *DomainStore) GetByURL(ctx context.Context, url string) (Domain, error) {
+	var d Domain
+	var sb sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, published_at, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, created_at, updated_at FROM domains WHERE url=$1`, url).
+		Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.PublishedAt, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.LinkReadyAt, &d.CreatedAt, &d.UpdatedAt)
+	if err != nil {
+		return Domain{}, err
+	}
+	if sb.Valid {
+		d.SpecificBlacklist = []byte(sb.String)
+	}
+	return d, nil
+}
+
 func (s *DomainStore) UpdateStatus(ctx context.Context, id, status string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE domains SET status=$1, updated_at=NOW() WHERE id=$2`, status, id)
 	return err
@@ -374,6 +415,12 @@ func (s *DomainStore) UpdateLinkSettings(ctx context.Context, id string, anchorT
 	}
 	rows, _ := res.RowsAffected()
 	return rows > 0, nil
+}
+
+// UpdateProject переносит домен в другой проект.
+func (s *DomainStore) UpdateProject(ctx context.Context, id, projectID string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE domains SET project_id=$1, updated_at=NOW() WHERE id=$2`, projectID, id)
+	return err
 }
 
 // EnsureDefaultServer creates a default server record if it doesn't exist.
