@@ -126,10 +126,14 @@ func (s *CompetitorAnalysisStep) Execute(ctx context.Context, state *PipelineSta
 		artifacts["competitor_analysis"] = llmAnalysis
 		// для обратной совместимости
 		artifacts["llm_analysis"] = llmAnalysis
+		resolution := resolveBrandResolution(state, analysisCSV, contentsTxt)
+		artifacts["brand_resolution"] = resolution
+		logBrandResolution(state, resolution)
 
 		// Сохраняем в context для следующих шагов
 		state.Context["competitor_analysis"] = llmAnalysis
 		state.Context["llm_analysis"] = llmAnalysis
+		state.Context["brand_resolution"] = resolution
 	}
 
 	return artifacts, nil

@@ -466,6 +466,12 @@ func (p *Pipeline) restoreFromArtifacts(stepName, artifactKey string) error {
 			p.state.Context["llm_analysis"] = analysis
 			p.state.Context["competitor_analysis"] = analysis
 		}
+		if raw, ok := p.state.Artifacts["brand_resolution"]; ok {
+			p.state.Context["brand_resolution"] = raw
+		}
+		if raw, ok := p.state.Artifacts["brand_validation"]; ok {
+			p.state.Context["brand_validation"] = raw
+		}
 	case StepTechnicalSpec:
 		// Восстанавливаем technical_spec
 		if spec, ok := p.state.Artifacts["technical_spec"].(string); ok {

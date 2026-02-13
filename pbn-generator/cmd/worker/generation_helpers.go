@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -158,11 +159,112 @@ func buildGenerationArtifactsSummary(artifacts map[string]any, promptTrace map[s
 	if legacyMeta, ok := artifacts["legacy_decode_meta"]; ok && legacyMeta != nil {
 		summary["legacy_decode_meta"] = legacyMeta
 	}
+	if brandMode, primaryBrand, brandSource, ok := extractBrandResolutionMeta(artifacts["brand_resolution"]); ok {
+		summary["brand_mode"] = brandMode
+		if primaryBrand != "" {
+			summary["primary_brand"] = primaryBrand
+		}
+		if brandSource != "" {
+			summary["brand_source"] = brandSource
+		}
+	}
+	if validationOK, violationsCount, ok := extractBrandValidationMeta(artifacts["brand_validation"]); ok {
+		summary["brand_validation_ok"] = validationOK
+		summary["brand_violations_count"] = violationsCount
+	}
 	if len(promptTrace) > 0 {
 		summary["prompt_trace"] = promptTrace
 	}
 
 	return summary
+}
+
+func extractBrandResolutionMeta(raw any) (brandMode string, primaryBrand string, brandSource string, ok bool) {
+	resolution, ok := toMap(raw)
+	if !ok {
+		return "", "", "", false
+	}
+	brandMode = strings.TrimSpace(asString(resolution["mode"]))
+	primaryBrand = strings.TrimSpace(asString(resolution["primary_brand"]))
+	brandSource = strings.TrimSpace(asString(resolution["source"]))
+	if brandMode == "" {
+		return "", "", "", false
+	}
+	return brandMode, primaryBrand, brandSource, true
+}
+
+func extractBrandValidationMeta(raw any) (validationOK bool, violationsCount int, ok bool) {
+	root, ok := toMap(raw)
+	if !ok || len(root) == 0 {
+		return false, 0, false
+	}
+	hasStage := false
+	overallOK := true
+	totalViolations := 0
+
+	if _, hasOK := root["ok"]; hasOK {
+		v, vok := asBool(root["ok"])
+		if vok {
+			hasStage = true
+			overallOK = v
+		}
+		totalViolations += len(toAnySlice(root["violations"]))
+	} else {
+		for _, stageRaw := range root {
+			stage, stageOK := toMap(stageRaw)
+			if !stageOK {
+				continue
+			}
+			v, vok := asBool(stage["ok"])
+			if vok {
+				hasStage = true
+				if !v {
+					overallOK = false
+				}
+			}
+			totalViolations += len(toAnySlice(stage["violations"]))
+		}
+	}
+
+	if !hasStage {
+		return false, 0, false
+	}
+	return overallOK, totalViolations, true
+}
+
+func toMap(raw any) (map[string]any, bool) {
+	switch v := raw.(type) {
+	case map[string]any:
+		return v, true
+	default:
+		if raw == nil {
+			return nil, false
+		}
+		b, err := json.Marshal(raw)
+		if err != nil {
+			return nil, false
+		}
+		out := make(map[string]any)
+		if err := json.Unmarshal(b, &out); err != nil {
+			return nil, false
+		}
+		return out, true
+	}
+}
+
+func toAnySlice(raw any) []any {
+	switch v := raw.(type) {
+	case []any:
+		return v
+	case []string:
+		out := make([]any, 0, len(v))
+		for _, item := range v {
+			out = append(out, item)
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 func stableDomainStatus(domain sqlstore.Domain) string {
@@ -290,5 +392,24 @@ func asInt64(raw any) (int64, bool) {
 		return out, err == nil
 	default:
 		return 0, false
+	}
+}
+
+func asBool(raw any) (bool, bool) {
+	switch v := raw.(type) {
+	case bool:
+		return v, true
+	case string:
+		v = strings.TrimSpace(strings.ToLower(v))
+		switch v {
+		case "true", "1", "yes":
+			return true, true
+		case "false", "0", "no":
+			return false, true
+		default:
+			return false, false
+		}
+	default:
+		return false, false
 	}
 }

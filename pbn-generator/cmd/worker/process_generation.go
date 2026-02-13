@@ -386,6 +386,9 @@ func isRetryableGenerationError(errMsg string) bool {
 		return false
 	}
 	msg := strings.ToLower(errMsg)
+	if strings.Contains(msg, "brand policy violation") {
+		return false
+	}
 	if strings.Contains(msg, "context deadline exceeded") {
 		return true
 	}

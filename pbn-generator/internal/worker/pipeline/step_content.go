@@ -37,6 +37,8 @@ func (s *ContentGenerationStep) Execute(ctx context.Context, state *PipelineStat
 	if lang == "" {
 		lang = "sv"
 	}
+	resolution := resolveBrandResolution(state, "", "")
+	logBrandResolution(state, resolution)
 
 	// Получаем промпт
 	contentPromptID, contentSystemPrompt, contentModel, err := state.PromptManager.GetPromptByStage(ctx, "content_generation")
@@ -57,6 +59,9 @@ func (s *ContentGenerationStep) Execute(ctx context.Context, state *PipelineStat
 		"date":           currentDate,
 		"technical_spec": technicalSpec,
 	}
+	for k, v := range buildBrandPromptVars(resolution) {
+		contentVariables[k] = v
+	}
 
 	// Строим промпт
 	contentPrompt := llm.BuildPrompt(contentSystemPrompt, "", contentVariables)
@@ -74,8 +79,8 @@ func (s *ContentGenerationStep) Execute(ctx context.Context, state *PipelineStat
 		contentModelToUse = state.DefaultModel
 	}
 
-	// Выполняем запрос к LLM
-	contentMarkdown, err := state.LLMClient.Generate(ctx, "content_generation", contentPrompt, contentModelToUse)
+	// Выполняем запрос к LLM + валидация brand-policy
+	contentMarkdown, validation, err := generateWithBrandGuard(ctx, state, "content_generation", contentPrompt, contentModelToUse, resolution)
 	if err != nil {
 		return nil, fmt.Errorf("content generation failed: %w", err)
 	}
@@ -87,9 +92,12 @@ func (s *ContentGenerationStep) Execute(ctx context.Context, state *PipelineStat
 	if contentMarkdown != "" {
 		artifacts["content_generation_prompt"] = formatPromptForArtifact(contentPrompt)
 		artifacts["content_markdown"] = contentMarkdown
+		artifacts["brand_resolution"] = resolution
+		artifacts["brand_validation"] = mergeBrandValidation(state.Artifacts["brand_validation"], "content_generation", validation)
 
 		// Сохраняем в context для следующих шагов
 		state.Context["content_markdown"] = contentMarkdown
+		state.Context["brand_resolution"] = resolution
 	}
 
 	return artifacts, nil
