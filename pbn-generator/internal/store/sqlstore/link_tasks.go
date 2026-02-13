@@ -64,6 +64,7 @@ type LinkTaskStore interface {
 	ListByUser(ctx context.Context, email string, filters LinkTaskFilters) ([]LinkTask, error)
 	ListAll(ctx context.Context, filters LinkTaskFilters) ([]LinkTask, error)
 	ListPending(ctx context.Context, limit int) ([]LinkTask, error)
+	ListActiveByDomainIDs(ctx context.Context, domainIDs []string) (map[string]LinkTask, error)
 	Update(ctx context.Context, taskID string, updates LinkTaskUpdates) error
 	Delete(ctx context.Context, taskID string) error
 }
@@ -232,6 +233,51 @@ func (s *LinkTaskSQLStore) ListPending(ctx context.Context, limit int) ([]LinkTa
 		res = append(res, task)
 	}
 	return res, rows.Err()
+}
+
+// ListActiveByDomainIDs возвращает по одной активной задаче на домен
+// с приоритетом статусов removing > searching > pending и затем по created_at DESC.
+func (s *LinkTaskSQLStore) ListActiveByDomainIDs(ctx context.Context, domainIDs []string) (map[string]LinkTask, error) {
+	res := make(map[string]LinkTask)
+	if len(domainIDs) == 0 {
+		return res, nil
+	}
+	placeholders := make([]string, 0, len(domainIDs))
+	args := make([]interface{}, 0, len(domainIDs))
+	for idx, id := range domainIDs {
+		placeholders = append(placeholders, fmt.Sprintf("$%d", idx+1))
+		args = append(args, id)
+	}
+	query := fmt.Sprintf(`SELECT id, domain_id, anchor_text, target_url, scheduled_for, action, status, found_location, generated_content, error_message, attempts, created_by, created_at, completed_at, log_lines
+		FROM link_tasks
+		WHERE domain_id IN (%s)
+			AND status IN ('pending','searching','removing')
+		ORDER BY
+			CASE status
+				WHEN 'removing' THEN 3
+				WHEN 'searching' THEN 2
+				WHEN 'pending' THEN 1
+				ELSE 0
+			END DESC,
+			created_at DESC`, strings.Join(placeholders, ","))
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	list, err := scanLinkTasks(rows)
+	if err != nil {
+		return nil, err
+	}
+	for _, task := range list {
+		if _, exists := res[task.DomainID]; exists {
+			continue
+		}
+		res[task.DomainID] = task
+	}
+	return res, nil
 }
 
 // Update обновляет задачу линкбилдинга.

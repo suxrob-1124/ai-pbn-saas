@@ -77,3 +77,17 @@ export function getDomainLinkStatusMeta(status: string | undefined, hasSettings:
   }
   return { text: "Готово к запуску", tone: "slate", icon: "clock" };
 }
+
+export function canRetryLinkTask(status?: string | null): boolean {
+  return normalizeLinkTaskStatus(status) === "failed";
+}
+
+export function canEditLinkTask(status?: string | null): boolean {
+  const normalized = normalizeLinkTaskStatus(status);
+  return normalized === "pending" || normalized === "failed";
+}
+
+export function canDeleteLinkTask(status?: string | null): boolean {
+  const normalized = normalizeLinkTaskStatus(status);
+  return !(normalized === "pending" || normalized === "searching" || normalized === "removing");
+}

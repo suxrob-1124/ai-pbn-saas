@@ -61,10 +61,15 @@ type Domain = {
   link_anchor_text?: string;
   link_acceptor_url?: string;
   link_status?: string;
+  link_status_effective?: string;
+  link_status_source?: "domain" | "active_task";
   link_last_task_id?: string;
   link_ready_at?: string;
   updated_at?: string;
 };
+
+const effectiveDomainLinkStatus = (domain: Domain | null | undefined) =>
+  domain?.link_status_effective || domain?.link_status || "";
 
 type Generation = {
   id: string;
@@ -1049,8 +1054,9 @@ export default function ProjectDetailPage() {
   const runLinkTask = async (id: string) => {
     const domain = domainById[id];
     if (!domain) return;
-    const hasActiveLink = hasInsertedLink(domain.link_status);
-    if (isLinkTaskInProgress(domain.link_status)) {
+    const linkStatus = effectiveDomainLinkStatus(domain);
+    const hasActiveLink = hasInsertedLink(linkStatus);
+    if (isLinkTaskInProgress(linkStatus)) {
       showToast({
         type: "error",
         title: "Задача уже выполняется",
@@ -1102,7 +1108,8 @@ export default function ProjectDetailPage() {
   const removeLinkTask = async (id: string) => {
     const domain = domainById[id];
     if (!domain) return;
-    const canRemoveLink = hasInsertedLink(domain.link_status) && !isLinkTaskInProgress(domain.link_status);
+    const linkStatus = effectiveDomainLinkStatus(domain);
+    const canRemoveLink = hasInsertedLink(linkStatus) && !isLinkTaskInProgress(linkStatus);
     const anchor = (domain.link_anchor_text || "").trim();
     const acceptor = (domain.link_acceptor_url || "").trim();
     const draft = linkEdits[id] || { anchor, acceptor };
@@ -1422,8 +1429,9 @@ export default function ProjectDetailPage() {
         )}
         <div className="space-y-3">
           {filteredDomains.map((d) => {
-            const hasActiveLink = hasInsertedLink(d.link_status);
-            const linkInProgress = isLinkTaskInProgress(d.link_status);
+            const linkStatus = effectiveDomainLinkStatus(d);
+            const hasActiveLink = hasInsertedLink(linkStatus);
+            const linkInProgress = isLinkTaskInProgress(linkStatus);
             const canRemoveLink = hasActiveLink && !linkInProgress;
             const isPublished = (d.status || "").toLowerCase() === "published";
             const linkReadyAtDate = d.link_ready_at ? new Date(d.link_ready_at) : null;
@@ -2180,9 +2188,13 @@ function StatusBadge({ status }: { status: string }) {
   return <Badge label={cfg.text} tone={cfg.tone} icon={cfg.icon} className="text-xs" />;
 }
 
-function LinkStatusBadge({ domain }: { domain: { link_anchor_text?: string; link_acceptor_url?: string; link_status?: string; link_last_task_id?: string } }) {
+function LinkStatusBadge({
+  domain
+}: {
+  domain: { link_anchor_text?: string; link_acceptor_url?: string; link_status?: string; link_status_effective?: string; link_last_task_id?: string };
+}) {
   const hasSettings = Boolean((domain.link_anchor_text || "").trim()) && Boolean((domain.link_acceptor_url || "").trim());
-  const status = domain.link_status || (domain.link_last_task_id ? "pending" : "ready");
+  const status = domain.link_status_effective || domain.link_status || (domain.link_last_task_id ? "pending" : "ready");
   const meta = getDomainLinkStatusMeta(status, hasSettings);
   const icon =
     meta.icon === "refresh" ? <FiRefreshCw /> : meta.icon === "check" ? <FiCheck /> : meta.icon === "alert" ? <FiPauseCircle /> : <FiClock />;

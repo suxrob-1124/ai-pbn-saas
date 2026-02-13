@@ -196,8 +196,8 @@ func TestProcessPendingLinkTasksEnqueueError(t *testing.T) {
 	if !task.ErrorMessage.Valid {
 		t.Fatalf("expected error message set")
 	}
-	if domainStore.linkStatus["domain-a"] != "pending" {
-		t.Fatalf("expected domain-a pending after enqueue error, got %q", domainStore.linkStatus["domain-a"])
+	if _, ok := domainStore.linkStatus["domain-a"]; ok {
+		t.Fatalf("expected domain-a link status unchanged on enqueue error, got %q", domainStore.linkStatus["domain-a"])
 	}
 }
 

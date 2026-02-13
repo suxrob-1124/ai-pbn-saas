@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { FiRefreshCw } from "react-icons/fi";
 import type { LinkTaskDTO } from "../types/linkTasks";
-import { getLinkTaskStatusMeta, normalizeLinkTaskStatus } from "../lib/linkTaskStatus";
+import { canDeleteLinkTask, canEditLinkTask, canRetryLinkTask, getLinkTaskStatusMeta, normalizeLinkTaskStatus } from "../lib/linkTaskStatus";
 
 type LinkTaskListProps = {
   tasks: LinkTaskDTO[];
@@ -66,6 +66,14 @@ export function LinkTaskList({
     () => filteredTasks.filter((task) => selected[task.id]),
     [filteredTasks, selected]
   );
+  const bulkRetryTasks = useMemo(
+    () => selectedTasks.filter((task) => canRetryLinkTask(task.status)),
+    [selectedTasks]
+  );
+  const bulkDeleteTasks = useMemo(
+    () => selectedTasks.filter((task) => canDeleteLinkTask(task.status)),
+    [selectedTasks]
+  );
 
   const toggleAll = () => {
     if (selectedTasks.length === filteredTasks.length && filteredTasks.length > 0) {
@@ -123,15 +131,17 @@ export function LinkTaskList({
       <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
         <span>Выбрано: {selectedTasks.length}</span>
         <button
-          onClick={() => onBulkRetry(selectedTasks)}
-          disabled={loading || selectedTasks.length === 0}
+          onClick={() => onBulkRetry(bulkRetryTasks)}
+          disabled={loading || bulkRetryTasks.length === 0}
+          title={bulkRetryTasks.length === 0 ? "Повтор доступен только для задач со статусом Ошибка." : undefined}
           className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-white px-3 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700 dark:bg-slate-800 dark:text-emerald-300 disabled:opacity-50"
         >
           Массовый повтор
         </button>
         <button
-          onClick={() => onBulkDelete(selectedTasks)}
-          disabled={loading || selectedTasks.length === 0}
+          onClick={() => onBulkDelete(bulkDeleteTasks)}
+          disabled={loading || bulkDeleteTasks.length === 0}
+          title={bulkDeleteTasks.length === 0 ? "Удаление недоступно для активных задач (ожидает/поиск/удаление)." : undefined}
           className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200 disabled:opacity-50"
         >
           Массовое удаление
@@ -172,63 +182,71 @@ export function LinkTaskList({
                 <th className="py-2 pr-4 text-right">Действия</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-              {filteredTasks.map((task) => (
-                <tr key={task.id}>
-                  <td className="py-3 pr-2">
-                    <input
-                      type="checkbox"
-                      checked={Boolean(selected[task.id])}
-                      onChange={() => toggleOne(task.id)}
-                      disabled={loading}
-                    />
-                  </td>
-                  <td className="py-3 pr-4 font-medium">{task.anchor_text}</td>
-                  <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">{task.target_url}</td>
-                  <td className="py-3 pr-4">
-                    {(() => {
-                      const meta = getLinkTaskStatusMeta(task.status);
-                      const style = STATUS_TONE_CLASSES[meta.tone] || STATUS_TONE_CLASSES.slate;
-                      return (
-                    <span
-                          className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-semibold ${style}`}
-                    >
-                          {meta.text}
-                    </span>
-                      );
-                    })()}
-                  </td>
-                  <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">
-                    {new Date(task.scheduled_for).toLocaleString()}
-                  </td>
-                  <td className="py-3 pr-4 text-right space-x-2">
-                    <button
-                      onClick={() => onRetry(task)}
-                      disabled={loading}
-                      className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-white px-3 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700 dark:bg-slate-800 dark:text-emerald-300"
-                    >
-                      Повторить
-                    </button>
-                    <button
-                      onClick={() => onEdit(task)}
-                      disabled={loading}
-                      className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                    >
-                      Изменить
-                    </button>
-                    <button
-                      onClick={() => onDelete(task)}
-                      disabled={loading}
-                      className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
-                    >
-                      Удалить
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+	            <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+	              {filteredTasks.map((task) => {
+	                const canRetry = canRetryLinkTask(task.status);
+	                const canEdit = canEditLinkTask(task.status);
+	                const canDelete = canDeleteLinkTask(task.status);
+	                return (
+	                  <tr key={task.id}>
+	                    <td className="py-3 pr-2">
+	                      <input
+	                        type="checkbox"
+	                        checked={Boolean(selected[task.id])}
+	                        onChange={() => toggleOne(task.id)}
+	                        disabled={loading}
+	                      />
+	                    </td>
+	                    <td className="py-3 pr-4 font-medium">{task.anchor_text}</td>
+	                    <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">{task.target_url}</td>
+	                    <td className="py-3 pr-4">
+	                      {(() => {
+	                        const meta = getLinkTaskStatusMeta(task.status);
+	                        const style = STATUS_TONE_CLASSES[meta.tone] || STATUS_TONE_CLASSES.slate;
+	                        return (
+	                          <span
+	                            className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-semibold ${style}`}
+	                          >
+	                            {meta.text}
+	                          </span>
+	                        );
+	                      })()}
+	                    </td>
+	                    <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">
+	                      {new Date(task.scheduled_for).toLocaleString()}
+	                    </td>
+	                    <td className="py-3 pr-4 text-right space-x-2">
+	                      <button
+	                        onClick={() => onRetry(task)}
+	                        disabled={loading || !canRetry}
+	                        title={!canRetry ? "Повтор доступен только для задач со статусом Ошибка." : undefined}
+	                        className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-white px-3 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700 dark:bg-slate-800 dark:text-emerald-300"
+	                      >
+	                        Повторить
+	                      </button>
+	                      <button
+	                        onClick={() => onEdit(task)}
+	                        disabled={loading || !canEdit}
+	                        title={!canEdit ? "Редактирование доступно только для статусов Ожидает и Ошибка." : undefined}
+	                        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+	                      >
+	                        Изменить
+	                      </button>
+	                      <button
+	                        onClick={() => onDelete(task)}
+	                        disabled={loading || !canDelete}
+	                        title={!canDelete ? "Удаление недоступно для активных задач (ожидает/поиск/удаление)." : undefined}
+	                        className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
+	                      >
+	                        Удалить
+	                      </button>
+	                    </td>
+	                  </tr>
+	                );
+	              })}
+	            </tbody>
+	          </table>
+	        </div>
       )}
     </div>
   );

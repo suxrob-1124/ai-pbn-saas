@@ -129,9 +129,16 @@ frontend/
 
 - Канонические статусы link-task: `pending`, `searching`, `removing`, `inserted`, `generated`, `removed`, `failed`.
 - Legacy-статус `found` больше не используется как рабочий и нормализуется в `searching`.
+- `domains.link_status` хранит raw-состояние и может временно отставать от очереди.
+- Для UI используйте `link_status_effective` из summary (`source=domain|active_task`) как канонический текущий статус.
 - `remove` идемпотентен: если ссылка уже отсутствует, задача завершается как `removed` (с warning в логах).
 - `relink` без найденного источника замены завершается как `failed` без fallback-генерации нового блока.
 - `POST /api/links/{id}/retry` сбрасывает lifecycle задачи: `attempts=0`, `scheduled_for=now`, `created_at=now`, очищает runtime-поля задачи.
+
+## 🧾 Очереди проекта
+
+- `GET /api/projects/{id}/queue` — только активная operational-очередь (`pending|queued`) для доменов в `waiting`.
+- `GET /api/projects/{id}/queue/history` — история запусков проекта (`completed|failed`) с фильтрами `status/date/search`.
 
 ### Инфраструктура
 

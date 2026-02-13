@@ -622,6 +622,217 @@ func TestDomainSummaryIncludesMyRoleEditor(t *testing.T) {
 	}
 }
 
+func TestDomainSummaryUsesEffectiveLinkStatusFromActiveTask(t *testing.T) {
+	s := setupServer(t)
+	projectID := "project-domain-effective"
+	domainID := "domain-domain-effective"
+	now := time.Now().UTC()
+
+	s.projects.(*stubProjectStore).projects[projectID] = sqlstore.Project{
+		ID:        projectID,
+		UserEmail: "owner@example.com",
+		Name:      "Project",
+		Status:    "active",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	s.domains.(*stubDomainStore).domains[domainID] = sqlstore.Domain{
+		ID:             domainID,
+		ProjectID:      projectID,
+		URL:            "example.com",
+		Status:         "published",
+		LinkStatus:     sql.NullString{String: "ready", Valid: true},
+		PublishedAt:    sql.NullTime{Time: now, Valid: true},
+		PublishedPath:  sql.NullString{String: "/server/example.com/", Valid: true},
+		FileCount:      5,
+		TotalSizeBytes: 123,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	linkStore := s.linkTasks.(*stubLinkTaskStore)
+	linkStore.domainToProject[domainID] = projectID
+	_ = linkStore.Create(context.Background(), sqlstore.LinkTask{
+		ID:           "task-1",
+		DomainID:     domainID,
+		AnchorText:   "anchor",
+		TargetURL:    "https://example.org",
+		ScheduledFor: now,
+		Action:       "insert",
+		Status:       "searching",
+		CreatedBy:    "owner@example.com",
+		CreatedAt:    now.Add(time.Second),
+	})
+
+	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: "owner@example.com",
+		Role:  "manager",
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/domains/"+domainID+"/summary", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	s.handleDomainSummary(rec, req, domainID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp domainSummaryDTO
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Domain.LinkStatusEffective == nil || *resp.Domain.LinkStatusEffective != "searching" {
+		t.Fatalf("expected link_status_effective=searching, got %#v", resp.Domain.LinkStatusEffective)
+	}
+	if resp.Domain.LinkStatusSource != "active_task" {
+		t.Fatalf("expected link_status_source=active_task, got %q", resp.Domain.LinkStatusSource)
+	}
+}
+
+func TestProjectSummaryIncludesEffectiveLinkStatus(t *testing.T) {
+	s := setupServer(t)
+	projectID := "project-summary-effective"
+	now := time.Now().UTC()
+
+	s.projects.(*stubProjectStore).projects[projectID] = sqlstore.Project{
+		ID:        projectID,
+		UserEmail: "owner@example.com",
+		Name:      "Project",
+		Status:    "active",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	s.domains.(*stubDomainStore).domains["domain-1"] = sqlstore.Domain{
+		ID:         "domain-1",
+		ProjectID:  projectID,
+		URL:        "one.example",
+		Status:     "published",
+		LinkStatus: sql.NullString{String: "ready", Valid: true},
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+	s.domains.(*stubDomainStore).domains["domain-2"] = sqlstore.Domain{
+		ID:         "domain-2",
+		ProjectID:  projectID,
+		URL:        "two.example",
+		Status:     "published",
+		LinkStatus: sql.NullString{String: "inserted", Valid: true},
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+	linkStore := s.linkTasks.(*stubLinkTaskStore)
+	linkStore.domainToProject["domain-1"] = projectID
+	linkStore.domainToProject["domain-2"] = projectID
+	_ = linkStore.Create(context.Background(), sqlstore.LinkTask{
+		ID:           "task-removing",
+		DomainID:     "domain-1",
+		AnchorText:   "anchor",
+		TargetURL:    "https://example.org",
+		ScheduledFor: now,
+		Action:       "remove",
+		Status:       "removing",
+		CreatedBy:    "owner@example.com",
+		CreatedAt:    now,
+	})
+
+	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: "owner@example.com",
+		Role:  "manager",
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/summary", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	s.handleProjectSummary(rec, req, projectID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp projectSummaryDTO
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Domains) != 2 {
+		t.Fatalf("expected 2 domains, got %d", len(resp.Domains))
+	}
+	var foundRemoving bool
+	for _, d := range resp.Domains {
+		if d.ID != "domain-1" {
+			continue
+		}
+		if d.LinkStatusEffective == nil || *d.LinkStatusEffective != "removing" {
+			t.Fatalf("expected removing effective status for domain-1, got %#v", d.LinkStatusEffective)
+		}
+		if d.LinkStatusSource != "active_task" {
+			t.Fatalf("expected active_task source for domain-1, got %q", d.LinkStatusSource)
+		}
+		foundRemoving = true
+	}
+	if !foundRemoving {
+		t.Fatalf("domain-1 not found in response")
+	}
+}
+
+func TestProjectQueueHistoryEndpoint(t *testing.T) {
+	s := setupServer(t)
+	projectID := "project-queue-history"
+	domainID := "domain-queue-history"
+	now := time.Now().UTC()
+
+	s.projects.(*stubProjectStore).projects[projectID] = sqlstore.Project{
+		ID:        projectID,
+		UserEmail: "owner@example.com",
+		Name:      "Project",
+		Status:    "active",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	s.domains.(*stubDomainStore).domains[domainID] = sqlstore.Domain{
+		ID:        domainID,
+		ProjectID: projectID,
+		URL:       "queue.example",
+		Status:    "published",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	queueStore := s.genQueue.(*stubGenQueueStore)
+	queueStore.domainToProject[domainID] = projectID
+	_ = queueStore.Enqueue(context.Background(), sqlstore.QueueItem{
+		ID:           "queue-active",
+		DomainID:     domainID,
+		ScheduledFor: now,
+		Status:       "pending",
+	})
+	_ = queueStore.Enqueue(context.Background(), sqlstore.QueueItem{
+		ID:           "queue-failed",
+		DomainID:     domainID,
+		ScheduledFor: now.Add(-time.Minute),
+		Status:       "failed",
+		ErrorMessage: sql.NullString{String: "boom", Valid: true},
+		ProcessedAt:  sql.NullTime{Time: now, Valid: true},
+	})
+
+	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: "owner@example.com",
+		Role:  "manager",
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/queue/history?status=failed", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	s.handleProjectQueueHistory(rec, req, projectID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp []queueItemDTO
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp) != 1 {
+		t.Fatalf("expected 1 history item, got %d", len(resp))
+	}
+	if resp[0].Status != "failed" {
+		t.Fatalf("expected failed status, got %s", resp[0].Status)
+	}
+	if resp[0].DomainURL == nil || *resp[0].DomainURL != "queue.example" {
+		t.Fatalf("expected domain_url queue.example, got %#v", resp[0].DomainURL)
+	}
+}
+
 func TestAdminGenerateUsesAdminAPIKey(t *testing.T) {
 	s := setupServer(t)
 	cfg := s.cfg
@@ -2291,6 +2502,50 @@ func (s *stubGenQueueStore) ListByProjectPage(ctx context.Context, projectID str
 	return res, nil
 }
 
+func (s *stubGenQueueStore) ListHistoryByProjectPage(
+	ctx context.Context,
+	projectID string,
+	limit, offset int,
+	search string,
+	status *string,
+	dateFrom *time.Time,
+	dateTo *time.Time,
+) ([]sqlstore.QueueItem, error) {
+	res, err := s.ListByProject(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]sqlstore.QueueItem, 0, len(res))
+	for _, item := range res {
+		if item.Status != "completed" && item.Status != "failed" {
+			continue
+		}
+		if status != nil && item.Status != strings.ToLower(strings.TrimSpace(*status)) {
+			continue
+		}
+		if dateFrom != nil && item.ScheduledFor.Before(*dateFrom) {
+			continue
+		}
+		if dateTo != nil && item.ScheduledFor.After(*dateTo) {
+			continue
+		}
+		if search != "" && !strings.Contains(strings.ToLower(item.DomainID), strings.ToLower(search)) {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	if offset > 0 {
+		if offset >= len(filtered) {
+			return []sqlstore.QueueItem{}, nil
+		}
+		filtered = filtered[offset:]
+	}
+	if limit > 0 && len(filtered) > limit {
+		filtered = filtered[:limit]
+	}
+	return filtered, nil
+}
+
 func (s *stubGenQueueStore) Delete(ctx context.Context, itemID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -2918,6 +3173,30 @@ func (s *stubLinkTaskStore) ListPending(ctx context.Context, limit int) ([]sqlst
 	}
 	if limit > 0 && len(res) > limit {
 		res = res[:limit]
+	}
+	return res, nil
+}
+
+func (s *stubLinkTaskStore) ListActiveByDomainIDs(ctx context.Context, domainIDs []string) (map[string]sqlstore.LinkTask, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	idSet := make(map[string]bool, len(domainIDs))
+	for _, id := range domainIDs {
+		idSet[id] = true
+	}
+	res := make(map[string]sqlstore.LinkTask, len(domainIDs))
+	for _, task := range s.tasks {
+		if !idSet[task.DomainID] {
+			continue
+		}
+		status := strings.ToLower(strings.TrimSpace(task.Status))
+		if status != "pending" && status != "searching" && status != "removing" {
+			continue
+		}
+		existing, exists := res[task.DomainID]
+		if !exists || linkTaskStatusPriority(task.Status) > linkTaskStatusPriority(existing.Status) || (linkTaskStatusPriority(task.Status) == linkTaskStatusPriority(existing.Status) && task.CreatedAt.After(existing.CreatedAt)) {
+			res[task.DomainID] = task
+		}
 	}
 	return res, nil
 }

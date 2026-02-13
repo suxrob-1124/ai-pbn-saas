@@ -37,6 +37,8 @@ type Domain = {
   link_anchor_text?: string;
   link_acceptor_url?: string;
   link_status?: string;
+  link_status_effective?: string;
+  link_status_source?: "domain" | "active_task";
 };
 
 type Generation = {
@@ -214,8 +216,9 @@ export default function DomainPage() {
     if (!id) return;
     setLinkTasksError(null);
     setLinkNotice(null);
+    const domainLinkStatus = domain?.link_status_effective || domain?.link_status;
     const linkInProgressNow =
-      isLinkTaskInProgress(domain?.link_status) ||
+      isLinkTaskInProgress(domainLinkStatus) ||
       linkTasks.some((task) => isLinkTaskInProgress(task.status));
     if (linkInProgressNow) {
       showToast({
@@ -259,8 +262,9 @@ export default function DomainPage() {
 
   const removeLinkTask = async () => {
     if (!id) return;
+    const domainLinkStatus = domain?.link_status_effective || domain?.link_status;
     const linkInProgressNow =
-      isLinkTaskInProgress(domain?.link_status) ||
+      isLinkTaskInProgress(domainLinkStatus) ||
       linkTasks.some((task) => isLinkTaskInProgress(task.status));
     if (linkInProgressNow) {
       showToast({
@@ -445,12 +449,13 @@ export default function DomainPage() {
   const mainButtonIcon = isRegenerate ? <FiRefreshCw /> : <FiPlay />;
   const mainButtonDisabled = loading || Boolean(currentAttempt && activeStatusesList.includes(currentAttempt.status));
   const visibleLinkTasks = showAllLinkTasks ? linkTasks : linkTasks.slice(0, 2);
-  const normalizedLinkStatus = normalizeLinkTaskStatus(domain?.link_status);
-  const hasActiveLink = hasInsertedLink(domain?.link_status);
+  const domainLinkStatus = domain?.link_status_effective || domain?.link_status;
+  const normalizedLinkStatus = normalizeLinkTaskStatus(domainLinkStatus);
+  const hasActiveLink = hasInsertedLink(domainLinkStatus);
   const hasLinkInTasks =
     !normalizedLinkStatus && linkTasks.some((task) => (task.action || "insert") !== "remove" && hasInsertedLink(task.status));
   const linkInProgress =
-    isLinkTaskInProgress(domain?.link_status) ||
+    isLinkTaskInProgress(domainLinkStatus) ||
     linkTasks.some((task) => isLinkTaskInProgress(task.status));
   const canRemoveLink = (hasActiveLink || hasLinkInTasks) && !linkInProgress;
   const linkActionLabel = linkInProgress ? "Задача в работе..." : hasActiveLink ? "Обновить ссылку" : "Добавить ссылку";
