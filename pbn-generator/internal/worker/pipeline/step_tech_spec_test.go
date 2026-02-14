@@ -233,6 +233,39 @@ func TestTechnicalSpecStep_BrandGuard_GenericSecondViolationSoftPass(t *testing.
 	}
 }
 
+func TestTechnicalSpecStep_BrandGuard_GenericCasinoKeyword_NoFalsePositive(t *testing.T) {
+	llm := &fakeLLMForTechSpec{
+		responses: []string{
+			"# ТЗ\n\nUtbetalningstid. Betalningsmetoder. Betalningsalternativ. HowTo för uttag.",
+		},
+	}
+	step := &TechnicalSpecStep{}
+	state := &PipelineState{
+		Context: map[string]any{
+			"llm_analysis": "Анализ без конкретного бренда",
+		},
+		Domain: &sqlstore.Domain{
+			MainKeyword:    "insättning och uttag på utländska casinon",
+			TargetCountry:  "SE",
+			TargetLanguage: "sv",
+		},
+		LLMClient:     llm,
+		PromptManager: &fakePromptManagerForTechSpec{},
+		AppendLog:     func(string) {},
+	}
+
+	artifacts, err := step.Execute(context.Background(), state)
+	if err != nil {
+		t.Fatalf("expected no error for generic casino keyword, got %v", err)
+	}
+	if llm.calls != 1 {
+		t.Fatalf("expected single LLM call without corrective regeneration, got %d", llm.calls)
+	}
+	if got := artifacts["technical_spec"]; got == nil {
+		t.Fatalf("expected technical_spec artifact")
+	}
+}
+
 type fakePromptManagerForTechSpecError struct{}
 
 func (f *fakePromptManagerForTechSpecError) GetPromptByStage(ctx context.Context, stage string) (string, string, string, error) {

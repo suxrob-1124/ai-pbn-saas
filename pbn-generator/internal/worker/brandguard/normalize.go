@@ -10,6 +10,7 @@ import (
 var (
 	tokenRegex     = regexp.MustCompile(`[\p{L}\p{N}][\p{L}\p{N}._-]{2,}`)
 	camelBrandExpr = regexp.MustCompile(`^[A-Z][a-z]+[A-Z][A-Za-z0-9]+$`)
+	domainLikeExpr = regexp.MustCompile(`^(?i)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$`)
 )
 
 var genericTokens = map[string]struct{}{
@@ -137,7 +138,12 @@ func isBrandCandidateToken(raw string) bool {
 		return true
 	}
 	if camelBrandExpr.MatchString(raw) {
-		return true
+		// CamelCase сам по себе слишком шумный (например, HowTo).
+		// Для бренда требуем тематический маркер.
+		if strings.Contains(norm, "bet") || strings.Contains(norm, "бет") || strings.Contains(norm, "casino") || strings.Contains(norm, "казино") {
+			return true
+		}
+		return false
 	}
 	// Для plain-text избегаем шумных совпадений (например, betona/myt1...):
 	// считаем бренд-кандидатом только алфанумерики с явным bet-маркером.
@@ -170,6 +176,14 @@ func isDomainLabelBrandCandidate(raw string) bool {
 	return false
 }
 
+func looksLikeDomainToken(raw string) bool {
+	clean := strings.Trim(raw, " \t\r\n.,:;!?\"'`[](){}<>")
+	if clean == "" {
+		return false
+	}
+	return domainLikeExpr.MatchString(strings.ToLower(clean))
+}
+
 func ExtractBrands(text string) []string {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -180,8 +194,9 @@ func ExtractBrands(text string) []string {
 	matches := tokenRegex.FindAllString(text, -1)
 	for _, token := range matches {
 		// Если это домен, сначала берем host label.
-		if strings.Contains(token, ".") {
-			parts := strings.Split(token, ".")
+		if strings.Contains(token, ".") && looksLikeDomainToken(token) {
+			clean := strings.Trim(token, " \t\r\n.,:;!?\"'`[](){}<>")
+			parts := strings.Split(clean, ".")
 			if len(parts) > 0 {
 				label := strings.TrimSpace(parts[0])
 				if isDomainLabelBrandCandidate(label) {

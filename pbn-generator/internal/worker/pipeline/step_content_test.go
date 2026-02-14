@@ -195,3 +195,36 @@ func TestContentGenerationStep_BrandGuard_GenericSecondViolationSoftPass(t *test
 		t.Fatalf("expected content_markdown artifact")
 	}
 }
+
+func TestContentGenerationStep_BrandGuard_GenericCasinoKeyword_NoFalsePositive(t *testing.T) {
+	llm := &fakeLLMForContent{
+		responses: []string{
+			"# Guide\n\nUtbetalningstid. Betalningsmetoder. Betalningsalternativ. HowTo för uttag.",
+		},
+	}
+	step := &ContentGenerationStep{}
+	state := &PipelineState{
+		Context: map[string]any{
+			"technical_spec": "# ТЗ\n\nНейтральный текст без брендового запроса",
+		},
+		Domain: &sqlstore.Domain{
+			URL:            "example.com",
+			MainKeyword:    "insättning och uttag på utländska casinon",
+			TargetLanguage: "sv",
+		},
+		LLMClient:     llm,
+		PromptManager: &fakePromptManagerForContent{},
+		AppendLog:     func(string) {},
+	}
+
+	artifacts, err := step.Execute(context.Background(), state)
+	if err != nil {
+		t.Fatalf("expected no error for generic casino keyword, got %v", err)
+	}
+	if llm.calls != 1 {
+		t.Fatalf("expected single LLM call without corrective regeneration, got %d", llm.calls)
+	}
+	if got := artifacts["content_markdown"]; got == nil {
+		t.Fatalf("expected content_markdown artifact")
+	}
+}
