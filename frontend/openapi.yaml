@@ -2791,6 +2791,12 @@ components:
         created_at:
           type: string
           format: date-time
+        run_now_enqueued:
+          type: boolean
+          nullable: true
+        run_now_error:
+          type: string
+          nullable: true
       required: [id, domain_id, check_date, status, attempts, created_at]
     IndexCheckHistory:
       type: object
@@ -2836,6 +2842,10 @@ components:
         updated:
           type: integer
         skipped:
+          type: integer
+        enqueued:
+          type: integer
+        enqueue_failed:
           type: integer
       required: [created, updated, skipped]
     IndexCheckRunRequest:

@@ -62,6 +62,9 @@ export default function DocsIndexingApiPage() {
           {code(`curl -s -X POST \\
   -H "Cookie: access_token=YOUR_TOKEN" \\
   "http://localhost:8080/api/domains/{domainId}/index-checks"`)}
+          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+            В ответе доступны поля <code>run_now_enqueued</code> и <code>run_now_error</code>.
+          </p>
         </section>
 
         <section className="rounded-2xl border border-slate-200 bg-white/80 p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950/60">
@@ -72,6 +75,9 @@ export default function DocsIndexingApiPage() {
           {code(`curl -s -X POST \\
   -H "Cookie: access_token=YOUR_TOKEN" \\
   "http://localhost:8080/api/projects/{projectId}/index-checks"`)}
+          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+            Ответ содержит counters: <code>created</code>, <code>updated</code>, <code>skipped</code>, <code>enqueued</code>, <code>enqueue_failed</code>.
+          </p>
         </section>
 
         <section className="rounded-2xl border border-slate-200 bg-white/80 p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950/60">

@@ -72,7 +72,8 @@ async function main() {
         check_date: new Date().toISOString(),
         status: "pending",
         attempts: 0,
-        created_at: new Date().toISOString()
+        created_at: new Date().toISOString(),
+        run_now_enqueued: true
       });
     }
 
@@ -81,7 +82,7 @@ async function main() {
     }
 
     if (parsed.pathname === "/api/projects/project-1/index-checks" && method === "POST") {
-      return json(200, { created: 1, updated: 1, skipped: 0 });
+      return json(200, { created: 1, updated: 1, skipped: 0, enqueued: 2, enqueue_failed: 0 });
     }
 
     if (parsed.pathname === "/api/admin/index-checks" && method === "GET") {
@@ -99,7 +100,8 @@ async function main() {
         check_date: new Date().toISOString(),
         status: "pending",
         attempts: 0,
-        created_at: new Date().toISOString()
+        created_at: new Date().toISOString(),
+        run_now_enqueued: true
       });
     }
 
@@ -201,11 +203,14 @@ async function main() {
 
   const manual = await runManual("domain-1");
   assert.equal(manual.status, "pending");
+  assert.equal(manual.run_now_enqueued, true);
 
   await listByProject("project-1", { limit: 10, page: 2, search: "example" });
 
   const batch = await runManualProject("project-1");
   assert.equal(batch.created, 1);
+  assert.equal(batch.enqueued, 2);
+  assert.equal(batch.enqueue_failed, 0);
 
   await listAdmin({ domainId: "domain-1", limit: 5 });
   await listFailed({ limit: 5, page: 1 });
