@@ -81,6 +81,7 @@ export type IndexCheckBatchResponse = {
   created: number;
   updated: number;
   skipped: number;
+  upsert_failed?: number;
   enqueued?: number;
   enqueue_failed?: number;
 };

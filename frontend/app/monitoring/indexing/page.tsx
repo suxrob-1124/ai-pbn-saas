@@ -411,11 +411,13 @@ function IndexingMonitoringContent() {
         }
       } else if (projectId) {
         const result = await runManualProject(projectId);
-        if ((result.enqueue_failed || 0) > 0) {
+        const enqueueFailed = result.enqueue_failed || 0;
+        const upsertFailed = result.upsert_failed || 0;
+        if (enqueueFailed > 0 || upsertFailed > 0) {
           showToast({
             type: "warning",
-            title: "Часть проверок не enqueue",
-            message: `Успешно поставлено: ${result.enqueued || 0}, ошибок enqueue: ${result.enqueue_failed || 0}.`
+            title: "Часть проверок выполнена с ошибками",
+            message: `Успешно поставлено: ${result.enqueued || 0}, ошибок upsert: ${upsertFailed}, ошибок enqueue: ${enqueueFailed}.`
           });
         }
       } else {

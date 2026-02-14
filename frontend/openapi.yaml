@@ -2843,6 +2843,8 @@ components:
           type: integer
         skipped:
           type: integer
+        upsert_failed:
+          type: integer
         enqueued:
           type: integer
         enqueue_failed:

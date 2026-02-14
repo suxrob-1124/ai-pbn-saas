@@ -76,7 +76,7 @@ export default function DocsIndexingApiPage() {
   -H "Cookie: access_token=YOUR_TOKEN" \\
   "http://localhost:8080/api/projects/{projectId}/index-checks"`)}
           <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-            Ответ содержит counters: <code>created</code>, <code>updated</code>, <code>skipped</code>, <code>enqueued</code>, <code>enqueue_failed</code>.
+            Ответ содержит counters: <code>created</code>, <code>updated</code>, <code>skipped</code>, <code>upsert_failed</code>, <code>enqueued</code>, <code>enqueue_failed</code>.
           </p>
         </section>
 
