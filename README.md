@@ -792,14 +792,35 @@ go run ./cmd/import_legacy --help
 Полная инструкция (режимы `dry-run/apply`, формат CSV, troubleshooting):  
 `pbn-generator/cmd/import_legacy/README.md`
 
-### UI-редактор файлов домена (Sprint 4)
+### UI-редактор файлов домена (Editor V2)
 
 - Маршрут: `/domains/:id/editor`
 - Поддерживается редактирование опубликованных сайтов (импортированных и сгенерированных)
 - Права:
   - `viewer` — только чтение
-  - `owner/editor/admin` — чтение и сохранение
-- История изменений в v1: metadata-only (без diff/revert)
+  - `owner/editor/admin` — чтение и изменение файлов (create/move/upload/delete/save/revert)
+- Встроенные операции:
+  - создание файла/папки;
+  - переименование/перемещение;
+  - upload бинарных файлов;
+  - откат файла к ревизии;
+  - AI suggestion для файла и AI-предложение набора файлов новой страницы (режим suggest-only, без авто-применения).
+- История изменений:
+  - legacy `file_edits` (metadata);
+  - snapshot-ревизии `file_revisions` (path-based history, diff/revert).
+- Live Preview в редакторе:
+  - режим `Buffer` (несохраненные изменения из редактора);
+  - режим `Published` (текущее содержимое на диске).
+
+Ключевые API:
+- `GET/POST /api/domains/:id/files`
+- `POST /api/domains/:id/files/upload`
+- `GET/PUT/PATCH/DELETE /api/domains/:id/files/:path`
+- `GET /api/domains/:id/files/:path/meta`
+- `GET /api/domains/:id/files/:path/history`
+- `POST /api/domains/:id/files/:path/revert`
+- `POST /api/domains/:id/files/:path/ai-suggest`
+- `POST /api/domains/:id/editor/ai-create-page`
 
 Актуальный backlog и DoD по спринту: `todo-v4.md`
 

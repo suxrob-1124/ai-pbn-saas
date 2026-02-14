@@ -148,6 +148,11 @@ export function FileTree({ files, selectedPath, loading, onSelect }: FileTreePro
       >
         {fileLabelIcon(file)}
         <span className="truncate">{node.name}</span>
+        {file.mimeType?.toLowerCase().startsWith("image/") && file.width && file.height && (
+          <span className={`ml-auto text-[10px] ${selected ? "text-indigo-100" : "text-slate-400"}`}>
+            {file.width}x{file.height}
+          </span>
+        )}
       </button>
     );
   };

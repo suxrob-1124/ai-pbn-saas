@@ -823,6 +823,59 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/File"
+    post:
+      tags: [Files]
+      summary: Создать файл или папку
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FileCreateRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/File"
+                  - $ref: "#/components/schemas/FileCreateDirResponse"
+  /api/domains/{domainId}/files/upload:
+    post:
+      tags: [Files]
+      summary: Загрузить файл (multipart)
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                path:
+                  type: string
+                  description: Путь назначения внутри домена
+              required: [file]
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/File"
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/File"
   /api/domains/{domainId}/files/{filePath}:
     get:
       tags: [Files]
@@ -834,12 +887,12 @@ paths:
         "200":
           description: OK
           content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FileContent"
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FileContent"
     put:
       tags: [Files]
-      summary: Обновить файл домена
+      summary: Обновить файл домена (optimistic lock)
       parameters:
         - $ref: "#/components/parameters/DomainId"
         - $ref: "#/components/parameters/FilePath"
@@ -852,19 +905,106 @@ paths:
       responses:
         "200":
           description: OK
+        "409":
+          description: Version conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileConflict"
+    patch:
+      tags: [Files]
+      summary: Переименовать/переместить файл или папку
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+        - $ref: "#/components/parameters/FilePath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FileMoveRequest"
+      responses:
+        "200":
+          description: OK
     delete:
       tags: [Files]
-      summary: Удалить файл домена
+      summary: Удалить файл/папку домена
       parameters:
         - $ref: "#/components/parameters/DomainId"
         - $ref: "#/components/parameters/FilePath"
       responses:
         "200":
           description: OK
+  /api/domains/{domainId}/files/{filePath}/meta:
+    get:
+      tags: [Files]
+      summary: Метаданные файла
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+        - $ref: "#/components/parameters/FilePath"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/File"
+  /api/domains/{domainId}/files/{filePath}/history:
+    get:
+      tags: [Files]
+      summary: История ревизий файла (path-based)
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+        - $ref: "#/components/parameters/FilePath"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FileRevision"
+  /api/domains/{domainId}/files/{filePath}/revert:
+    post:
+      tags: [Files]
+      summary: Откатить файл к выбранной ревизии
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+        - $ref: "#/components/parameters/FilePath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FileRevertRequest"
+      responses:
+        "200":
+          description: OK
+  /api/domains/{domainId}/files/{filePath}/ai-suggest:
+    post:
+      tags: [Files]
+      summary: AI-предложение изменений для файла (без сохранения)
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+        - $ref: "#/components/parameters/FilePath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FileAISuggestRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileAISuggestResponse"
   /api/domains/{domainId}/files/{fileId}/history:
     get:
       tags: [Files]
-      summary: История изменений файла
+      summary: История изменений файла (legacy by fileId)
       parameters:
         - $ref: "#/components/parameters/DomainId"
         - $ref: "#/components/parameters/FileId"
@@ -877,6 +1017,25 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/FileEdit"
+  /api/domains/{domainId}/editor/ai-create-page:
+    post:
+      tags: [Files]
+      summary: AI-предложение нового набора файлов страницы (без сохранения)
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AIPageSuggestionRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AIPageSuggestionResponse"
   /api/generations:
     get:
       tags: [Generations]
@@ -2512,10 +2671,25 @@ components:
           type: integer
         mimeType:
           type: string
+        version:
+          type: integer
+        isEditable:
+          type: boolean
+        isBinary:
+          type: boolean
+        width:
+          type: integer
+          nullable: true
+        height:
+          type: integer
+          nullable: true
+        lastEditedBy:
+          type: string
+          nullable: true
         updatedAt:
           type: string
           format: date-time
-      required: [id, path, size, mimeType, updatedAt]
+      required: [id, path, size, mimeType, version, isEditable, isBinary, updatedAt]
     FileContent:
       type: object
       properties:
@@ -2523,15 +2697,75 @@ components:
           type: string
         mimeType:
           type: string
-      required: [content, mimeType]
+        version:
+          type: integer
+      required: [content, mimeType, version]
+    FileCreateRequest:
+      type: object
+      properties:
+        path:
+          type: string
+        kind:
+          type: string
+          enum: [file, dir]
+          default: file
+        content:
+          type: string
+        mime_type:
+          type: string
+      required: [path]
+    FileCreateDirResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        kind:
+          type: string
+        path:
+          type: string
+      required: [status, kind, path]
     FileUpdate:
       type: object
       properties:
         content:
           type: string
+        description:
+          type: string
+          nullable: true
+        expected_version:
+          type: integer
+          nullable: true
+        source:
+          type: string
+          enum: [manual, ai, revert]
         mimeType:
           type: string
-      required: [content, mimeType]
+      required: [content]
+    FileMoveRequest:
+      type: object
+      properties:
+        op:
+          type: string
+          enum: [move]
+        new_path:
+          type: string
+      required: [op, new_path]
+    FileConflict:
+      type: object
+      properties:
+        error:
+          type: string
+        current_version:
+          type: integer
+        current_hash:
+          type: string
+        updated_by:
+          type: string
+          nullable: true
+        updated_at:
+          type: string
+          format: date-time
+      required: [error, current_version, current_hash, updated_at]
     FileEdit:
       type: object
       properties:
@@ -2548,6 +2782,120 @@ components:
           type: string
           format: date-time
       required: [id, editedBy, editType, createdAt]
+    FileRevision:
+      type: object
+      properties:
+        id:
+          type: string
+        file_id:
+          type: string
+        version:
+          type: integer
+        edited_by:
+          type: string
+        source:
+          type: string
+          enum: [manual, ai, revert, import]
+        description:
+          type: string
+          nullable: true
+        content_hash:
+          type: string
+        size_bytes:
+          type: integer
+        mime_type:
+          type: string
+        content:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+      required: [id, file_id, version, edited_by, source, content_hash, size_bytes, mime_type, created_at]
+    FileRevertRequest:
+      type: object
+      properties:
+        revision_id:
+          type: string
+        description:
+          type: string
+          nullable: true
+      required: [revision_id]
+    FileAISuggestRequest:
+      type: object
+      properties:
+        instruction:
+          type: string
+        model:
+          type: string
+        selection:
+          type: string
+        context_files:
+          type: array
+          items:
+            type: string
+      required: [instruction]
+    FileAISuggestResponse:
+      type: object
+      properties:
+        suggested_content:
+          type: string
+        diff_summary:
+          type: object
+          additionalProperties: true
+        warnings:
+          type: array
+          items:
+            type: string
+        prompt_trace:
+          type: object
+          additionalProperties: true
+        token_usage:
+          type: object
+          additionalProperties: true
+        mime_type:
+          type: string
+      required: [suggested_content, diff_summary, warnings, prompt_trace, token_usage, mime_type]
+    AIPageSuggestionRequest:
+      type: object
+      properties:
+        instruction:
+          type: string
+        target_path:
+          type: string
+        with_assets:
+          type: boolean
+        model:
+          type: string
+      required: [instruction, target_path]
+    AIPageSuggestionFile:
+      type: object
+      properties:
+        path:
+          type: string
+        content:
+          type: string
+        mime_type:
+          type: string
+      required: [path, content, mime_type]
+    AIPageSuggestionResponse:
+      type: object
+      properties:
+        files:
+          type: array
+          items:
+            $ref: "#/components/schemas/AIPageSuggestionFile"
+        warnings:
+          type: array
+          items:
+            type: string
+        prompt_trace:
+          type: object
+          additionalProperties: true
+        token_usage:
+          type: object
+          additionalProperties: true
+      required: [files, warnings, prompt_trace, token_usage]
     DomainSummary:
       type: object
       properties:

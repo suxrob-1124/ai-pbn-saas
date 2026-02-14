@@ -2,22 +2,41 @@
 
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
-import { FiArrowLeft, FiEdit3, FiEye, FiFolder } from "react-icons/fi";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  FiArrowLeft,
+  FiCode,
+  FiEdit3,
+  FiEye,
+  FiFolder,
+  FiMove,
+  FiPlus,
+  FiTrash2,
+  FiUpload,
+  FiWind
+} from "react-icons/fi";
 
 import { EditorToolbar } from "../../../../components/EditorToolbar";
 import { FileHistory } from "../../../../components/FileHistory";
 import { FileTree } from "../../../../components/FileTree";
 import { MonacoEditor } from "../../../../components/MonacoEditor";
-import { authFetch } from "../../../../lib/http";
-import { getFile, listFiles, saveFile, type FileListItem } from "../../../../lib/fileApi";
+import { apiBase, authFetch } from "../../../../lib/http";
+import {
+  aiCreatePage,
+  aiSuggestFile,
+  createFileOrDir,
+  deleteFile,
+  getFile,
+  listFiles,
+  moveFile,
+  saveFile,
+  uploadFile,
+  type AIPageSuggestionFile,
+  type FileListItem
+} from "../../../../lib/fileApi";
 import { showToast } from "../../../../lib/toastStore";
 import { useAuthGuard } from "../../../../lib/useAuth";
-import type {
-  EditorDirtyState,
-  EditorFileMeta,
-  EditorSelectionState
-} from "../../../../types/editor";
+import type { EditorDirtyState, EditorFileMeta, EditorSelectionState } from "../../../../types/editor";
 
 type DomainSummaryResponse = {
   domain: {
@@ -28,17 +47,6 @@ type DomainSummaryResponse = {
   };
   project_name: string;
   my_role: "admin" | "owner" | "editor" | "viewer";
-};
-
-const editableMime = (mimeType: string) => {
-  const normalized = (mimeType || "").toLowerCase();
-  return (
-    normalized.startsWith("text/") ||
-    normalized === "application/json" ||
-    normalized === "application/javascript" ||
-    normalized === "application/xml" ||
-    normalized === "image/svg+xml"
-  );
 };
 
 const detectLanguage = (pathValue: string) => {
@@ -55,6 +63,58 @@ const detectLanguage = (pathValue: string) => {
 };
 
 const looksBinary = (value: string) => value.includes("\u0000");
+
+const encodePath = (value: string) =>
+  value
+    .split("/")
+    .filter(Boolean)
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+
+function rewriteHtmlAssetRefs(html: string, domainId: string) {
+  const base = apiBase();
+  return html.replace(/\b(src|href)\s*=\s*["']([^"']+)["']/gi, (full, attr, rawValue: string) => {
+    const value = rawValue.trim();
+    if (!value || value.startsWith("#")) return full;
+    if (/^(data:|mailto:|tel:|javascript:|https?:)/i.test(value)) return full;
+    const normalized = value.replace(/^\.\//, "").replace(/^\//, "");
+    if (!normalized) return full;
+    const [pathPart, hashPart = ""] = normalized.split("#");
+    const [purePath, queryPart = ""] = pathPart.split("?");
+    if (!purePath) return full;
+    const encodedPath = purePath
+      .split("/")
+      .filter(Boolean)
+      .map((part) => encodeURIComponent(part))
+      .join("/");
+    if (!encodedPath) return full;
+    const query = queryPart ? `&${queryPart}` : "";
+    const hash = hashPart ? `#${hashPart}` : "";
+    const url = `${base}/api/domains/${domainId}/files/${encodedPath}?raw=1${query}${hash}`;
+    return `${attr}="${url}"`;
+  });
+}
+
+function injectRuntimeAssets(indexHtml: string, styleContent: string, scriptContent: string) {
+  let html = indexHtml || "";
+  if (styleContent) {
+    html = html.replace(/<link[^>]*href=["']style\.css["'][^>]*>/gi, "");
+    if (/<\/head>/i.test(html)) {
+      html = html.replace(/<\/head>/i, `<style data-live-preview="style.css">\n${styleContent}\n</style>\n</head>`);
+    } else {
+      html = `<style data-live-preview="style.css">\n${styleContent}\n</style>\n${html}`;
+    }
+  }
+  if (scriptContent) {
+    html = html.replace(/<script[^>]*src=["']script\.js["'][^>]*>\s*<\/script>/gi, "");
+    if (/<\/body>/i.test(html)) {
+      html = html.replace(/<\/body>/i, `<script data-live-preview="script.js">\n${scriptContent}\n</script>\n</body>`);
+    } else {
+      html = `${html}\n<script data-live-preview="script.js">\n${scriptContent}\n</script>`;
+    }
+  }
+  return html;
+}
 
 export default function DomainEditorPage() {
   useAuthGuard();
@@ -73,7 +133,7 @@ export default function DomainEditorPage() {
   const [dirtyState, setDirtyState] = useState<EditorDirtyState>({
     isDirty: false,
     originalContent: "",
-    currentContent: ""
+    currentContent: "",
   });
   const [description, setDescription] = useState("");
   const [loading, setLoading] = useState(true);
@@ -84,17 +144,28 @@ export default function DomainEditorPage() {
     Number.isFinite(requestedLine) && requestedLine > 0 ? requestedLine : undefined
   );
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
+  const [previewMode, setPreviewMode] = useState<"code" | "preview">("code");
+  const [previewSource, setPreviewSource] = useState<"buffer" | "published">("buffer");
+  const [stylePreview, setStylePreview] = useState("");
+  const [scriptPreview, setScriptPreview] = useState("");
+  const [aiInstruction, setAiInstruction] = useState("");
+  const [aiOutput, setAiOutput] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiCreateInstruction, setAiCreateInstruction] = useState("");
+  const [aiCreatePath, setAiCreatePath] = useState("new-page.html");
+  const [aiCreateBusy, setAiCreateBusy] = useState(false);
+  const [aiCreateFiles, setAiCreateFiles] = useState<AIPageSuggestionFile[]>([]);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const currentFile = useMemo(
     () => files.find((item) => item.path === selection?.selectedPath),
     [files, selection?.selectedPath]
   );
-
   const readOnly = (summary?.my_role || "viewer") === "viewer";
   const binaryPreview = looksBinary(dirtyState.currentContent);
   const canSave =
     !readOnly &&
-    Boolean(currentFile?.editable) &&
+    Boolean(currentFile?.isEditable) &&
     !binaryPreview &&
     dirtyState.isDirty &&
     !saving;
@@ -117,6 +188,26 @@ export default function DomainEditorPage() {
     router.replace((`/domains/${domainId}/editor${qs ? `?${qs}` : ""}` as any), { scroll: false });
   };
 
+  const loadFiles = async () => {
+    const fileList = await listFiles(domainId);
+    const prepared: EditorFileMeta[] = (Array.isArray(fileList) ? fileList : []).map((item: FileListItem) => ({
+      id: item.id,
+      path: item.path,
+      size: item.size,
+      mimeType: item.mimeType,
+      version: item.version || 1,
+      isEditable: Boolean(item.isEditable),
+      isBinary: Boolean(item.isBinary),
+      width: item.width,
+      height: item.height,
+      lastEditedBy: item.lastEditedBy,
+      updatedAt: item.updatedAt,
+      editable: Boolean(item.isEditable),
+    }));
+    setFiles(prepared);
+    return prepared;
+  };
+
   const loadFile = async (file: EditorFileMeta, options?: { line?: number }) => {
     if (dirtyState.isDirty) {
       const confirmed = window.confirm("Есть несохраненные изменения. Переключить файл без сохранения?");
@@ -135,12 +226,13 @@ export default function DomainEditorPage() {
         selectedPath: file.path,
         selectedFileId: file.id,
         language,
-        mimeType
+        mimeType,
+        version: typeof payload?.version === "number" ? payload.version : file.version || 1,
       });
       setDirtyState({
         isDirty: false,
         originalContent: content,
-        currentContent: content
+        currentContent: content,
       });
       setDescription("");
       setFocusLine(options?.line);
@@ -155,105 +247,109 @@ export default function DomainEditorPage() {
   useEffect(() => {
     if (!domainId) return;
     let alive = true;
-
     const run = async () => {
       setLoading(true);
       setError(null);
       try {
-        const [summaryResp, fileList] = await Promise.all([
-          authFetch<DomainSummaryResponse>(`/api/domains/${domainId}/summary?gen_limit=1&link_limit=1`),
-          listFiles(domainId)
-        ]);
+        const summaryResp = await authFetch<DomainSummaryResponse>(
+          `/api/domains/${domainId}/summary?gen_limit=1&link_limit=1`
+        );
         if (!alive) return;
-
         setSummary(summaryResp);
-        const prepared: EditorFileMeta[] = (Array.isArray(fileList) ? fileList : []).map((item: FileListItem) => ({
-          id: item.id,
-          path: item.path,
-          size: item.size,
-          mimeType: item.mimeType,
-          updatedAt: item.updatedAt,
-          editable: editableMime(item.mimeType)
-        }));
-        setFiles(prepared);
-
+        const prepared = await loadFiles();
+        if (!alive) return;
         if (prepared.length === 0) {
           setSelection(null);
           setDirtyState({ isDirty: false, originalContent: "", currentContent: "" });
           return;
         }
-
         const queryTarget = requestedPath ? prepared.find((item) => item.path === requestedPath) : null;
-        const firstEditable = prepared.find((item) => item.editable);
+        const firstEditable = prepared.find((item) => item.isEditable);
         const fallback = firstEditable || prepared[0];
         const target = queryTarget || fallback;
         await loadFile(target, {
-          line: Number.isFinite(requestedLine) && requestedLine > 0 ? requestedLine : undefined
+          line: Number.isFinite(requestedLine) && requestedLine > 0 ? requestedLine : undefined,
         });
       } catch (err: any) {
         if (!alive) return;
         setError(err?.message || "Не удалось загрузить редактор");
       } finally {
-        if (alive) {
-          setLoading(false);
-        }
+        if (alive) setLoading(false);
       }
     };
-
-    run();
+    void run();
     return () => {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [domainId]);
 
-  const onSelectFile = async (file: EditorFileMeta) => {
-    await loadFile(file);
-  };
+  useEffect(() => {
+    let cancelled = false;
+    const refreshAssets = async () => {
+      if (!selection || !selection.selectedPath.toLowerCase().endsWith(".html")) {
+        setStylePreview("");
+        setScriptPreview("");
+        return;
+      }
+      try {
+        const [styleResp, scriptResp] = await Promise.all([
+          getFile(domainId, "style.css").catch(() => null),
+          getFile(domainId, "script.js").catch(() => null),
+        ]);
+        if (cancelled) return;
+        setStylePreview(styleResp?.content || "");
+        setScriptPreview(scriptResp?.content || "");
+      } catch {
+        if (cancelled) return;
+        setStylePreview("");
+        setScriptPreview("");
+      }
+    };
+    void refreshAssets();
+    return () => {
+      cancelled = true;
+    };
+  }, [domainId, selection?.selectedPath, historyRefreshKey]);
 
   const onSave = async () => {
-    if (!selection || !currentFile) {
-      return;
-    }
+    if (!selection || !currentFile) return;
     if (readOnly) {
-      showToast({
-        type: "error",
-        title: "Недостаточно прав",
-        message: "Viewer может только просматривать файлы."
-      });
+      showToast({ type: "error", title: "Недостаточно прав", message: "Viewer может только просматривать файлы." });
       return;
     }
     setSaving(true);
     setError(null);
     try {
-      await saveFile(domainId, selection.selectedPath, dirtyState.currentContent, description.trim() || undefined);
+      const result = await saveFile(
+        domainId,
+        selection.selectedPath,
+        dirtyState.currentContent,
+        description.trim() || undefined,
+        { expectedVersion: selection.version, source: "manual" }
+      );
+      const nextVersion = typeof result.version === "number" ? result.version : selection.version + 1;
       setDirtyState((prev) => ({
         ...prev,
         isDirty: false,
         originalContent: prev.currentContent,
-        lastSavedAt: new Date().toISOString()
+        lastSavedAt: new Date().toISOString(),
       }));
+      setSelection((prev) => (prev ? { ...prev, version: nextVersion } : prev));
       setDescription("");
       setHistoryRefreshKey((value) => value + 1);
-      showToast({
-        type: "success",
-        title: "Файл сохранен",
-        message: selection.selectedPath
-      });
+      await loadFiles();
+      showToast({ type: "success", title: "Файл сохранен", message: selection.selectedPath });
     } catch (err: any) {
       const message = err?.message || "Не удалось сохранить файл";
-      if (String(message).toLowerCase().includes("editor role required") || String(message).startsWith("403")) {
+      if (String(message).includes("version conflict") || String(message).startsWith("409")) {
         showToast({
           type: "error",
-          title: "Недостаточно прав для сохранения",
-          message: selection.selectedPath
+          title: "Конфликт версий",
+          message: "Файл был изменен в другом сеансе. Обновите файл и повторите.",
         });
       } else {
-        showToast({
-          type: "error",
-          title: "Ошибка сохранения",
-          message
-        });
+        showToast({ type: "error", title: "Ошибка сохранения", message });
       }
       setError(message);
     } finally {
@@ -261,11 +357,11 @@ export default function DomainEditorPage() {
     }
   };
 
-  const onRevert = () => {
+  const onRevertBuffer = () => {
     setDirtyState((prev) => ({
       ...prev,
       isDirty: false,
-      currentContent: prev.originalContent
+      currentContent: prev.originalContent,
     }));
     setDescription("");
   };
@@ -281,6 +377,177 @@ export default function DomainEditorPage() {
     URL.revokeObjectURL(url);
   };
 
+  const onCreateFile = async () => {
+    if (readOnly) return;
+    const nextPath = prompt("Путь нового файла (например: pages/about.html)");
+    if (!nextPath) return;
+    try {
+      await createFileOrDir(domainId, { kind: "file", path: nextPath, content: "" });
+      const nextFiles = await loadFiles();
+      const created = nextFiles.find((item) => item.path === nextPath);
+      if (created) {
+        await loadFile(created);
+      }
+      showToast({ type: "success", title: "Файл создан", message: nextPath });
+    } catch (err: any) {
+      showToast({ type: "error", title: "Не удалось создать файл", message: err?.message || "unknown error" });
+    }
+  };
+
+  const onCreateFolder = async () => {
+    if (readOnly) return;
+    const nextPath = prompt("Путь новой папки (например: pages/blog)");
+    if (!nextPath) return;
+    try {
+      await createFileOrDir(domainId, { kind: "dir", path: nextPath });
+      await loadFiles();
+      showToast({ type: "success", title: "Папка создана", message: nextPath });
+    } catch (err: any) {
+      showToast({ type: "error", title: "Не удалось создать папку", message: err?.message || "unknown error" });
+    }
+  };
+
+  const onRename = async () => {
+    if (readOnly || !selection?.selectedPath) return;
+    const nextPath = prompt("Новый путь", selection.selectedPath);
+    if (!nextPath || nextPath === selection.selectedPath) return;
+    try {
+      await moveFile(domainId, selection.selectedPath, nextPath);
+      const nextFiles = await loadFiles();
+      const moved = nextFiles.find((item) => item.path === nextPath);
+      if (moved) {
+        await loadFile(moved);
+      }
+      showToast({ type: "success", title: "Файл перемещен", message: `${selection.selectedPath} → ${nextPath}` });
+    } catch (err: any) {
+      showToast({ type: "error", title: "Не удалось переместить файл", message: err?.message || "unknown error" });
+    }
+  };
+
+  const onDelete = async () => {
+    if (readOnly || !selection?.selectedPath) return;
+    if (!confirm(`Удалить "${selection.selectedPath}"?`)) return;
+    try {
+      await deleteFile(domainId, selection.selectedPath);
+      setSelection(null);
+      setDirtyState({ isDirty: false, originalContent: "", currentContent: "" });
+      await loadFiles();
+      showToast({ type: "success", title: "Файл удален", message: selection.selectedPath });
+    } catch (err: any) {
+      showToast({ type: "error", title: "Не удалось удалить файл", message: err?.message || "unknown error" });
+    }
+  };
+
+  const onUploadClick = () => fileInputRef.current?.click();
+
+  const onUploadInput = async (file?: File | null) => {
+    if (readOnly || !file) return;
+    const destination = prompt("Куда загрузить файл? (путь или папка)", file.name) || file.name;
+    try {
+      await uploadFile(domainId, file, destination);
+      await loadFiles();
+      showToast({ type: "success", title: "Файл загружен", message: destination });
+    } catch (err: any) {
+      showToast({ type: "error", title: "Не удалось загрузить файл", message: err?.message || "unknown error" });
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const onAISuggest = async () => {
+    if (!selection?.selectedPath || !aiInstruction.trim()) return;
+    setAiBusy(true);
+    try {
+      const result = await aiSuggestFile(domainId, selection.selectedPath, {
+        instruction: aiInstruction.trim(),
+      });
+      setAiOutput(result.suggested_content || "");
+      showToast({ type: "success", title: "AI-предложение готово", message: selection.selectedPath });
+    } catch (err: any) {
+      showToast({ type: "error", title: "AI suggest error", message: err?.message || "unknown error" });
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
+  const onApplyAISuggest = () => {
+    if (!aiOutput) return;
+    setDirtyState((prev) => ({
+      ...prev,
+      currentContent: aiOutput,
+      isDirty: aiOutput !== prev.originalContent,
+    }));
+  };
+
+  const onAICreatePage = async () => {
+    if (!aiCreateInstruction.trim() || !aiCreatePath.trim()) return;
+    setAiCreateBusy(true);
+    try {
+      const result = await aiCreatePage(domainId, {
+        instruction: aiCreateInstruction.trim(),
+        target_path: aiCreatePath.trim(),
+        with_assets: true,
+      });
+      setAiCreateFiles(result.files || []);
+      showToast({ type: "success", title: "AI сгенерировал страницу", message: `${result.files?.length || 0} файлов` });
+    } catch (err: any) {
+      showToast({ type: "error", title: "AI create-page error", message: err?.message || "unknown error" });
+    } finally {
+      setAiCreateBusy(false);
+    }
+  };
+
+  const onApplyCreatedFiles = async () => {
+    if (aiCreateFiles.length === 0) return;
+    let saved = 0;
+    for (const file of aiCreateFiles) {
+      try {
+        await createFileOrDir(domainId, {
+          kind: "file",
+          path: file.path,
+          content: file.content,
+          mime_type: file.mime_type,
+        });
+        saved += 1;
+      } catch (err: any) {
+        if (String(err?.message || "").startsWith("409") || String(err?.message || "").includes("exists")) {
+          await saveFile(domainId, file.path, file.content, "ai create-page overwrite", { source: "ai" });
+          saved += 1;
+        }
+      }
+    }
+    await loadFiles();
+    showToast({ type: "success", title: "AI-файлы применены", message: `${saved}/${aiCreateFiles.length}` });
+  };
+
+  const onSelectFile = async (file: EditorFileMeta) => {
+    await loadFile(file);
+  };
+
+  const previewSrcDoc = useMemo(() => {
+    if (!selection || !currentFile) return "";
+    const selectedPath = selection.selectedPath.toLowerCase();
+    if (currentFile.mimeType.toLowerCase().startsWith("image/")) return "";
+    if (!selectedPath.endsWith(".html")) return "";
+    const html = previewSource === "buffer" ? dirtyState.currentContent : dirtyState.originalContent;
+    const withAssets = injectRuntimeAssets(html, stylePreview, scriptPreview);
+    return rewriteHtmlAssetRefs(withAssets, domainId);
+  }, [
+    selection,
+    currentFile,
+    previewSource,
+    dirtyState.currentContent,
+    dirtyState.originalContent,
+    stylePreview,
+    scriptPreview,
+    domainId,
+  ]);
+
+  const rawImageURL = useMemo(() => {
+    if (!selection || !currentFile || !currentFile.mimeType.toLowerCase().startsWith("image/")) return "";
+    return `${apiBase()}/api/domains/${domainId}/files/${encodePath(selection.selectedPath)}?raw=1`;
+  }, [selection, currentFile, domainId]);
+
   if (loading) {
     return <div className="text-sm text-slate-500 dark:text-slate-400">Загрузка редактора...</div>;
   }
@@ -290,13 +557,13 @@ export default function DomainEditorPage() {
       <div className="rounded-xl border border-slate-200 bg-white/80 p-4 shadow dark:border-slate-800 dark:bg-slate-900/60">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <h1 className="text-xl font-semibold flex items-center gap-2">
-              <FiFolder /> Редактор сайта
+            <h1 className="flex items-center gap-2 text-xl font-semibold">
+              <FiFolder /> Редактор сайта v2
             </h1>
             <p className="text-sm text-slate-500 dark:text-slate-400">
               {summary?.domain.url || "—"} • Проект: {summary?.project_name || "—"}
             </p>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
               Роль: {summary?.my_role || "viewer"} {readOnly ? "(только чтение)" : "(редактирование включено)"}
             </p>
           </div>
@@ -325,9 +592,57 @@ export default function DomainEditorPage() {
         </div>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-[300px_1fr]">
-        <aside className="rounded-xl border border-slate-200 bg-white/80 p-3 shadow dark:border-slate-800 dark:bg-slate-900/60">
-          <h2 className="mb-2 text-sm font-semibold">Файлы сайта</h2>
+      <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
+        <aside className="space-y-3 rounded-xl border border-slate-200 bg-white/80 p-3 shadow dark:border-slate-800 dark:bg-slate-900/60">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={onCreateFile}
+              disabled={readOnly}
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            >
+              <FiPlus /> File
+            </button>
+            <button
+              type="button"
+              onClick={onCreateFolder}
+              disabled={readOnly}
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            >
+              <FiFolder /> Folder
+            </button>
+            <button
+              type="button"
+              onClick={onRename}
+              disabled={readOnly || !selection}
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            >
+              <FiMove /> Move
+            </button>
+            <button
+              type="button"
+              onClick={onDelete}
+              disabled={readOnly || !selection}
+              className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-xs font-semibold text-red-700 disabled:opacity-50 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200"
+            >
+              <FiTrash2 /> Delete
+            </button>
+            <button
+              type="button"
+              onClick={onUploadClick}
+              disabled={readOnly}
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            >
+              <FiUpload /> Upload
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="hidden"
+              onChange={(e) => onUploadInput(e.target.files?.[0] || null)}
+            />
+          </div>
+          <h2 className="mb-1 text-sm font-semibold">Файлы сайта</h2>
           <FileTree files={files} selectedPath={selection?.selectedPath} loading={fileLoading} onSelect={onSelectFile} />
         </aside>
 
@@ -341,7 +656,7 @@ export default function DomainEditorPage() {
             description={description}
             onDescriptionChange={setDescription}
             onSave={onSave}
-            onRevert={onRevert}
+            onRevert={onRevertBuffer}
             onDownload={onDownload}
           />
 
@@ -351,35 +666,195 @@ export default function DomainEditorPage() {
             </div>
           )}
 
-          {selection && currentFile && (!currentFile.editable || binaryPreview) && (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">
-              <div className="font-semibold">Файл недоступен для редактирования в v1</div>
-              <div className="mt-1">Тип: {selection.mimeType || currentFile.mimeType || "unknown"}</div>
-              <div className="mt-1">Размер: {currentFile.size} bytes</div>
-              <div className="mt-1">Можно скачать содержимое и изменить локально.</div>
+          {selection && currentFile && currentFile.mimeType.toLowerCase().startsWith("image/") && (
+            <div className="rounded-xl border border-slate-200 bg-white/80 p-3 dark:border-slate-800 dark:bg-slate-900/60">
+              <div className="mb-2 text-xs text-slate-500 dark:text-slate-400">
+                {selection.selectedPath} · {currentFile.width || "?"}x{currentFile.height || "?"}
+              </div>
+              <img src={rawImageURL} alt={selection.selectedPath} className="max-h-[70vh] rounded-lg border border-slate-200 dark:border-slate-700" />
             </div>
           )}
 
-          {selection && currentFile && currentFile.editable && !binaryPreview && (
-            <MonacoEditor
-              content={dirtyState.currentContent}
-              language={selection.language}
-              readOnly={readOnly || !currentFile.editable}
-              scrollLine={focusLine}
-              onChange={(value) => {
-                setDirtyState((prev) => ({
-                  ...prev,
-                  currentContent: value,
-                  isDirty: value !== prev.originalContent
-                }));
-              }}
-            />
+          {selection && currentFile && currentFile.isEditable && !binaryPreview && !currentFile.mimeType.toLowerCase().startsWith("image/") && (
+            <div className="rounded-xl border border-slate-200 bg-white/80 p-2 dark:border-slate-800 dark:bg-slate-900/60">
+              <div className="mb-2 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPreviewMode("code")}
+                  className={`rounded-lg border px-3 py-1 text-xs font-semibold ${previewMode === "code" ? "bg-indigo-600 text-white border-indigo-600" : "border-slate-200 text-slate-700 dark:border-slate-700 dark:text-slate-100"}`}
+                >
+                  <FiCode className="inline mr-1" /> Code
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPreviewMode("preview")}
+                  className={`rounded-lg border px-3 py-1 text-xs font-semibold ${previewMode === "preview" ? "bg-indigo-600 text-white border-indigo-600" : "border-slate-200 text-slate-700 dark:border-slate-700 dark:text-slate-100"}`}
+                >
+                  <FiEye className="inline mr-1" /> Preview
+                </button>
+                {previewMode === "preview" && selection.selectedPath.toLowerCase().endsWith(".html") && (
+                  <div className="ml-auto inline-flex rounded-lg border border-slate-200 p-1 dark:border-slate-700">
+                    <button
+                      type="button"
+                      onClick={() => setPreviewSource("buffer")}
+                      className={`rounded px-2 py-1 text-[11px] ${previewSource === "buffer" ? "bg-indigo-600 text-white" : "text-slate-600 dark:text-slate-300"}`}
+                    >
+                      Buffer preview
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewSource("published")}
+                      className={`rounded px-2 py-1 text-[11px] ${previewSource === "published" ? "bg-indigo-600 text-white" : "text-slate-600 dark:text-slate-300"}`}
+                    >
+                      Published preview
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {previewMode === "code" && (
+                <MonacoEditor
+                  content={dirtyState.currentContent}
+                  language={selection.language}
+                  readOnly={readOnly || !currentFile.isEditable}
+                  scrollLine={focusLine}
+                  onChange={(value) => {
+                    setDirtyState((prev) => ({
+                      ...prev,
+                      currentContent: value,
+                      isDirty: value !== prev.originalContent,
+                    }));
+                  }}
+                />
+              )}
+
+              {previewMode === "preview" && (
+                <>
+                  {selection.selectedPath.toLowerCase().endsWith(".html") ? (
+                    <iframe
+                      title="editor-preview"
+                      sandbox="allow-same-origin allow-scripts"
+                      srcDoc={previewSrcDoc}
+                      className="h-[62vh] w-full rounded-lg border border-slate-200 dark:border-slate-700"
+                    />
+                  ) : (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">
+                      Preview доступен в v2 для HTML-файлов. Для текущего типа показан режим Code.
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
           )}
+
+          {selection && currentFile && (!currentFile.isEditable || binaryPreview) && !currentFile.mimeType.toLowerCase().startsWith("image/") && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">
+              <div className="font-semibold">Файл недоступен для редактирования в текстовом редакторе</div>
+              <div className="mt-1">Тип: {selection.mimeType || currentFile.mimeType || "unknown"}</div>
+              <div className="mt-1">Размер: {currentFile.size} bytes</div>
+            </div>
+          )}
+
+          <div className="grid gap-3 xl:grid-cols-2">
+            <div className="rounded-xl border border-slate-200 bg-white/80 p-3 dark:border-slate-800 dark:bg-slate-900/60">
+              <h3 className="mb-2 text-sm font-semibold">AI: редактирование файла</h3>
+              <textarea
+                value={aiInstruction}
+                onChange={(e) => setAiInstruction(e.target.value)}
+                placeholder="Что нужно изменить в файле?"
+                rows={3}
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"
+              />
+              <div className="mt-2 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={onAISuggest}
+                  disabled={aiBusy || !selection?.selectedPath || !aiInstruction.trim()}
+                  className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-1 text-xs font-semibold text-white disabled:opacity-50"
+                >
+                  <FiWind /> Suggest
+                </button>
+                <button
+                  type="button"
+                  onClick={onApplyAISuggest}
+                  disabled={!aiOutput}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                >
+                  Apply to buffer
+                </button>
+              </div>
+              {aiOutput && (
+                <textarea
+                  value={aiOutput}
+                  onChange={(e) => setAiOutput(e.target.value)}
+                  rows={8}
+                  className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"
+                />
+              )}
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-white/80 p-3 dark:border-slate-800 dark:bg-slate-900/60">
+              <h3 className="mb-2 text-sm font-semibold">AI: создать новую страницу</h3>
+              <input
+                value={aiCreatePath}
+                onChange={(e) => setAiCreatePath(e.target.value)}
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"
+                placeholder="new-page.html"
+              />
+              <textarea
+                value={aiCreateInstruction}
+                onChange={(e) => setAiCreateInstruction(e.target.value)}
+                placeholder="Опиши страницу, которую нужно создать"
+                rows={3}
+                className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"
+              />
+              <div className="mt-2 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={onAICreatePage}
+                  disabled={aiCreateBusy || !aiCreateInstruction.trim() || !aiCreatePath.trim()}
+                  className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-1 text-xs font-semibold text-white disabled:opacity-50"
+                >
+                  <FiWind /> Generate files
+                </button>
+                <button
+                  type="button"
+                  onClick={onApplyCreatedFiles}
+                  disabled={aiCreateFiles.length === 0}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                >
+                  Apply all
+                </button>
+              </div>
+              {aiCreateFiles.length > 0 && (
+                <div className="mt-2 max-h-44 space-y-1 overflow-auto rounded-lg border border-slate-200 p-2 text-xs dark:border-slate-700">
+                  {aiCreateFiles.map((file) => (
+                    <div key={file.path} className="rounded bg-slate-100 px-2 py-1 dark:bg-slate-800">
+                      {file.path} · {file.mime_type}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
 
           <FileHistory
             domainId={domainId}
             fileId={selection?.selectedFileId}
+            filePath={selection?.selectedPath}
+            canWrite={!readOnly}
             refreshKey={historyRefreshKey}
+            onReverted={async () => {
+              setHistoryRefreshKey((value) => value + 1);
+              const refreshed = await loadFiles();
+              const selectedPath = selection?.selectedPath;
+              if (selectedPath) {
+                const file = refreshed.find((item) => item.path === selectedPath);
+                if (file) {
+                  await loadFile(file);
+                }
+              }
+            }}
           />
 
           {readOnly && (
