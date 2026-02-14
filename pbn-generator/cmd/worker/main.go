@@ -11,6 +11,7 @@ import (
 
 	"obzornik-pbn-generator/internal/config"
 	"obzornik-pbn-generator/internal/db"
+	"obzornik-pbn-generator/internal/indexchecker"
 	"obzornik-pbn-generator/internal/store/sqlstore"
 	"obzornik-pbn-generator/internal/tasks"
 	"obzornik-pbn-generator/internal/worker"
@@ -32,13 +33,17 @@ func main() {
 	domainStore := sqlstore.NewDomainStore(dbConn)
 	genStore := sqlstore.NewGenerationStore(dbConn)
 	promptStore := sqlstore.NewPromptStore(dbConn)
+	promptOverrideStore := sqlstore.NewPromptOverrideStore(dbConn)
 	projectStore := sqlstore.NewProjectStore(dbConn)
 	linkScheduleStore := sqlstore.NewLinkScheduleStore(dbConn)
+	deploymentStore := sqlstore.NewDeploymentAttemptStore(dbConn)
 	userStore := sqlstore.NewUserStore(dbConn)
 	apiKeyUsageStore := sqlstore.NewAPIKeyUsageStore(dbConn)
 	siteFileStore := sqlstore.NewSiteFileStore(dbConn)
 	fileEditStore := sqlstore.NewFileEditStore(dbConn)
 	linkTaskStore := sqlstore.NewLinkTaskStore(dbConn)
+	indexCheckStore := sqlstore.NewIndexCheckStore(dbConn)
+	checkHistoryStore := sqlstore.NewCheckHistoryStore(dbConn)
 	auditStore := sqlstore.NewAuditStore(dbConn)
 
 	server := tasks.NewServer(cfg, 4, true, true)
@@ -58,8 +63,10 @@ func main() {
 			domainStore,
 			genStore,
 			promptStore,
+			promptOverrideStore,
 			projectStore,
 			linkScheduleStore,
+			deploymentStore,
 			userStore,
 			apiKeyUsageStore,
 			siteFileStore,
@@ -67,7 +74,7 @@ func main() {
 		)
 	})
 	linkWorker := &worker.LinkWorker{
-		BaseDir:   "server",
+		BaseDir:   cfg.DeployBaseDir,
 		Config:    cfg,
 		Logger:    sugar,
 		Tasks:     linkTaskStore,
@@ -83,6 +90,25 @@ func main() {
 			return err
 		}
 		return linkWorker.ProcessTask(ctx, payload.TaskID)
+	})
+	indexChecker := &indexchecker.SerpChecker{}
+	mux.HandleFunc(tasks.TaskProcessIndex, func(ctx context.Context, t *asynq.Task) error {
+		payload, err := tasks.ParseIndexCheckPayload(t)
+		if err != nil {
+			return err
+		}
+		_, err = indexchecker.ProcessCheckByID(
+			ctx,
+			time.Now().UTC(),
+			payload.CheckID,
+			projectStore,
+			domainStore,
+			indexCheckStore,
+			checkHistoryStore,
+			indexChecker,
+			sugar,
+		)
+		return err
 	})
 
 	// Запускаем cleanup worker в отдельной горутине

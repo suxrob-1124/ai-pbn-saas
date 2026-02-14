@@ -2,18 +2,20 @@ package httpserver
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"database/sql"
-
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 	"go.uber.org/zap"
 
@@ -58,6 +60,8 @@ func setupServer(t *testing.T) *Server {
 	dom := newStubDomainStore()
 	gen := newStubGenerationStore()
 	prompts := newStubPromptStore()
+	promptOverrides := newStubPromptOverrideStore()
+	deployments := newStubDeploymentAttemptStore()
 	schedules := newStubScheduleStore()
 	linkSchedules := newStubLinkScheduleStore()
 	siteFiles := newStubSiteFileStore()
@@ -66,7 +70,7 @@ func setupServer(t *testing.T) *Server {
 	genQueue := newStubGenQueueStore()
 	indexChecks := newStubIndexCheckStore()
 	checkHistory := newStubCheckHistoryStore()
-	return New(cfg, svc, logger, proj, nil, dom, gen, prompts, schedules, linkSchedules, nil, siteFiles, fileEdits, linkTasks, genQueue, indexChecks, checkHistory, newStubEnqueuer())
+	return New(cfg, svc, logger, proj, nil, dom, gen, prompts, promptOverrides, deployments, schedules, linkSchedules, nil, siteFiles, fileEdits, linkTasks, genQueue, indexChecks, checkHistory, newStubEnqueuer())
 }
 
 func TestRegisterAndLogin(t *testing.T) {
@@ -477,6 +481,356 @@ func TestGetProjectMemberRole_AdminBypass(t *testing.T) {
 	}
 	if role != "admin" {
 		t.Fatalf("expected admin role, got %q", role)
+	}
+}
+
+func TestProjectSummaryIncludesMyRoleOwner(t *testing.T) {
+	s := setupServer(t)
+	projectID := "project-summary-owner"
+	s.projects.(*stubProjectStore).projects[projectID] = sqlstore.Project{
+		ID:        projectID,
+		UserEmail: "owner@example.com",
+		Name:      "Owner Project",
+		Status:    "active",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+
+	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: "owner@example.com",
+		Role:  "manager",
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/summary", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	s.handleProjectSummary(rec, req, projectID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp projectSummaryDTO
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.MyRole != "owner" {
+		t.Fatalf("expected my_role=owner, got %q", resp.MyRole)
+	}
+}
+
+func TestProjectSummaryIncludesMyRoleAdmin(t *testing.T) {
+	s := setupServer(t)
+	projectID := "project-summary-admin"
+	s.projects.(*stubProjectStore).projects[projectID] = sqlstore.Project{
+		ID:        projectID,
+		UserEmail: "owner@example.com",
+		Name:      "Admin Project",
+		Status:    "active",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+
+	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: "admin@example.com",
+		Role:  "admin",
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/summary", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	s.handleProjectSummary(rec, req, projectID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp projectSummaryDTO
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.MyRole != "admin" {
+		t.Fatalf("expected my_role=admin, got %q", resp.MyRole)
+	}
+}
+
+func TestDomainSummaryIncludesMyRoleEditor(t *testing.T) {
+	s := setupServer(t)
+	projectID := "project-summary-editor"
+	domainID := "domain-summary-editor"
+	memberEmail := "editor@example.com"
+	now := time.Now().UTC()
+
+	s.projects.(*stubProjectStore).projects[projectID] = sqlstore.Project{
+		ID:        projectID,
+		UserEmail: "owner@example.com",
+		Name:      "Editor Project",
+		Status:    "active",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	s.domains.(*stubDomainStore).domains[domainID] = sqlstore.Domain{
+		ID:             domainID,
+		ProjectID:      projectID,
+		URL:            "example.com",
+		Status:         "published",
+		PublishedAt:    sql.NullTime{Time: now, Valid: true},
+		PublishedPath:  sql.NullString{String: "/server/example.com/", Valid: true},
+		FileCount:      15,
+		TotalSizeBytes: 1024,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock new: %v", err)
+	}
+	defer db.Close()
+	s.projectMembers = sqlstore.NewProjectMemberStore(db)
+
+	rows := sqlmock.NewRows([]string{"project_id", "user_email", "role", "created_at"}).
+		AddRow(projectID, memberEmail, "editor", now)
+	query := regexp.QuoteMeta("SELECT project_id, user_email, role, created_at FROM project_members WHERE project_id=$1 AND user_email=$2")
+	mock.ExpectQuery(query).WithArgs(projectID, memberEmail).WillReturnRows(rows)
+	rows2 := sqlmock.NewRows([]string{"project_id", "user_email", "role", "created_at"}).
+		AddRow(projectID, memberEmail, "editor", now)
+	mock.ExpectQuery(query).WithArgs(projectID, memberEmail).WillReturnRows(rows2)
+
+	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: memberEmail,
+		Role:  "manager",
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/domains/"+domainID+"/summary", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	s.handleDomainSummary(rec, req, domainID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp domainSummaryDTO
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.MyRole != "editor" {
+		t.Fatalf("expected my_role=editor, got %q", resp.MyRole)
+	}
+	if resp.Domain.PublishedPath == nil || *resp.Domain.PublishedPath != "/server/example.com/" {
+		t.Fatalf("expected published_path in domain summary")
+	}
+	if resp.Domain.FileCount != 15 {
+		t.Fatalf("expected file_count=15, got %d", resp.Domain.FileCount)
+	}
+	if resp.Domain.TotalSizeBytes != 1024 {
+		t.Fatalf("expected total_size_bytes=1024, got %d", resp.Domain.TotalSizeBytes)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet sqlmock expectations: %v", err)
+	}
+}
+
+func TestDomainSummaryUsesEffectiveLinkStatusFromActiveTask(t *testing.T) {
+	s := setupServer(t)
+	projectID := "project-domain-effective"
+	domainID := "domain-domain-effective"
+	now := time.Now().UTC()
+
+	s.projects.(*stubProjectStore).projects[projectID] = sqlstore.Project{
+		ID:        projectID,
+		UserEmail: "owner@example.com",
+		Name:      "Project",
+		Status:    "active",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	s.domains.(*stubDomainStore).domains[domainID] = sqlstore.Domain{
+		ID:             domainID,
+		ProjectID:      projectID,
+		URL:            "example.com",
+		Status:         "published",
+		LinkStatus:     sql.NullString{String: "ready", Valid: true},
+		PublishedAt:    sql.NullTime{Time: now, Valid: true},
+		PublishedPath:  sql.NullString{String: "/server/example.com/", Valid: true},
+		FileCount:      5,
+		TotalSizeBytes: 123,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	linkStore := s.linkTasks.(*stubLinkTaskStore)
+	linkStore.domainToProject[domainID] = projectID
+	_ = linkStore.Create(context.Background(), sqlstore.LinkTask{
+		ID:           "task-1",
+		DomainID:     domainID,
+		AnchorText:   "anchor",
+		TargetURL:    "https://example.org",
+		ScheduledFor: now,
+		Action:       "insert",
+		Status:       "searching",
+		CreatedBy:    "owner@example.com",
+		CreatedAt:    now.Add(time.Second),
+	})
+
+	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: "owner@example.com",
+		Role:  "manager",
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/domains/"+domainID+"/summary", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	s.handleDomainSummary(rec, req, domainID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp domainSummaryDTO
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Domain.LinkStatusEffective == nil || *resp.Domain.LinkStatusEffective != "searching" {
+		t.Fatalf("expected link_status_effective=searching, got %#v", resp.Domain.LinkStatusEffective)
+	}
+	if resp.Domain.LinkStatusSource != "active_task" {
+		t.Fatalf("expected link_status_source=active_task, got %q", resp.Domain.LinkStatusSource)
+	}
+}
+
+func TestProjectSummaryIncludesEffectiveLinkStatus(t *testing.T) {
+	s := setupServer(t)
+	projectID := "project-summary-effective"
+	now := time.Now().UTC()
+
+	s.projects.(*stubProjectStore).projects[projectID] = sqlstore.Project{
+		ID:        projectID,
+		UserEmail: "owner@example.com",
+		Name:      "Project",
+		Status:    "active",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	s.domains.(*stubDomainStore).domains["domain-1"] = sqlstore.Domain{
+		ID:         "domain-1",
+		ProjectID:  projectID,
+		URL:        "one.example",
+		Status:     "published",
+		LinkStatus: sql.NullString{String: "ready", Valid: true},
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+	s.domains.(*stubDomainStore).domains["domain-2"] = sqlstore.Domain{
+		ID:         "domain-2",
+		ProjectID:  projectID,
+		URL:        "two.example",
+		Status:     "published",
+		LinkStatus: sql.NullString{String: "inserted", Valid: true},
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+	linkStore := s.linkTasks.(*stubLinkTaskStore)
+	linkStore.domainToProject["domain-1"] = projectID
+	linkStore.domainToProject["domain-2"] = projectID
+	_ = linkStore.Create(context.Background(), sqlstore.LinkTask{
+		ID:           "task-removing",
+		DomainID:     "domain-1",
+		AnchorText:   "anchor",
+		TargetURL:    "https://example.org",
+		ScheduledFor: now,
+		Action:       "remove",
+		Status:       "removing",
+		CreatedBy:    "owner@example.com",
+		CreatedAt:    now,
+	})
+
+	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: "owner@example.com",
+		Role:  "manager",
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/summary", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	s.handleProjectSummary(rec, req, projectID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp projectSummaryDTO
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Domains) != 2 {
+		t.Fatalf("expected 2 domains, got %d", len(resp.Domains))
+	}
+	var foundRemoving bool
+	for _, d := range resp.Domains {
+		if d.ID != "domain-1" {
+			continue
+		}
+		if d.LinkStatusEffective == nil || *d.LinkStatusEffective != "removing" {
+			t.Fatalf("expected removing effective status for domain-1, got %#v", d.LinkStatusEffective)
+		}
+		if d.LinkStatusSource != "active_task" {
+			t.Fatalf("expected active_task source for domain-1, got %q", d.LinkStatusSource)
+		}
+		foundRemoving = true
+	}
+	if !foundRemoving {
+		t.Fatalf("domain-1 not found in response")
+	}
+}
+
+func TestProjectQueueHistoryEndpoint(t *testing.T) {
+	s := setupServer(t)
+	projectID := "project-queue-history"
+	domainID := "domain-queue-history"
+	now := time.Now().UTC()
+
+	s.projects.(*stubProjectStore).projects[projectID] = sqlstore.Project{
+		ID:        projectID,
+		UserEmail: "owner@example.com",
+		Name:      "Project",
+		Status:    "active",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	s.domains.(*stubDomainStore).domains[domainID] = sqlstore.Domain{
+		ID:        domainID,
+		ProjectID: projectID,
+		URL:       "queue.example",
+		Status:    "published",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	queueStore := s.genQueue.(*stubGenQueueStore)
+	queueStore.domainToProject[domainID] = projectID
+	_ = queueStore.Enqueue(context.Background(), sqlstore.QueueItem{
+		ID:           "queue-active",
+		DomainID:     domainID,
+		ScheduledFor: now,
+		Status:       "pending",
+	})
+	_ = queueStore.Enqueue(context.Background(), sqlstore.QueueItem{
+		ID:           "queue-failed",
+		DomainID:     domainID,
+		ScheduledFor: now.Add(-time.Minute),
+		Status:       "failed",
+		ErrorMessage: sql.NullString{String: "boom", Valid: true},
+		ProcessedAt:  sql.NullTime{Time: now, Valid: true},
+	})
+
+	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: "owner@example.com",
+		Role:  "manager",
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/queue/history?status=failed", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	s.handleProjectQueueHistory(rec, req, projectID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp []queueItemDTO
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp) != 1 {
+		t.Fatalf("expected 1 history item, got %d", len(resp))
+	}
+	if resp[0].Status != "failed" {
+		t.Fatalf("expected failed status, got %s", resp[0].Status)
+	}
+	if resp[0].DomainURL == nil || *resp[0].DomainURL != "queue.example" {
+		t.Fatalf("expected domain_url queue.example, got %#v", resp[0].DomainURL)
 	}
 }
 
@@ -1420,7 +1774,7 @@ func (s *stubProjectStore) Get(ctx context.Context, id, email string) (sqlstore.
 	defer s.mu.Unlock()
 	p, ok := s.projects[id]
 	if !ok || p.UserEmail != email {
-		return sqlstore.Project{}, errors.New("not found")
+		return sqlstore.Project{}, sql.ErrNoRows
 	}
 	return p, nil
 }
@@ -1430,7 +1784,7 @@ func (s *stubProjectStore) GetByID(ctx context.Context, id string) (sqlstore.Pro
 	defer s.mu.Unlock()
 	p, ok := s.projects[id]
 	if !ok {
-		return sqlstore.Project{}, errors.New("not found")
+		return sqlstore.Project{}, sql.ErrNoRows
 	}
 	return p, nil
 }
@@ -1518,6 +1872,19 @@ func (s *stubDomainStore) UpdateStatus(ctx context.Context, id, status string) e
 	return errors.New("not found")
 }
 
+func (s *stubDomainStore) UpdateLinkStatus(ctx context.Context, id, status string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if d, ok := s.domains[id]; ok {
+		d.LinkStatus = sqlstore.NullableString(status)
+		d.LinkUpdatedAt = sql.NullTime{Time: time.Now().UTC(), Valid: true}
+		d.UpdatedAt = time.Now().UTC()
+		s.domains[id] = d
+		return nil
+	}
+	return errors.New("not found")
+}
+
 func (s *stubDomainStore) UpdateKeyword(ctx context.Context, id, keyword string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1568,6 +1935,26 @@ func (s *stubDomainStore) SetLastGeneration(ctx context.Context, id, genID strin
 	return errors.New("not found")
 }
 
+func (s *stubDomainStore) SetLastSuccessGeneration(ctx context.Context, id, genID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if d, ok := s.domains[id]; ok {
+		d.LastSuccessGenID = sqlstore.NullableString(genID)
+		s.domains[id] = d
+		return nil
+	}
+	return errors.New("not found")
+}
+
+func (s *stubDomainStore) RecalculateGenerationPointers(ctx context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.domains[id]; !ok {
+		return errors.New("not found")
+	}
+	return nil
+}
+
 func (s *stubDomainStore) Delete(ctx context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1593,11 +1980,27 @@ func (s *stubGenerationStore) Get(ctx context.Context, id string) (sqlstore.Gene
 	return sqlstore.Generation{}, errors.New("not found")
 }
 
-type stubEnqueuer struct{}
+type stubEnqueuer struct {
+	mu        sync.Mutex
+	calls     []string
+	failTypes map[string]error
+}
 
-func newStubEnqueuer() tasks.Enqueuer { return &stubEnqueuer{} }
+func newStubEnqueuer() tasks.Enqueuer {
+	return &stubEnqueuer{
+		calls:     make([]string, 0),
+		failTypes: make(map[string]error),
+	}
+}
 
 func (s *stubEnqueuer) Enqueue(ctx context.Context, task *asynq.Task, opts ...asynq.Option) (*asynq.TaskInfo, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	taskType := task.Type()
+	s.calls = append(s.calls, taskType)
+	if err, ok := s.failTypes[taskType]; ok && err != nil {
+		return nil, err
+	}
 	return &asynq.TaskInfo{ID: "stub"}, nil
 }
 
@@ -1734,6 +2137,18 @@ func (s *stubGenerationStore) UpdateFull(ctx context.Context, id, status string,
 		if promptID != nil {
 			g.PromptID = sqlstore.NullableString(*promptID)
 		}
+		g.UpdatedAt = time.Now().UTC()
+		s.generations[id] = g
+		return nil
+	}
+	return errors.New("not found")
+}
+
+func (s *stubGenerationStore) UpdateArtifactsSummary(ctx context.Context, id string, artifactsSummary []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if g, ok := s.generations[id]; ok {
+		g.ArtifactsSummary = append([]byte(nil), artifactsSummary...)
 		g.UpdatedAt = time.Now().UTC()
 		s.generations[id] = g
 		return nil
@@ -2104,6 +2519,50 @@ func (s *stubGenQueueStore) ListByProjectPage(ctx context.Context, projectID str
 	return res, nil
 }
 
+func (s *stubGenQueueStore) ListHistoryByProjectPage(
+	ctx context.Context,
+	projectID string,
+	limit, offset int,
+	search string,
+	status *string,
+	dateFrom *time.Time,
+	dateTo *time.Time,
+) ([]sqlstore.QueueItem, error) {
+	res, err := s.ListByProject(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]sqlstore.QueueItem, 0, len(res))
+	for _, item := range res {
+		if item.Status != "completed" && item.Status != "failed" {
+			continue
+		}
+		if status != nil && item.Status != strings.ToLower(strings.TrimSpace(*status)) {
+			continue
+		}
+		if dateFrom != nil && item.ScheduledFor.Before(*dateFrom) {
+			continue
+		}
+		if dateTo != nil && item.ScheduledFor.After(*dateTo) {
+			continue
+		}
+		if search != "" && !strings.Contains(strings.ToLower(item.DomainID), strings.ToLower(search)) {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	if offset > 0 {
+		if offset >= len(filtered) {
+			return []sqlstore.QueueItem{}, nil
+		}
+		filtered = filtered[offset:]
+	}
+	if limit > 0 && len(filtered) > limit {
+		filtered = filtered[:limit]
+	}
+	return filtered, nil
+}
+
 func (s *stubGenQueueStore) Delete(ctx context.Context, itemID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -2121,7 +2580,7 @@ type stubIndexCheckStore struct {
 	domainURL       map[string]string
 	errGetByDomain  error
 	errCreate       error
-	errReset        error
+	errUpsert       error
 	errListDomain   error
 	errListProject  error
 	errListAll      error
@@ -2153,6 +2612,38 @@ func (s *stubIndexCheckStore) Create(ctx context.Context, check sqlstore.IndexCh
 	}
 	s.checks[check.ID] = check
 	return nil
+}
+
+func (s *stubIndexCheckStore) UpsertManualByDomainAndDate(ctx context.Context, domainID string, date, now time.Time) (sqlstore.IndexCheck, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.errUpsert != nil {
+		return sqlstore.IndexCheck{}, false, s.errUpsert
+	}
+	for id, check := range s.checks {
+		if check.DomainID == domainID && check.CheckDate.Equal(date) {
+			check.Status = "pending"
+			check.Attempts = 0
+			check.IsIndexed = sql.NullBool{}
+			check.ErrorMessage = sql.NullString{}
+			check.LastAttemptAt = sql.NullTime{}
+			check.CompletedAt = sql.NullTime{}
+			check.NextRetryAt = sql.NullTime{Time: now, Valid: true}
+			s.checks[id] = check
+			return check, false, nil
+		}
+	}
+	check := sqlstore.IndexCheck{
+		ID:          "check-" + uuid.NewString(),
+		DomainID:    domainID,
+		CheckDate:   date,
+		Status:      "pending",
+		Attempts:    0,
+		NextRetryAt: sql.NullTime{Time: now, Valid: true},
+		CreatedAt:   now,
+	}
+	s.checks[check.ID] = check
+	return check, true, nil
 }
 
 func (s *stubIndexCheckStore) Get(ctx context.Context, checkID string) (*sqlstore.IndexCheck, error) {
@@ -2332,27 +2823,6 @@ func (s *stubIndexCheckStore) CountFailed(ctx context.Context, filters sqlstore.
 		count++
 	}
 	return count, nil
-}
-
-func (s *stubIndexCheckStore) ResetForManual(ctx context.Context, checkID string, nextRetry time.Time) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.errReset != nil {
-		return s.errReset
-	}
-	check, ok := s.checks[checkID]
-	if !ok {
-		return sql.ErrNoRows
-	}
-	check.Status = "pending"
-	check.Attempts = 0
-	check.IsIndexed = sql.NullBool{}
-	check.ErrorMessage = sql.NullString{}
-	check.LastAttemptAt = sql.NullTime{}
-	check.CompletedAt = sql.NullTime{}
-	check.NextRetryAt = sql.NullTime{Time: nextRetry, Valid: true}
-	s.checks[checkID] = check
-	return nil
 }
 
 func (s *stubIndexCheckStore) AggregateStats(ctx context.Context, filters sqlstore.IndexCheckFilters) (sqlstore.IndexCheckStats, error) {
@@ -2735,6 +3205,30 @@ func (s *stubLinkTaskStore) ListPending(ctx context.Context, limit int) ([]sqlst
 	return res, nil
 }
 
+func (s *stubLinkTaskStore) ListActiveByDomainIDs(ctx context.Context, domainIDs []string) (map[string]sqlstore.LinkTask, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	idSet := make(map[string]bool, len(domainIDs))
+	for _, id := range domainIDs {
+		idSet[id] = true
+	}
+	res := make(map[string]sqlstore.LinkTask, len(domainIDs))
+	for _, task := range s.tasks {
+		if !idSet[task.DomainID] {
+			continue
+		}
+		status := strings.ToLower(strings.TrimSpace(task.Status))
+		if status != "pending" && status != "searching" && status != "removing" {
+			continue
+		}
+		existing, exists := res[task.DomainID]
+		if !exists || linkTaskStatusPriority(task.Status) > linkTaskStatusPriority(existing.Status) || (linkTaskStatusPriority(task.Status) == linkTaskStatusPriority(existing.Status) && task.CreatedAt.After(existing.CreatedAt)) {
+			res[task.DomainID] = task
+		}
+	}
+	return res, nil
+}
+
 func (s *stubLinkTaskStore) Update(ctx context.Context, taskID string, updates sqlstore.LinkTaskUpdates) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -2766,11 +3260,17 @@ func (s *stubLinkTaskStore) Update(ctx context.Context, taskID string, updates s
 	if updates.Attempts != nil {
 		task.Attempts = *updates.Attempts
 	}
+	if updates.CreatedAt != nil {
+		task.CreatedAt = *updates.CreatedAt
+	}
 	if updates.ScheduledFor != nil {
 		task.ScheduledFor = *updates.ScheduledFor
 	}
 	if updates.CompletedAt != nil {
 		task.CompletedAt = *updates.CompletedAt
+	}
+	if updates.LogLines != nil {
+		task.LogLines = *updates.LogLines
 	}
 	s.tasks[taskID] = task
 	return nil
@@ -2870,6 +3370,114 @@ func (s *stubPromptStore) Get(ctx context.Context, id string) (sqlstore.SystemPr
 		return sqlstore.SystemPrompt{}, sql.ErrNoRows
 	}
 	return p, nil
+}
+
+type stubPromptOverrideStore struct {
+	mu        sync.Mutex
+	overrides map[string]sqlstore.PromptOverride
+}
+
+func newStubPromptOverrideStore() *stubPromptOverrideStore {
+	return &stubPromptOverrideStore{overrides: make(map[string]sqlstore.PromptOverride)}
+}
+
+func (s *stubPromptOverrideStore) key(scopeType, scopeID, stage string) string {
+	return scopeType + "|" + scopeID + "|" + stage
+}
+
+func (s *stubPromptOverrideStore) Upsert(ctx context.Context, item sqlstore.PromptOverride) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now().UTC()
+	if item.CreatedAt.IsZero() {
+		item.CreatedAt = now
+	}
+	item.UpdatedAt = now
+	s.overrides[s.key(item.ScopeType, item.ScopeID, item.Stage)] = item
+	return nil
+}
+
+func (s *stubPromptOverrideStore) Delete(ctx context.Context, scopeType, scopeID, stage string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.overrides, s.key(scopeType, scopeID, stage))
+	return nil
+}
+
+func (s *stubPromptOverrideStore) ListByScope(ctx context.Context, scopeType, scopeID string) ([]sqlstore.PromptOverride, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	res := make([]sqlstore.PromptOverride, 0)
+	for _, item := range s.overrides {
+		if item.ScopeType == scopeType && item.ScopeID == scopeID {
+			res = append(res, item)
+		}
+	}
+	sort.Slice(res, func(i, j int) bool {
+		return res[i].Stage < res[j].Stage
+	})
+	return res, nil
+}
+
+func (s *stubPromptOverrideStore) ResolveForDomainStage(ctx context.Context, domainID, projectID, stage string) (sqlstore.ResolvedPrompt, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if domainID != "" {
+		if item, ok := s.overrides[s.key(sqlstore.PromptScopeDomain, domainID, stage)]; ok {
+			return sqlstore.ResolvedPrompt{
+				Stage:           stage,
+				Source:          sqlstore.PromptScopeDomain,
+				OverrideID:      sqlstore.NullableString(item.ID),
+				Body:            item.Body,
+				Model:           item.Model,
+				BasedOnPromptID: item.BasedOnPrompt,
+			}, nil
+		}
+	}
+	if projectID != "" {
+		if item, ok := s.overrides[s.key(sqlstore.PromptScopeProject, projectID, stage)]; ok {
+			return sqlstore.ResolvedPrompt{
+				Stage:           stage,
+				Source:          sqlstore.PromptScopeProject,
+				OverrideID:      sqlstore.NullableString(item.ID),
+				Body:            item.Body,
+				Model:           item.Model,
+				BasedOnPromptID: item.BasedOnPrompt,
+			}, nil
+		}
+	}
+	return sqlstore.ResolvedPrompt{
+		Stage:  stage,
+		Source: "global",
+		Body:   "",
+	}, nil
+}
+
+type stubDeploymentAttemptStore struct {
+	mu       sync.Mutex
+	attempts []sqlstore.DeploymentAttempt
+}
+
+func newStubDeploymentAttemptStore() *stubDeploymentAttemptStore {
+	return &stubDeploymentAttemptStore{attempts: make([]sqlstore.DeploymentAttempt, 0)}
+}
+
+func (s *stubDeploymentAttemptStore) ListByDomain(ctx context.Context, domainID string, limit int) ([]sqlstore.DeploymentAttempt, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	res := make([]sqlstore.DeploymentAttempt, 0)
+	for _, item := range s.attempts {
+		if item.DomainID == domainID {
+			res = append(res, item)
+		}
+	}
+	sort.Slice(res, func(i, j int) bool {
+		return res[i].CreatedAt.After(res[j].CreatedAt)
+	})
+	if limit > 0 && len(res) > limit {
+		res = res[:limit]
+	}
+	return res, nil
 }
 
 func TestParseIndexCheckFiltersSortAndSearch(t *testing.T) {

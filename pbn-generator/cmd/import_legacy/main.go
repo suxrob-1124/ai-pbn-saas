@@ -23,6 +23,8 @@ func main() {
 	batchNumber := flag.Int("batch-number", 1, "batch number (1-based)")
 	serverDir := flag.String("server-dir", "server", "directory with published sites")
 	reportPath := flag.String("report", "import_legacy_report.json", "output path for JSON report")
+	force := flag.Bool("force", false, "allow rewrite synthetic legacy artifacts even if non-legacy generations exist")
+	decodeSource := flag.String("decode-source", "import_legacy", "decode source marker: import_legacy|decode_backfill")
 	flag.Parse()
 
 	zl, _ := zap.NewProduction()
@@ -42,8 +44,10 @@ func main() {
 	domainStore := sqlstore.NewDomainStore(database)
 	siteFileStore := sqlstore.NewSiteFileStore(database)
 	linkTaskStore := sqlstore.NewLinkTaskStore(database)
+	generationStore := sqlstore.NewGenerationStore(database)
+	promptStore := sqlstore.NewPromptStore(database)
 
-	imp := legacy.NewImporter(userStore, projectStore, domainStore, siteFileStore, linkTaskStore)
+	imp := legacy.NewImporter(userStore, projectStore, domainStore, siteFileStore, linkTaskStore, generationStore, promptStore)
 
 	opts := legacy.RunOptions{
 		ManifestPath: *manifest,
@@ -53,6 +57,8 @@ func main() {
 			BatchSize:   *batchSize,
 			BatchNumber: *batchNumber,
 		},
+		Force:        *force,
+		DecodeSource: *decodeSource,
 	}
 
 	report, err := imp.Run(context.Background(), opts)
@@ -70,14 +76,22 @@ func main() {
 		"success", report.Summary.Success,
 		"warned", report.Summary.Warned,
 		"failed", report.Summary.Failed,
+		"decoded", report.Summary.Decoded,
+		"updated", report.Summary.Updated,
+		"skipped", report.Summary.Skipped,
+		"unchanged", report.Summary.Unchanged,
 		"report", *reportPath,
 	)
 
-	fmt.Printf("import completed: processed=%d success=%d warned=%d failed=%d report=%s\n",
+	fmt.Printf("import completed: processed=%d success=%d warned=%d failed=%d decoded=%d updated=%d skipped=%d unchanged=%d report=%s\n",
 		report.Summary.Processed,
 		report.Summary.Success,
 		report.Summary.Warned,
 		report.Summary.Failed,
+		report.Summary.Decoded,
+		report.Summary.Updated,
+		report.Summary.Skipped,
+		report.Summary.Unchanged,
 		*reportPath,
 	)
 }

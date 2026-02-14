@@ -36,6 +36,8 @@ func (s *TechnicalSpecStep) Execute(ctx context.Context, state *PipelineState) (
 	keyword := state.Domain.MainKeyword
 	country := state.Domain.TargetCountry
 	lang := state.Domain.TargetLanguage
+	resolution := resolveBrandResolution(state, "", "")
+	logBrandResolution(state, resolution)
 
 	// Получаем промпт
 	specPromptID, specSystemPrompt, specModel, err := state.PromptManager.GetPromptByStage(ctx, "technical_spec")
@@ -77,6 +79,9 @@ func (s *TechnicalSpecStep) Execute(ctx context.Context, state *PipelineState) (
 		"header_element_id": fmt.Sprintf("%d", headerElementID),
 		"footer_variant_id": fmt.Sprintf("%d", footerVariantID),
 	}
+	for k, v := range buildBrandPromptVars(resolution) {
+		specVariables[k] = v
+	}
 
 	// Строим промпт
 	specPrompt := llm.BuildPrompt(specSystemPrompt, "", specVariables)
@@ -94,8 +99,8 @@ func (s *TechnicalSpecStep) Execute(ctx context.Context, state *PipelineState) (
 		specModelToUse = state.DefaultModel
 	}
 
-	// Выполняем запрос к LLM
-	technicalSpec, err := state.LLMClient.Generate(ctx, "technical_spec", specPrompt, specModelToUse)
+	// Выполняем запрос к LLM + валидация brand-policy
+	technicalSpec, validation, err := generateWithBrandGuard(ctx, state, "technical_spec", specPrompt, specModelToUse, resolution)
 	if err != nil {
 		return nil, fmt.Errorf("technical spec generation failed: %w", err)
 	}
@@ -107,9 +112,12 @@ func (s *TechnicalSpecStep) Execute(ctx context.Context, state *PipelineState) (
 	if technicalSpec != "" {
 		artifacts["technical_spec_prompt"] = formatPromptForArtifact(specPrompt)
 		artifacts["technical_spec"] = technicalSpec
+		artifacts["brand_resolution"] = resolution
+		artifacts["brand_validation"] = mergeBrandValidation(state.Artifacts["brand_validation"], "technical_spec", validation)
 
 		// Сохраняем в context для следующих шагов
 		state.Context["technical_spec"] = technicalSpec
+		state.Context["brand_resolution"] = resolution
 	}
 
 	return artifacts, nil

@@ -266,7 +266,7 @@ async function main() {
         target_url: "https://example.com",
         scheduled_for: new Date().toISOString(),
         status: "pending",
-        attempts: 1,
+        attempts: 0,
         created_by: "admin@example.com",
         created_at: new Date().toISOString()
       });
@@ -355,7 +355,7 @@ async function main() {
   assert.equal(linkUpdated.id, "task-1");
 
   const linkRetry = await retryLinkTask("task-1");
-  assert.equal(linkRetry.attempts, 1);
+  assert.equal(linkRetry.attempts, 0);
 
   const linkDeleted = await deleteLinkTask("task-1");
   assert.equal(linkDeleted.status, "deleted");

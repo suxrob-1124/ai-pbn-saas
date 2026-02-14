@@ -35,6 +35,9 @@ type RunOptions struct {
 	ServerDir    string
 	Mode         Mode
 	Batch        BatchConfig
+	Force        bool
+	DecodeSource string
+	DecodeOnly   bool
 }
 
 // Summary агрегирует статистику по репорту импорта.
@@ -43,6 +46,10 @@ type Summary struct {
 	Success   int `json:"success"`
 	Failed    int `json:"failed"`
 	Warned    int `json:"warned"`
+	Decoded   int `json:"decoded,omitempty"`
+	Updated   int `json:"updated,omitempty"`
+	Skipped   int `json:"skipped,omitempty"`
+	Unchanged int `json:"unchanged,omitempty"`
 }
 
 // RowReport содержит результат обработки строки манифеста.

@@ -30,8 +30,10 @@ func processGeneration(
 	domainStore *sqlstore.DomainStore,
 	genStore *sqlstore.GenerationStore,
 	promptStore *sqlstore.PromptStore,
+	promptOverrideStore *sqlstore.PromptOverrideStore,
 	projectStore *sqlstore.ProjectStore,
 	linkScheduleStore *sqlstore.LinkScheduleStore,
+	deploymentStore *sqlstore.DeploymentAttemptStore,
 	userStore *sqlstore.UserStore,
 	apiKeyUsageStore *sqlstore.APIKeyUsageStore,
 	siteFileStore *sqlstore.SiteFileSQLStore,
@@ -122,7 +124,7 @@ func processGeneration(
 	if err != nil {
 		errMsg := "project not found"
 		_ = genStore.UpdateStatus(ctx, payload.GenerationID, "error", 0, &errMsg)
-		_ = domainStore.UpdateStatus(ctx, payload.DomainID, "waiting")
+		_ = domainStore.UpdateStatus(ctx, payload.DomainID, stableDomainStatus(domain))
 		return fmt.Errorf("project not found: %w", err)
 	}
 
@@ -177,7 +179,7 @@ func processGeneration(
 		appendLog(errMsg)
 		logBytes, _ := json.Marshal(logs)
 		_ = genStore.UpdateFull(ctx, payload.GenerationID, "error", 0, &errMsg, logBytes, nil, &now, pipeline.PtrTime(time.Now()), nil)
-		_ = domainStore.UpdateStatus(ctx, payload.DomainID, "waiting")
+		_ = domainStore.UpdateStatus(ctx, payload.DomainID, stableDomainStatus(domain))
 		return fmt.Errorf("API key not configured")
 	}
 
@@ -223,8 +225,11 @@ func processGeneration(
 		llmClient.Reset()
 	}()
 
-	promptAdapter := llm.NewPromptAdapter(promptStore)
-	promptManager := llm.NewPromptManager(promptAdapter)
+	scopedPrompts := newScopedPromptManager(promptStore, promptOverrideStore, domain.ID, project.ID)
+	deployMode := "local_mock"
+	if mode := strings.TrimSpace(domain.DeploymentMode.String); mode != "" {
+		deployMode = mode
+	}
 
 	// Создаем pipeline state
 	// Подготовим артефакты, загруженные из БД (для skip/restore)
@@ -250,10 +255,13 @@ func processGeneration(
 		ProjectStore:      projectStore,
 		LinkScheduleStore: linkScheduleStore,
 		AuditStore:        auditStore,
+		PromptOverrides:   promptOverrideStore,
+		Deployments:       deploymentStore,
 		LLMClient:         pipeline.NewLLMClient(llmClient),
-		PromptManager:     pipeline.NewPromptManager(promptManager),
+		PromptManager:     scopedPrompts,
 		Analyzer:          pipeline.NewAnalyzer(),
-		Publisher:         publisher.NewLocalPublisher("server", domainStore, siteFileStore),
+		Publisher:         publisher.NewLocalPublisher(cfg.DeployBaseDir, domainStore, siteFileStore),
+		DeploymentMode:    deployMode,
 		DefaultModel:      cfg.GeminiDefaultModel,
 		Domain:            &domain,
 		Project:           &project,
@@ -296,7 +304,7 @@ func processGeneration(
 			logBytes, _ := json.Marshal(logs)
 			gen, _ := genStore.Get(ctx, payload.GenerationID)
 			_ = genStore.UpdateFull(ctx, payload.GenerationID, "paused", gen.Progress, nil, logBytes, gen.Artifacts, &now, nil, nil)
-			_ = domainStore.UpdateStatus(ctx, payload.DomainID, "waiting")
+			_ = domainStore.UpdateStatus(ctx, payload.DomainID, stableDomainStatus(domain))
 			return nil
 		}
 		if err == pipeline.ErrPipelineCancelled {
@@ -304,7 +312,7 @@ func processGeneration(
 			logBytes, _ := json.Marshal(logs)
 			gen, _ := genStore.Get(ctx, payload.GenerationID)
 			_ = genStore.UpdateFull(ctx, payload.GenerationID, "cancelled", gen.Progress, nil, logBytes, gen.Artifacts, &now, pipeline.PtrTime(time.Now()), nil)
-			_ = domainStore.UpdateStatus(ctx, payload.DomainID, "waiting")
+			_ = domainStore.UpdateStatus(ctx, payload.DomainID, stableDomainStatus(domain))
 			return nil
 		}
 		// Обрабатываем ошибки паузы/отмены отдельно
@@ -341,7 +349,7 @@ func processGeneration(
 		logBytes, _ := json.Marshal(logs)
 		_ = genStore.UpdateFull(ctx, payload.GenerationID, "error", progress, &errMsg, logBytes, artifacts, &now, pipeline.PtrTime(time.Now()), nil)
 		_ = genStore.UpdateRetry(ctx, payload.GenerationID, attempts, retryable, nextRetryAt, lastErrorAt)
-		_ = domainStore.UpdateStatus(ctx, payload.DomainID, "waiting")
+		_ = domainStore.UpdateStatus(ctx, payload.DomainID, stableDomainStatus(domain))
 		return err
 	}
 
@@ -363,6 +371,11 @@ func processGeneration(
 	// Финальное обновление статуса
 	_ = genStore.UpdateFull(ctx, payload.GenerationID, "success", 100, nil, logBytes, finalArtifacts, &now, &fin, nil)
 	_ = genStore.UpdateRetry(ctx, payload.GenerationID, gen.Attempts, false, sql.NullTime{}, sql.NullTime{})
+	summaryMap := buildGenerationArtifactsSummary(state.Artifacts, scopedPrompts.Trace(), fin)
+	if summaryBytes, err := json.Marshal(summaryMap); err == nil {
+		_ = genStore.UpdateArtifactsSummary(ctx, payload.GenerationID, summaryBytes)
+	}
+	_ = domainStore.SetLastSuccessGeneration(ctx, payload.DomainID, payload.GenerationID)
 	_ = domainStore.UpdateStatus(ctx, payload.DomainID, "published")
 
 	return nil
@@ -373,6 +386,9 @@ func isRetryableGenerationError(errMsg string) bool {
 		return false
 	}
 	msg := strings.ToLower(errMsg)
+	if strings.Contains(msg, "brand policy violation") {
+		return false
+	}
 	if strings.Contains(msg, "context deadline exceeded") {
 		return true
 	}

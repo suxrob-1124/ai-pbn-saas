@@ -15,8 +15,8 @@ assert.ok(
 
 const projectPage = read("frontend/app/projects/[id]/page.tsx");
 assert.ok(
-  projectPage.includes("Index checks"),
-  "Project domains must include Index checks link label"
+  projectPage.includes("Индексация"),
+  "Project domains must include Индексация link label"
 );
 assert.ok(
   projectPage.includes("/monitoring/indexing"),

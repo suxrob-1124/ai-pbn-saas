@@ -10,6 +10,7 @@ import { deleteLinkTask, listLinkTasks, retryLinkTask } from "../../lib/linkTask
 import { showToast } from "../../lib/toastStore";
 import type { LinkTaskDTO } from "../../types/linkTasks";
 import { Badge } from "../../components/Badge";
+import { getLinkTaskStatusMeta, isLinkTaskInProgress, normalizeLinkTaskStatus } from "../../lib/linkTaskStatus";
 
 type Generation = {
   id: string;
@@ -164,7 +165,7 @@ function QueuePageContent() {
     const hasActiveGenerations = items.some((i) =>
       ["pending", "processing", "pause_requested", "cancelling"].includes(i.status)
     );
-    const hasActiveLinks = linkTasks.some((t) => ["pending", "searching", "removing"].includes(t.status));
+    const hasActiveLinks = linkTasks.some((t) => isLinkTaskInProgress(t.status));
     if (!hasActiveGenerations && !hasActiveLinks) {
       return;
     }
@@ -204,7 +205,8 @@ function QueuePageContent() {
   const filteredLinks = useMemo(() => {
     const term = linkSearch.trim().toLowerCase();
     return linkTasks.filter((task) => {
-      if (linkFilter !== "all" && task.status !== linkFilter) {
+      const normalizedStatus = normalizeLinkTaskStatus(task.status) || task.status;
+      if (linkFilter !== "all" && normalizedStatus !== linkFilter) {
         return false;
       }
       if (!term) {
@@ -218,7 +220,8 @@ function QueuePageContent() {
   const linkCounts = useMemo(() => {
     const c: Record<string, number> = {};
     for (const t of linkTasks) {
-      c[t.status] = (c[t.status] || 0) + 1;
+      const normalizedStatus = normalizeLinkTaskStatus(t.status) || t.status;
+      c[normalizedStatus] = (c[normalizedStatus] || 0) + 1;
     }
     return c;
   }, [linkTasks]);
@@ -512,7 +515,7 @@ function QueuePageContent() {
                           <Link href={{ pathname: `/links/${task.id}` }} className="text-indigo-600 hover:underline">
                             Открыть
                           </Link>
-                          {task.status === "failed" && (
+                          {(normalizeLinkTaskStatus(task.status) || task.status) === "failed" && (
                             <button
                               onClick={() => handleLinkRetry(task)}
                               disabled={linkLoading}
@@ -580,18 +583,14 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 function LinkTaskStatusBadge({ status }: { status: string }) {
-  const map: Record<string, { text: string; tone: "amber" | "blue" | "orange" | "sky" | "green" | "yellow" | "slate" | "red"; icon: ReactNode }> = {
-    pending: { text: "Ожидает", tone: "amber", icon: <FiClock /> },
-    searching: { text: "Поиск", tone: "blue", icon: <FiRefreshCw /> },
-    removing: { text: "Удаление", tone: "orange", icon: <FiRefreshCw /> },
-    found: { text: "Найдено", tone: "sky", icon: <FiCheck /> },
-    inserted: { text: "Вставлено", tone: "green", icon: <FiCheck /> },
-    generated: { text: "Вставлено (ген. текст)", tone: "yellow", icon: <FiCheck /> },
-    removed: { text: "Удалено", tone: "slate", icon: <FiCheck /> },
-    failed: { text: "Ошибка", tone: "red", icon: <FiAlertTriangle /> },
-  };
-  const cfg = map[status] || { text: status, tone: "slate" as const, icon: <FiClock /> };
-  return <Badge label={cfg.text} tone={cfg.tone} icon={cfg.icon} className="text-xs" />;
+  const meta = getLinkTaskStatusMeta(status);
+  const icon: ReactNode = (() => {
+    if (meta.icon === "refresh") return <FiRefreshCw />;
+    if (meta.icon === "check") return <FiCheck />;
+    if (meta.icon === "alert") return <FiAlertTriangle />;
+    return <FiClock />;
+  })();
+  return <Badge label={meta.text} tone={meta.tone} icon={icon} className="text-xs" />;
 }
 
 function FilterButton({ label, value, active, onClick, count }: { label: string; value: string; active: boolean; onClick: () => void; count: number }) {

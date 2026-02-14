@@ -74,6 +74,9 @@ type Config struct {
 	AutoApproveUsers         bool
 	GenQueueShards           int
 	LinkQueueShards          int
+	DeployBaseDir            string
+	IndexCheckerInterval     time.Duration
+	IndexCheckStaleTimeout   time.Duration
 }
 
 func Load() Config {
@@ -143,6 +146,9 @@ func Load() Config {
 		AutoApproveUsers:         envBool("AUTO_APPROVE_USERS", false),
 		GenQueueShards:           envInt("GEN_QUEUE_SHARDS", 8),
 		LinkQueueShards:          envInt("LINK_QUEUE_SHARDS", envInt("GEN_QUEUE_SHARDS", 8)),
+		DeployBaseDir:            env("DEPLOY_BASE_DIR", "server"),
+		IndexCheckerInterval:     envDuration("INDEX_CHECK_INTERVAL", 10*time.Minute),
+		IndexCheckStaleTimeout:   envDuration("INDEX_CHECK_STALE_TIMEOUT", 20*time.Minute),
 	}
 }
 

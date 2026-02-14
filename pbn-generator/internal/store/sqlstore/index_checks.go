@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // IndexCheck описывает проверку индексации домена.
@@ -26,6 +28,7 @@ type IndexCheck struct {
 // IndexCheckStore определяет операции над проверками индексации.
 type IndexCheckStore interface {
 	Create(ctx context.Context, check IndexCheck) error
+	UpsertManualByDomainAndDate(ctx context.Context, domainID string, date, now time.Time) (IndexCheck, bool, error)
 	Get(ctx context.Context, checkID string) (*IndexCheck, error)
 	GetByDomainAndDate(ctx context.Context, domainID string, date time.Time) (*IndexCheck, error)
 	ListByDomain(ctx context.Context, domainID string, filters IndexCheckFilters) ([]IndexCheck, error)
@@ -37,6 +40,8 @@ type IndexCheckStore interface {
 	CountAll(ctx context.Context, filters IndexCheckFilters) (int, error)
 	CountFailed(ctx context.Context, filters IndexCheckFilters) (int, error)
 	ListPendingRetries(ctx context.Context) ([]IndexCheck, error)
+	ListStaleChecking(ctx context.Context, olderThan time.Time) ([]IndexCheck, error)
+	TryMarkChecking(ctx context.Context, checkID string) (bool, IndexCheck, error)
 	UpdateStatus(ctx context.Context, checkID string, status string, isIndexed *bool, errMsg *string) error
 	IncrementAttempts(ctx context.Context, checkID string) error
 	SetNextRetry(ctx context.Context, checkID string, nextRetry time.Time) error
@@ -51,16 +56,16 @@ type IndexCheckStore interface {
 
 // IndexCheckFilters описывает фильтры для выборки проверок индексации.
 type IndexCheckFilters struct {
-  Statuses  []string
-  Search    *string
-  Limit     int
-  Offset    int
-  SortBy    string
-  SortDir   string
-  IsIndexed *bool
-  From      *time.Time
-  To        *time.Time
-  DomainID  *string
+	Statuses  []string
+	Search    *string
+	Limit     int
+	Offset    int
+	SortBy    string
+	SortDir   string
+	IsIndexed *bool
+	From      *time.Time
+	To        *time.Time
+	DomainID  *string
 }
 
 // IndexCheckDailySummary описывает агрегаты по дням.
@@ -118,6 +123,55 @@ func (s *IndexCheckSQLStore) Create(ctx context.Context, check IndexCheck) error
 		return fmt.Errorf("failed to create index check: %w", err)
 	}
 	return nil
+}
+
+// UpsertManualByDomainAndDate atomically creates/resets check for manual run.
+func (s *IndexCheckSQLStore) UpsertManualByDomainAndDate(
+	ctx context.Context,
+	domainID string,
+	date, now time.Time,
+) (IndexCheck, bool, error) {
+	var (
+		check   IndexCheck
+		created bool
+	)
+	id := uuid.NewString()
+	row := s.db.QueryRowContext(ctx, `INSERT INTO domain_index_checks(
+			id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at
+		) VALUES($1,$2,$3,'pending',NULL,0,NULL,$4,NULL,NULL,$4)
+		ON CONFLICT(domain_id, check_date) DO UPDATE
+		SET status='pending',
+			is_indexed=NULL,
+			attempts=0,
+			last_attempt_at=NULL,
+			next_retry_at=$4,
+			error_message=NULL,
+			completed_at=NULL
+		RETURNING
+			id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at,
+			(xmax = 0) AS inserted`,
+		id,
+		domainID,
+		date,
+		now.UTC(),
+	)
+	if err := row.Scan(
+		&check.ID,
+		&check.DomainID,
+		&check.CheckDate,
+		&check.Status,
+		&check.IsIndexed,
+		&check.Attempts,
+		&check.LastAttemptAt,
+		&check.NextRetryAt,
+		&check.ErrorMessage,
+		&check.CompletedAt,
+		&check.CreatedAt,
+		&created,
+	); err != nil {
+		return IndexCheck{}, false, fmt.Errorf("failed to upsert manual index check: %w", err)
+	}
+	return check, created, nil
 }
 
 // Get возвращает проверку по ID.
@@ -250,12 +304,66 @@ func (s *IndexCheckSQLStore) ListPendingRetries(ctx context.Context) ([]IndexChe
 	return scanIndexChecks(rows)
 }
 
+// ListStaleChecking returns checks stuck in checking without scheduled retry.
+func (s *IndexCheckSQLStore) ListStaleChecking(ctx context.Context, olderThan time.Time) ([]IndexCheck, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at
+		FROM domain_index_checks
+		WHERE status='checking'
+			AND next_retry_at IS NULL
+			AND COALESCE(last_attempt_at, created_at) <= $1
+		ORDER BY COALESCE(last_attempt_at, created_at) ASC, created_at ASC`, olderThan.UTC())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanIndexChecks(rows)
+}
+
+// TryMarkChecking transitions pending/retry-ready check to checking atomically.
+func (s *IndexCheckSQLStore) TryMarkChecking(ctx context.Context, checkID string) (bool, IndexCheck, error) {
+	row := s.db.QueryRowContext(ctx, `UPDATE domain_index_checks
+		SET status='checking',
+			next_retry_at=NULL,
+			last_attempt_at=NOW()
+		WHERE id=$1
+			AND (
+				status='pending'
+				OR (status='checking' AND next_retry_at IS NOT NULL AND next_retry_at <= NOW())
+			)
+		RETURNING id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at`, checkID)
+	var check IndexCheck
+	if err := row.Scan(
+		&check.ID,
+		&check.DomainID,
+		&check.CheckDate,
+		&check.Status,
+		&check.IsIndexed,
+		&check.Attempts,
+		&check.LastAttemptAt,
+		&check.NextRetryAt,
+		&check.ErrorMessage,
+		&check.CompletedAt,
+		&check.CreatedAt,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			current, getErr := s.Get(ctx, checkID)
+			if getErr != nil {
+				return false, IndexCheck{}, getErr
+			}
+			return false, *current, nil
+		}
+		return false, IndexCheck{}, fmt.Errorf("failed to mark checking: %w", err)
+	}
+	return true, check, nil
+}
+
 // UpdateStatus обновляет статус проверки и связанные поля.
 func (s *IndexCheckSQLStore) UpdateStatus(ctx context.Context, checkID string, status string, isIndexed *bool, errMsg *string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE domain_index_checks
 		SET status=$1,
 			is_indexed=$2,
 			error_message=$3,
+			next_retry_at=CASE WHEN $1 IN ('success','failed_investigation') THEN NULL ELSE next_retry_at END,
 			completed_at=CASE WHEN $1 IN ('success','failed_investigation') THEN NOW() ELSE NULL END
 		WHERE id=$4`,
 		status,
@@ -557,8 +665,8 @@ func (s *IndexCheckSQLStore) aggregateDailyWithBase(
 }
 
 func scanIndexChecks(rows *sql.Rows) ([]IndexCheck, error) {
-  var res []IndexCheck
-  for rows.Next() {
+	var res []IndexCheck
+	for rows.Next() {
 		var check IndexCheck
 		if err := rows.Scan(
 			&check.ID,
@@ -577,7 +685,7 @@ func scanIndexChecks(rows *sql.Rows) ([]IndexCheck, error) {
 		}
 		res = append(res, check)
 	}
-  return res, rows.Err()
+	return res, rows.Err()
 }
 
 func buildIndexCheckOrder(filters IndexCheckFilters) string {
@@ -592,29 +700,29 @@ func buildIndexCheckOrder(filters IndexCheckFilters) string {
 	case "status":
 		return fmt.Sprintf("c.status %s, c.check_date DESC, c.created_at DESC", dir)
 	case "attempts":
-    return fmt.Sprintf("c.attempts %s, c.check_date DESC, c.created_at DESC", dir)
-  case "is_indexed":
-    return fmt.Sprintf("c.is_indexed %s, c.check_date DESC, c.created_at DESC", dir)
-  case "last_attempt_at":
-    return fmt.Sprintf("c.last_attempt_at %s, c.check_date DESC, c.created_at DESC", dir)
-  case "next_retry_at":
-    return fmt.Sprintf("c.next_retry_at %s, c.check_date DESC, c.created_at DESC", dir)
-  case "created_at":
-    return fmt.Sprintf("c.created_at %s", dir)
-  case "check_date":
-    fallthrough
-  default:
-    return fmt.Sprintf("c.check_date %s, c.created_at %s", dir, dir)
-  }
+		return fmt.Sprintf("c.attempts %s, c.check_date DESC, c.created_at DESC", dir)
+	case "is_indexed":
+		return fmt.Sprintf("c.is_indexed %s, c.check_date DESC, c.created_at DESC", dir)
+	case "last_attempt_at":
+		return fmt.Sprintf("c.last_attempt_at %s, c.check_date DESC, c.created_at DESC", dir)
+	case "next_retry_at":
+		return fmt.Sprintf("c.next_retry_at %s, c.check_date DESC, c.created_at DESC", dir)
+	case "created_at":
+		return fmt.Sprintf("c.created_at %s", dir)
+	case "check_date":
+		fallthrough
+	default:
+		return fmt.Sprintf("c.check_date %s, c.created_at %s", dir, dir)
+	}
 }
 
 func requiresDomainJoinForSort(sortBy string) bool {
-  return strings.TrimSpace(sortBy) == "domain"
+	return strings.TrimSpace(sortBy) == "domain"
 }
 
 func normalizeIndexCheckStatuses(list []string) []string {
-  if len(list) == 0 {
-    return nil
+	if len(list) == 0 {
+		return nil
 	}
 	seen := make(map[string]struct{}, len(list))
 	out := make([]string, 0, len(list))

@@ -11,6 +11,7 @@ import { IndexTable, type IndexCheckSort, type IndexCheckSortKey } from "../../.
 import { useAuthGuard } from "../../../lib/useAuth";
 import { authFetchCached, invalidateAuthCache } from "../../../lib/http";
 import { useDebouncedValue } from "../../../lib/useDebouncedValue";
+import { showToast } from "../../../lib/toastStore";
 import {
   listAdmin,
   listAdminCalendar,
@@ -400,9 +401,25 @@ function IndexingMonitoringContent() {
       invalidateAuthCache("index-checks/stats");
       invalidateAuthCache("index-checks/calendar");
       if (domainScope) {
-        await runManual(domainScope);
+        const result = await runManual(domainScope);
+        if (result.run_now_enqueued === false) {
+          showToast({
+            type: "warning",
+            title: "Проверка поставлена в pending",
+            message: result.run_now_error || "Immediate enqueue не удался, обработка пойдет по плановому циклу."
+          });
+        }
       } else if (projectId) {
-        await runManualProject(projectId);
+        const result = await runManualProject(projectId);
+        const enqueueFailed = result.enqueue_failed || 0;
+        const upsertFailed = result.upsert_failed || 0;
+        if (enqueueFailed > 0 || upsertFailed > 0) {
+          showToast({
+            type: "warning",
+            title: "Часть проверок выполнена с ошибками",
+            message: `Успешно поставлено: ${result.enqueued || 0}, ошибок upsert: ${upsertFailed}, ошибок enqueue: ${enqueueFailed}.`
+          });
+        }
       } else {
         return;
       }
@@ -511,7 +528,14 @@ function IndexingMonitoringContent() {
       try {
         invalidateAuthCache("index-checks/stats");
         invalidateAuthCache("index-checks/calendar");
-        await runAdminManual(domainId);
+        const result = await runAdminManual(domainId);
+        if (result.run_now_enqueued === false) {
+          showToast({
+            type: "warning",
+            title: "Проверка поставлена в pending",
+            message: result.run_now_error || "Immediate enqueue не удался, обработка пойдет по плановому циклу."
+          });
+        }
         await Promise.all([loadChecks(), loadStats(), loadCalendar(), loadFailed()]);
       } catch (err: any) {
         setError(err?.message || "Не удалось запустить проверку");

@@ -472,6 +472,61 @@ func TestLinkTaskStoreListPending(t *testing.T) {
 	}
 }
 
+func TestLinkTaskStoreListActiveByDomainIDs(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to create sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	store := NewLinkTaskStore(db)
+	ctx := context.Background()
+	now := time.Date(2026, 2, 4, 10, 0, 0, 0, time.UTC)
+	rows := sqlmock.NewRows([]string{
+		"id",
+		"domain_id",
+		"anchor_text",
+		"target_url",
+		"scheduled_for",
+		"action",
+		"status",
+		"found_location",
+		"generated_content",
+		"error_message",
+		"attempts",
+		"created_by",
+		"created_at",
+		"completed_at",
+		"log_lines",
+	}).
+		AddRow("task-removing", "domain-1", "anchor", "https://a.com", now, "remove", "removing", sql.NullString{}, sql.NullString{}, sql.NullString{}, 1, "user@example.com", now, sql.NullTime{}, nil).
+		AddRow("task-searching", "domain-1", "anchor", "https://a.com", now.Add(-time.Minute), "insert", "searching", sql.NullString{}, sql.NullString{}, sql.NullString{}, 1, "user@example.com", now.Add(-time.Minute), sql.NullTime{}, nil).
+		AddRow("task-pending", "domain-2", "anchor", "https://b.com", now, "insert", "pending", sql.NullString{}, sql.NullString{}, sql.NullString{}, 0, "user@example.com", now, sql.NullTime{}, nil)
+
+	expected := `(?s)SELECT id, domain_id, anchor_text, target_url, scheduled_for, action, status, found_location, generated_content, error_message, attempts, created_by, created_at, completed_at, log_lines\s+FROM link_tasks\s+WHERE domain_id IN \(\$1,\$2\)\s+AND status IN \('pending','searching','removing'\)\s+ORDER BY`
+	mock.ExpectQuery(expected).
+		WithArgs("domain-1", "domain-2").
+		WillReturnRows(rows)
+
+	result, err := store.ListActiveByDomainIDs(ctx, []string{"domain-1", "domain-2"})
+	if err != nil {
+		t.Fatalf("list active by domain ids failed: %v", err)
+	}
+	if len(result) != 2 {
+		t.Fatalf("expected 2 domains, got %d", len(result))
+	}
+	if got := result["domain-1"]; got.ID != "task-removing" {
+		t.Fatalf("expected removing task for domain-1, got %s", got.ID)
+	}
+	if got := result["domain-2"]; got.ID != "task-pending" {
+		t.Fatalf("expected pending task for domain-2, got %s", got.ID)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
 func TestLinkTaskStoreUpdate(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -491,10 +546,11 @@ func TestLinkTaskStoreUpdate(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		status := "inserted"
 		attempts := 2
-		updates := LinkTaskUpdates{Status: &status, Attempts: &attempts}
+		createdAt := time.Date(2026, 2, 4, 12, 0, 0, 0, time.UTC)
+		updates := LinkTaskUpdates{Status: &status, Attempts: &attempts, CreatedAt: &createdAt}
 
-		mock.ExpectExec(`UPDATE link_tasks SET status=\$1, attempts=\$2 WHERE id=\$3`).
-			WithArgs(status, attempts, "task-2").
+		mock.ExpectExec(`UPDATE link_tasks SET status=\$1, attempts=\$2, created_at=\$3 WHERE id=\$4`).
+			WithArgs(status, attempts, createdAt, "task-2").
 			WillReturnResult(sqlmock.NewResult(0, 1))
 
 		if err := store.Update(ctx, "task-2", updates); err != nil {

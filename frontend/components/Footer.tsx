@@ -13,7 +13,7 @@ export function Footer() {
         </div>
         <div className="flex flex-wrap items-center gap-4">
           <Link
-            href="/docs"
+            href={{ pathname: "/docs" }}
             className="font-semibold text-slate-700 underline underline-offset-4 hover:text-slate-900 dark:text-slate-200 dark:hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
           >
             Документация

@@ -11,10 +11,20 @@ import (
 
 type fakeLLMForTechSpec struct {
 	genCalled bool
+	calls     int
+	responses []string
 }
 
 func (f *fakeLLMForTechSpec) Generate(ctx context.Context, stage, prompt, model string) (string, error) {
 	f.genCalled = true
+	f.calls++
+	if len(f.responses) > 0 {
+		idx := f.calls - 1
+		if idx >= len(f.responses) {
+			idx = len(f.responses) - 1
+		}
+		return f.responses[idx], nil
+	}
 	return `# Technical Specification
 
 ## Requirements
@@ -121,6 +131,138 @@ func TestTechnicalSpecStep_FallbackPrompt(t *testing.T) {
 	technicalSpec, ok := artifacts["technical_spec"].(string)
 	if !ok || technicalSpec == "" {
 		t.Fatalf("expected technical_spec even with fallback prompt, got %#v", artifacts["technical_spec"])
+	}
+}
+
+func TestTechnicalSpecStep_BrandGuard_CorrectiveRegeneration(t *testing.T) {
+	llm := &fakeLLMForTechSpec{
+		responses: []string{
+			"# ТЗ\n\nH1: Регистрация в ZenitBet",
+			"# ТЗ\n\nH1: Регистрация в 1хБет",
+		},
+	}
+	step := &TechnicalSpecStep{}
+	state := &PipelineState{
+		Context: map[string]any{
+			"llm_analysis": "Анализ конкурентов по 1хБет",
+		},
+		Domain: &sqlstore.Domain{
+			MainKeyword:    "регистрация в 1хБет",
+			TargetCountry:  "RU",
+			TargetLanguage: "ru",
+		},
+		LLMClient:     llm,
+		PromptManager: &fakePromptManagerForTechSpec{},
+		AppendLog:     func(string) {},
+	}
+
+	artifacts, err := step.Execute(context.Background(), state)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if llm.calls != 2 {
+		t.Fatalf("expected corrective regeneration with 2 calls, got %d", llm.calls)
+	}
+	if got := artifacts["technical_spec"]; !strings.Contains(fmt.Sprintf("%v", got), "1хБет") {
+		t.Fatalf("expected corrected technical spec with 1хБет, got %v", got)
+	}
+}
+
+func TestTechnicalSpecStep_BrandGuard_SecondViolationFails(t *testing.T) {
+	llm := &fakeLLMForTechSpec{
+		responses: []string{
+			"# ТЗ\n\nH1: Регистрация в ZenitBet",
+			"# ТЗ\n\nH1: Регистрация в ProStavki",
+		},
+	}
+	step := &TechnicalSpecStep{}
+	state := &PipelineState{
+		Context: map[string]any{
+			"llm_analysis": "Анализ конкурентов по 1хБет",
+		},
+		Domain: &sqlstore.Domain{
+			MainKeyword:    "регистрация в 1хБет",
+			TargetCountry:  "RU",
+			TargetLanguage: "ru",
+		},
+		LLMClient:     llm,
+		PromptManager: &fakePromptManagerForTechSpec{},
+		AppendLog:     func(string) {},
+	}
+
+	_, err := step.Execute(context.Background(), state)
+	if err == nil {
+		t.Fatalf("expected brand policy error, got nil")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "brand policy violation") {
+		t.Fatalf("expected brand policy violation error, got %v", err)
+	}
+}
+
+func TestTechnicalSpecStep_BrandGuard_GenericSecondViolationSoftPass(t *testing.T) {
+	llm := &fakeLLMForTechSpec{
+		responses: []string{
+			"# ТЗ\n\nСравнение бонусов Myt1BetX",
+			"# ТЗ\n\nСравнение бонусов Auto2BetY",
+		},
+	}
+	step := &TechnicalSpecStep{}
+	state := &PipelineState{
+		Context: map[string]any{
+			"llm_analysis": "Анализ без брендированного запроса",
+		},
+		Domain: &sqlstore.Domain{
+			MainKeyword:    "платежные методы в онлайн казино",
+			TargetCountry:  "SE",
+			TargetLanguage: "sv",
+		},
+		LLMClient:     llm,
+		PromptManager: &fakePromptManagerForTechSpec{},
+		AppendLog:     func(string) {},
+	}
+
+	artifacts, err := step.Execute(context.Background(), state)
+	if err != nil {
+		t.Fatalf("expected no error for generic soft-fail, got %v", err)
+	}
+	if llm.calls != 2 {
+		t.Fatalf("expected corrective regeneration with 2 calls, got %d", llm.calls)
+	}
+	if got := artifacts["technical_spec"]; got == nil {
+		t.Fatalf("expected technical_spec artifact")
+	}
+}
+
+func TestTechnicalSpecStep_BrandGuard_GenericCasinoKeyword_NoFalsePositive(t *testing.T) {
+	llm := &fakeLLMForTechSpec{
+		responses: []string{
+			"# ТЗ\n\nUtbetalningstid. Betalningsmetoder. Betalningsalternativ. HowTo för uttag.",
+		},
+	}
+	step := &TechnicalSpecStep{}
+	state := &PipelineState{
+		Context: map[string]any{
+			"llm_analysis": "Анализ без конкретного бренда",
+		},
+		Domain: &sqlstore.Domain{
+			MainKeyword:    "insättning och uttag på utländska casinon",
+			TargetCountry:  "SE",
+			TargetLanguage: "sv",
+		},
+		LLMClient:     llm,
+		PromptManager: &fakePromptManagerForTechSpec{},
+		AppendLog:     func(string) {},
+	}
+
+	artifacts, err := step.Execute(context.Background(), state)
+	if err != nil {
+		t.Fatalf("expected no error for generic casino keyword, got %v", err)
+	}
+	if llm.calls != 1 {
+		t.Fatalf("expected single LLM call without corrective regeneration, got %d", llm.calls)
+	}
+	if got := artifacts["technical_spec"]; got == nil {
+		t.Fatalf("expected technical_spec artifact")
 	}
 }
 

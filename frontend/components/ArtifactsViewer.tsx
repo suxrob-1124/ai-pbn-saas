@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { FiCopy, FiDownload, FiChevronDown, FiChevronRight } from "react-icons/fi";
+import { FiChevronDown, FiChevronRight } from "react-icons/fi";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -10,19 +10,13 @@ type ArtifactType = "csv" | "contents" | "json" | "text" | "svg" | "binary";
 
 // Группировка артефактов по этапам (в строгом порядке)
 const ARTIFACT_GROUPS = [
-  { id: "serp", name: "📊 SERP-анализ", order: ["analysis_csv", "contents_txt", "serp_data"] },
-  { id: "llm_analysis", name: "🤖 Анализ конкурентов (LLM)", order: ["llm_analysis_prompt", "llm_analysis", "competitor_analysis"] },
-  { id: "technical_spec", name: "📋 Техническое задание", order: ["technical_spec_prompt", "technical_spec"] },
-  { id: "content_generation", name: "✍️ Генерация контента", order: ["content_generation_prompt", "content_markdown"] },
-  { id: "design_architecture", name: "🎨 Дизайн-система", order: ["design_architecture_prompt", "design_system"] },
-  { id: "logo", name: "🖍️ Логотип", order: ["logo_prompt", "logo_svg"] },
-  { id: "html", name: "🧱 HTML-каркас", order: ["html_generation_prompt", "favicon_tag", "html_raw"] },
-  { id: "css", name: "🎨 CSS-стили", order: ["css_generation_prompt", "css_content"] },
-  { id: "js", name: "⚙️ JS-логика", order: ["js_generation_prompt", "js_content"] },
-  { id: "images", name: "🖼️ Генерация изображений", order: ["image_prompts", "generated_files"] },
-  { id: "page_404", name: "🚧 404 страница", order: ["404_page_prompt", "404_html"] },
-  { id: "audit", name: "🧪 Аудит сборки", order: ["audit_report", "audit_status", "audit_has_issues"] },
-  { id: "final", name: "🚀 Финальная сборка", order: ["final_html", "zip_archive"] },
+  { id: "final", name: "🚀 Итог сайта", order: ["final_html", "zip_archive"] },
+  { id: "publish", name: "📦 Публикация и деплой", order: ["published_path", "deployment_mode", "deployment_status", "file_count", "total_size_bytes"] },
+  { id: "content", name: "🧠 Контент и структура", order: ["technical_spec", "content_markdown", "design_system", "html_raw", "css_content", "js_content", "404_html"] },
+  { id: "media", name: "🖼️ Медиа и файлы", order: ["logo_svg", "image_prompts", "generated_files", "favicon_tag"] },
+  { id: "analysis", name: "📊 Аналитика и источники", order: ["analysis_csv", "contents_txt", "serp_data", "competitor_analysis", "llm_analysis"] },
+  { id: "prompts", name: "📝 Промпты и резолв", order: ["llm_analysis_prompt", "technical_spec_prompt", "content_generation_prompt", "design_architecture_prompt", "logo_prompt", "html_generation_prompt", "css_generation_prompt", "js_generation_prompt", "404_page_prompt", "prompt_trace", "legacy_decode_meta"] },
+  { id: "audit", name: "🧪 Диагностика", order: ["audit_report", "audit_status", "audit_has_issues"] },
 ];
 
 const ARTIFACT_ALIASES: Array<{ primary: string; alias: string }> = [
@@ -62,6 +56,13 @@ const LABELS: Record<string, string> = {
   audit_has_issues: "Флаг проблем",
   final_html: "Финальный HTML",
   zip_archive: "ZIP архив сайта",
+  published_path: "Путь публикации",
+  deployment_mode: "Режим деплоя",
+  deployment_status: "Статус деплоя",
+  file_count: "Количество файлов",
+  total_size_bytes: "Размер сайта (байт)",
+  prompt_trace: "Трассировка резолва промптов",
+  legacy_decode_meta: "Метаданные legacy decode",
 };
 
 const DESCRIPTIONS: Record<string, string> = {
@@ -97,6 +98,13 @@ const DESCRIPTIONS: Record<string, string> = {
   audit_has_issues: "Есть ли проблемы в сборке",
   final_html: "Финальный HTML с подключёнными style.css и script.js",
   zip_archive: "Архив сайта в base64",
+  published_path: "Технический путь, куда опубликованы файлы домена",
+  deployment_mode: "Режим деплоя (local_mock / ssh и т.д.)",
+  deployment_status: "Результат последнего publish шага",
+  file_count: "Общее количество опубликованных файлов",
+  total_size_bytes: "Итоговый размер опубликованных файлов в байтах",
+  prompt_trace: "Источник промптов по этапам: domain/project/global",
+  legacy_decode_meta: "Служебная информация о декодировании legacy-сайта",
 };
 
 const TYPE_BY_KEY: Record<string, ArtifactType> = {
@@ -132,6 +140,13 @@ const TYPE_BY_KEY: Record<string, ArtifactType> = {
   audit_has_issues: "text",
   final_html: "text",
   zip_archive: "binary",
+  published_path: "text",
+  deployment_mode: "text",
+  deployment_status: "text",
+  file_count: "text",
+  total_size_bytes: "text",
+  prompt_trace: "json",
+  legacy_decode_meta: "json",
 };
 
 // Определяет, является ли текст markdown
@@ -249,6 +264,15 @@ export function ArtifactsViewer({ artifacts }: { artifacts?: ArtifactRecord }) {
 
   if (!groups.length) return null;
 
+  const legacyMeta = (() => {
+    const raw = artifacts?.legacy_decode_meta;
+    if (!raw || typeof raw !== "object") return null;
+    const source = typeof (raw as any).source === "string" ? (raw as any).source : "";
+    const decodedAt = typeof (raw as any).decoded_at === "string" ? (raw as any).decoded_at : "";
+    if (!source && !decodedAt) return null;
+    return { source, decodedAt };
+  })();
+
   const handleToggle = (entry: ArtifactEntry) => {
     setOpen((prev) => {
       const next = !prev[entry.key];
@@ -265,8 +289,13 @@ export function ArtifactsViewer({ artifacts }: { artifacts?: ArtifactRecord }) {
 
   return (
     <div className="space-y-4">
+      {legacyMeta && (
+        <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-300">
+          Legacy decoded {legacyMeta.decodedAt ? `· ${new Date(legacyMeta.decodedAt).toLocaleString()}` : ""}
+        </div>
+      )}
       {groups.map((group) => {
-        const isGroupOpen = groupOpen[group.id] ?? true; // По умолчанию открыты
+        const isGroupOpen = groupOpen[group.id] ?? (group.id === "final");
         return (
           <div key={group.id} className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/40">
             <button
@@ -286,27 +315,13 @@ export function ArtifactsViewer({ artifacts }: { artifacts?: ArtifactRecord }) {
         const content = parsed[entry.key];
         return (
                     <div key={entry.key} className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-800/40">
-                      <div className="flex items-center justify-between px-3 py-2">
+                      <div className="px-3 py-2">
               <button
                 onClick={() => handleToggle(entry)}
                           className="flex items-center gap-2 text-left text-sm font-medium text-slate-700 dark:text-slate-200"
               >
                 {isOpen ? <FiChevronDown /> : <FiChevronRight />} {entry.label}
               </button>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => navigator.clipboard?.writeText(textValue)}
-                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-100 dark:hover:bg-slate-800"
-                >
-                  <FiCopy /> Копировать
-                </button>
-                <button
-                  onClick={() => downloadText(`${entry.key}.txt`, textValue)}
-                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-100 dark:hover:bg-slate-800"
-                >
-                  <FiDownload /> Скачать
-                </button>
-              </div>
             </div>
             {isOpen && (
                         <div className="px-3 pb-3">
@@ -329,6 +344,9 @@ function renderArtifactContent(type: ArtifactType, parsed: any, fallbackText: st
   // Спец-рендер списка файлов
   if (entryKey === "generated_files") {
     return <GeneratedFilesViewer value={parsed ?? entryValue} />;
+  }
+  if (entryKey === "final_html") {
+    return <FinalHTMLViewer html={fallbackText} />;
   }
 
   switch (type) {
@@ -435,6 +453,48 @@ function SvgViewer({ svg, raw }: { svg: string; raw: string }) {
       ) : (
         <pre className="text-xs bg-slate-100/70 dark:bg-slate-900/50 rounded-lg p-3 overflow-auto max-h-72 leading-relaxed font-mono whitespace-pre-wrap">
           {raw}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+function FinalHTMLViewer({ html }: { html: string }) {
+  const [view, setView] = useState<"preview" | "code">("preview");
+  return (
+    <div className="space-y-3">
+      <div className="flex gap-2">
+        <button
+          onClick={() => setView("preview")}
+          className={`rounded-lg px-3 py-1 text-xs font-semibold border ${
+            view === "preview"
+              ? "bg-indigo-600 border-indigo-600 text-white"
+              : "border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-200"
+          }`}
+        >
+          Preview
+        </button>
+        <button
+          onClick={() => setView("code")}
+          className={`rounded-lg px-3 py-1 text-xs font-semibold border ${
+            view === "code"
+              ? "bg-indigo-600 border-indigo-600 text-white"
+              : "border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-200"
+          }`}
+        >
+          Code
+        </button>
+      </div>
+      {view === "preview" ? (
+        <iframe
+          title="Final HTML Preview"
+          sandbox="allow-same-origin"
+          srcDoc={html}
+          className="h-[60vh] w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white"
+        />
+      ) : (
+        <pre className="text-xs bg-slate-100/70 dark:bg-slate-900/50 rounded-lg p-3 overflow-auto whitespace-pre-wrap leading-relaxed font-mono max-h-[60vh]">
+          {html}
         </pre>
       )}
     </div>
@@ -1042,16 +1102,4 @@ function formatValue(value: any): string {
   } catch {
     return String(value);
   }
-}
-
-function downloadText(filename: string, text: string) {
-  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
 }

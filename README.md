@@ -125,6 +125,21 @@ frontend/
 - ✅ Темная тема (dark mode)
 - ✅ Responsive дизайн
 
+## 🔗 Link-flow (актуальная семантика)
+
+- Канонические статусы link-task: `pending`, `searching`, `removing`, `inserted`, `generated`, `removed`, `failed`.
+- Legacy-статус `found` больше не используется как рабочий и нормализуется в `searching`.
+- `domains.link_status` хранит raw-состояние и может временно отставать от очереди.
+- Для UI используйте `link_status_effective` из summary (`source=domain|active_task`) как канонический текущий статус.
+- `remove` идемпотентен: если ссылка уже отсутствует, задача завершается как `removed` (с warning в логах).
+- `relink` без найденного источника замены завершается как `failed` без fallback-генерации нового блока.
+- `POST /api/links/{id}/retry` сбрасывает lifecycle задачи: `attempts=0`, `scheduled_for=now`, `created_at=now`, очищает runtime-поля задачи.
+
+## 🧾 Очереди проекта
+
+- `GET /api/projects/{id}/queue` — только активная operational-очередь (`pending|queued`) для доменов в `waiting`.
+- `GET /api/projects/{id}/queue/history` — история запусков проекта (`completed|failed`) с фильтрами `status/date/search`.
+
 ### Инфраструктура
 
 - ✅ Docker Compose для локальной разработки
@@ -776,6 +791,37 @@ go run ./cmd/import_legacy --help
 
 Полная инструкция (режимы `dry-run/apply`, формат CSV, troubleshooting):  
 `pbn-generator/cmd/import_legacy/README.md`
+
+### UI-редактор файлов домена (Sprint 4)
+
+- Маршрут: `/domains/:id/editor`
+- Поддерживается редактирование опубликованных сайтов (импортированных и сгенерированных)
+- Права:
+  - `viewer` — только чтение
+  - `owner/editor/admin` — чтение и сохранение
+- История изменений в v1: metadata-only (без diff/revert)
+
+Актуальный backlog и DoD по спринту: `todo-v4.md`
+
+### V2: Domain Result & Legacy Decode
+
+- На странице домена `/domains/:id` добавлен явный action `Открыть в редакторе`.
+- Добавлен блок `Результат` с быстрыми действиями:
+  - `Просмотр HTML` (final_html)
+  - `Скачать ZIP` (zip_archive)
+  - `К артефактам`
+- Для legacy-импортов поддержан synthetic generation decode (`prompt_id=legacy_decode_v2`).
+
+Backfill для уже импортированных доменов:
+
+```bash
+cd pbn-generator
+go run ./cmd/backfill_legacy_artifacts --help
+```
+
+Документация:
+- `pbn-generator/cmd/import_legacy/README.md`
+- `pbn-generator/cmd/backfill_legacy_artifacts/README.md`
 
 ### Production
 

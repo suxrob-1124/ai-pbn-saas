@@ -595,3 +595,262 @@ func TestIndexCheckStoreSetNextRetry(t *testing.T) {
 		}
 	})
 }
+
+func TestIndexCheckStoreUpsertManualByDomainAndDate(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to create sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	store := NewIndexCheckStore(db)
+	ctx := context.Background()
+	now := time.Date(2026, 2, 13, 12, 0, 0, 0, time.UTC)
+	checkDate := time.Date(2026, 2, 13, 0, 0, 0, 0, time.UTC)
+
+	rowsInsert := sqlmock.NewRows([]string{
+		"id",
+		"domain_id",
+		"check_date",
+		"status",
+		"is_indexed",
+		"attempts",
+		"last_attempt_at",
+		"next_retry_at",
+		"error_message",
+		"completed_at",
+		"created_at",
+		"inserted",
+	}).AddRow(
+		"check-1",
+		"domain-1",
+		checkDate,
+		"pending",
+		sql.NullBool{},
+		0,
+		sql.NullTime{},
+		sql.NullTime{Time: now, Valid: true},
+		sql.NullString{},
+		sql.NullTime{},
+		now,
+		true,
+	)
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO domain_index_checks(")).
+		WithArgs(sqlmock.AnyArg(), "domain-1", checkDate, now).
+		WillReturnRows(rowsInsert)
+
+	check, created, err := store.UpsertManualByDomainAndDate(ctx, "domain-1", checkDate, now)
+	if err != nil {
+		t.Fatalf("upsert failed: %v", err)
+	}
+	if !created {
+		t.Fatalf("expected created=true")
+	}
+	if check.ID != "check-1" || check.Status != "pending" {
+		t.Fatalf("unexpected check: %#v", check)
+	}
+
+	rowsUpdate := sqlmock.NewRows([]string{
+		"id",
+		"domain_id",
+		"check_date",
+		"status",
+		"is_indexed",
+		"attempts",
+		"last_attempt_at",
+		"next_retry_at",
+		"error_message",
+		"completed_at",
+		"created_at",
+		"inserted",
+	}).AddRow(
+		"check-1",
+		"domain-1",
+		checkDate,
+		"pending",
+		sql.NullBool{},
+		0,
+		sql.NullTime{},
+		sql.NullTime{Time: now, Valid: true},
+		sql.NullString{},
+		sql.NullTime{},
+		now.Add(-24*time.Hour),
+		false,
+	)
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO domain_index_checks(")).
+		WithArgs(sqlmock.AnyArg(), "domain-1", checkDate, now).
+		WillReturnRows(rowsUpdate)
+
+	_, created, err = store.UpsertManualByDomainAndDate(ctx, "domain-1", checkDate, now)
+	if err != nil {
+		t.Fatalf("upsert update failed: %v", err)
+	}
+	if created {
+		t.Fatalf("expected created=false on conflict")
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestIndexCheckStoreTryMarkChecking(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to create sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	store := NewIndexCheckStore(db)
+	ctx := context.Background()
+	checkDate := time.Date(2026, 2, 13, 0, 0, 0, 0, time.UTC)
+	createdAt := time.Date(2026, 2, 13, 10, 0, 0, 0, time.UTC)
+
+	rowsStarted := sqlmock.NewRows([]string{
+		"id",
+		"domain_id",
+		"check_date",
+		"status",
+		"is_indexed",
+		"attempts",
+		"last_attempt_at",
+		"next_retry_at",
+		"error_message",
+		"completed_at",
+		"created_at",
+	}).AddRow(
+		"check-1",
+		"domain-1",
+		checkDate,
+		"checking",
+		sql.NullBool{},
+		1,
+		sql.NullTime{Time: createdAt, Valid: true},
+		sql.NullTime{},
+		sql.NullString{},
+		sql.NullTime{},
+		createdAt,
+	)
+	mock.ExpectQuery(regexp.QuoteMeta("UPDATE domain_index_checks")).
+		WithArgs("check-1").
+		WillReturnRows(rowsStarted)
+
+	started, check, err := store.TryMarkChecking(ctx, "check-1")
+	if err != nil {
+		t.Fatalf("try mark checking failed: %v", err)
+	}
+	if !started || check.Status != "checking" {
+		t.Fatalf("unexpected result: started=%v check=%#v", started, check)
+	}
+
+	mock.ExpectQuery(regexp.QuoteMeta("UPDATE domain_index_checks")).
+		WithArgs("check-2").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id",
+			"domain_id",
+			"check_date",
+			"status",
+			"is_indexed",
+			"attempts",
+			"last_attempt_at",
+			"next_retry_at",
+			"error_message",
+			"completed_at",
+			"created_at",
+		}))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at FROM domain_index_checks WHERE id=$1")).
+		WithArgs("check-2").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id",
+			"domain_id",
+			"check_date",
+			"status",
+			"is_indexed",
+			"attempts",
+			"last_attempt_at",
+			"next_retry_at",
+			"error_message",
+			"completed_at",
+			"created_at",
+		}).AddRow(
+			"check-2",
+			"domain-1",
+			checkDate,
+			"success",
+			sql.NullBool{Bool: true, Valid: true},
+			1,
+			sql.NullTime{},
+			sql.NullTime{},
+			sql.NullString{},
+			sql.NullTime{Time: createdAt, Valid: true},
+			createdAt,
+		))
+
+	started, check, err = store.TryMarkChecking(ctx, "check-2")
+	if err != nil {
+		t.Fatalf("try mark checking no-row failed: %v", err)
+	}
+	if started {
+		t.Fatalf("expected started=false")
+	}
+	if check.ID != "check-2" || check.Status != "success" {
+		t.Fatalf("unexpected loaded check: %#v", check)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestIndexCheckStoreListStaleChecking(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to create sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	store := NewIndexCheckStore(db)
+	ctx := context.Background()
+	olderThan := time.Date(2026, 2, 13, 10, 0, 0, 0, time.UTC)
+	checkDate := time.Date(2026, 2, 13, 0, 0, 0, 0, time.UTC)
+
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at FROM domain_index_checks WHERE status='checking' AND next_retry_at IS NULL AND COALESCE(last_attempt_at, created_at) <= $1 ORDER BY COALESCE(last_attempt_at, created_at) ASC, created_at ASC")).
+		WithArgs(olderThan).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id",
+			"domain_id",
+			"check_date",
+			"status",
+			"is_indexed",
+			"attempts",
+			"last_attempt_at",
+			"next_retry_at",
+			"error_message",
+			"completed_at",
+			"created_at",
+		}).AddRow(
+			"check-1",
+			"domain-1",
+			checkDate,
+			"checking",
+			sql.NullBool{},
+			1,
+			sql.NullTime{Time: olderThan.Add(-time.Minute), Valid: true},
+			sql.NullTime{},
+			sql.NullString{},
+			sql.NullTime{},
+			checkDate,
+		))
+
+	res, err := store.ListStaleChecking(ctx, olderThan)
+	if err != nil {
+		t.Fatalf("list stale failed: %v", err)
+	}
+	if len(res) != 1 || res[0].ID != "check-1" {
+		t.Fatalf("unexpected stale list: %#v", res)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}

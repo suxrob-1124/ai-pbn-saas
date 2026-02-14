@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"obzornik-pbn-generator/internal/publisher"
@@ -44,8 +45,10 @@ type PipelineState struct {
 	DomainStore       *sqlstore.DomainStore
 	GenerationStore   *sqlstore.GenerationStore
 	PromptStore       *sqlstore.PromptStore
+	PromptOverrides   *sqlstore.PromptOverrideStore
 	ProjectStore      *sqlstore.ProjectStore
 	LinkScheduleStore *sqlstore.LinkScheduleStore
+	Deployments       *sqlstore.DeploymentAttemptStore
 	AuditStore        *sqlstore.AuditStore
 
 	// Services
@@ -55,7 +58,8 @@ type PipelineState struct {
 	Publisher     publisher.Publisher
 
 	// Config
-	DefaultModel string // Дефолтная модель LLM
+	DefaultModel   string // Дефолтная модель LLM
+	DeploymentMode string
 
 	// Domain data
 	Domain  *sqlstore.Domain
@@ -135,12 +139,12 @@ func (p *Pipeline) Run(ctx context.Context) error {
 					p.state.AppendLog(fmt.Sprintf("failed to save checkpoint on pause: %v", err))
 				}
 				_ = p.state.GenerationStore.UpdateStatus(ctx, p.state.GenerationID, "paused", step.Progress(), nil)
-				_ = p.state.DomainStore.UpdateStatus(ctx, p.state.DomainID, "waiting")
+				_ = p.state.DomainStore.UpdateStatus(ctx, p.state.DomainID, stableDomainStatus(p.state))
 				return ErrPipelinePaused
 			case "cancelling":
 				p.state.AppendLog("Cancellation requested, stopping pipeline")
 				_ = p.state.GenerationStore.UpdateStatus(ctx, p.state.GenerationID, "cancelled", step.Progress(), nil)
-				_ = p.state.DomainStore.UpdateStatus(ctx, p.state.DomainID, "waiting")
+				_ = p.state.DomainStore.UpdateStatus(ctx, p.state.DomainID, stableDomainStatus(p.state))
 				return ErrPipelineCancelled
 			}
 		}
@@ -312,12 +316,23 @@ func (p *Pipeline) checkStatusBeforeStep(ctx context.Context, stepName string) e
 
 	if shouldCancel {
 		p.state.AppendLog(fmt.Sprintf("Отмена запрошена на шаге %s", stepName))
-		emptyArtifacts, _ := json.Marshal(map[string]interface{}{})
-		logsJSON, _ := json.Marshal([]string{})
+		gen, _ := p.state.GenerationStore.Get(ctx, p.state.GenerationID)
+		logsJSON := gen.Logs
+		if p.state.Logs != nil && len(*p.state.Logs) > 0 {
+			if b, err := json.Marshal(*p.state.Logs); err == nil {
+				logsJSON = sanitizeJSONBytes(b)
+			}
+		}
+		artifactsJSON := gen.Artifacts
+		if len(p.state.Artifacts) > 0 {
+			if b, err := json.Marshal(p.state.Artifacts); err == nil {
+				artifactsJSON = sanitizeJSONBytes(b)
+			}
+		}
 		now := time.Now()
-		_ = p.state.GenerationStore.UpdateFull(ctx, p.state.GenerationID, "cancelled", 0, nil, logsJSON, emptyArtifacts, nil, &now, nil)
+		_ = p.state.GenerationStore.UpdateFull(ctx, p.state.GenerationID, "cancelled", gen.Progress, nil, logsJSON, artifactsJSON, nil, &now, nil)
 		_ = p.state.GenerationStore.ClearCheckpoint(ctx, p.state.GenerationID)
-		_ = p.state.DomainStore.UpdateStatus(ctx, p.state.DomainID, "waiting")
+		_ = p.state.DomainStore.UpdateStatus(ctx, p.state.DomainID, stableDomainStatus(p.state))
 		return fmt.Errorf("generation cancelled")
 	}
 
@@ -326,11 +341,21 @@ func (p *Pipeline) checkStatusBeforeStep(ctx context.Context, stepName string) e
 		if err := p.saveCheckpoint(ctx, stepName, 0); err != nil {
 			p.state.AppendLog(fmt.Sprintf("Ошибка сохранения чекпоинта: %v", err))
 		}
-		logsJSON, _ := json.Marshal([]string{})
-		artBytes, _ := json.Marshal(p.state.Artifacts)
 		gen, _ := p.state.GenerationStore.Get(ctx, p.state.GenerationID)
-		_ = p.state.GenerationStore.UpdateFull(ctx, p.state.GenerationID, "paused", gen.Progress, nil, logsJSON, artBytes, nil, nil, nil)
-		_ = p.state.DomainStore.UpdateStatus(ctx, p.state.DomainID, "waiting")
+		logsJSON := gen.Logs
+		if p.state.Logs != nil && len(*p.state.Logs) > 0 {
+			if b, err := json.Marshal(*p.state.Logs); err == nil {
+				logsJSON = sanitizeJSONBytes(b)
+			}
+		}
+		artifactsJSON := gen.Artifacts
+		if len(p.state.Artifacts) > 0 {
+			if b, err := json.Marshal(p.state.Artifacts); err == nil {
+				artifactsJSON = sanitizeJSONBytes(b)
+			}
+		}
+		_ = p.state.GenerationStore.UpdateFull(ctx, p.state.GenerationID, "paused", gen.Progress, nil, logsJSON, artifactsJSON, nil, nil, nil)
+		_ = p.state.DomainStore.UpdateStatus(ctx, p.state.DomainID, stableDomainStatus(p.state))
 		return fmt.Errorf("generation paused")
 	}
 
@@ -350,12 +375,23 @@ func (p *Pipeline) checkStatusAfterStep(ctx context.Context, stepName string, pr
 
 	if shouldCancel {
 		p.state.AppendLog(fmt.Sprintf("Отмена запрошена после шага %s", stepName))
-		emptyArtifacts, _ := json.Marshal(map[string]interface{}{})
-		logsJSON, _ := json.Marshal([]string{})
+		gen, _ := p.state.GenerationStore.Get(ctx, p.state.GenerationID)
+		logsJSON := gen.Logs
+		if p.state.Logs != nil && len(*p.state.Logs) > 0 {
+			if b, err := json.Marshal(*p.state.Logs); err == nil {
+				logsJSON = sanitizeJSONBytes(b)
+			}
+		}
+		artifactsJSON := gen.Artifacts
+		if len(p.state.Artifacts) > 0 {
+			if b, err := json.Marshal(p.state.Artifacts); err == nil {
+				artifactsJSON = sanitizeJSONBytes(b)
+			}
+		}
 		now := time.Now()
-		_ = p.state.GenerationStore.UpdateFull(ctx, p.state.GenerationID, "cancelled", 0, nil, logsJSON, emptyArtifacts, nil, &now, nil)
+		_ = p.state.GenerationStore.UpdateFull(ctx, p.state.GenerationID, "cancelled", gen.Progress, nil, logsJSON, artifactsJSON, nil, &now, nil)
 		_ = p.state.GenerationStore.ClearCheckpoint(ctx, p.state.GenerationID)
-		_ = p.state.DomainStore.UpdateStatus(ctx, p.state.DomainID, "waiting")
+		_ = p.state.DomainStore.UpdateStatus(ctx, p.state.DomainID, stableDomainStatus(p.state))
 		return fmt.Errorf("generation cancelled")
 	}
 
@@ -364,10 +400,21 @@ func (p *Pipeline) checkStatusAfterStep(ctx context.Context, stepName string, pr
 		if err := p.saveCheckpoint(ctx, stepName, progress); err != nil {
 			p.state.AppendLog(fmt.Sprintf("Ошибка сохранения чекпоинта: %v", err))
 		}
-		logsJSON, _ := json.Marshal([]string{})
-		artBytes, _ := json.Marshal(p.state.Artifacts)
-		_ = p.state.GenerationStore.UpdateFull(ctx, p.state.GenerationID, "paused", progress, nil, logsJSON, artBytes, nil, nil, nil)
-		_ = p.state.DomainStore.UpdateStatus(ctx, p.state.DomainID, "waiting")
+		gen, _ := p.state.GenerationStore.Get(ctx, p.state.GenerationID)
+		logsJSON := gen.Logs
+		if p.state.Logs != nil && len(*p.state.Logs) > 0 {
+			if b, err := json.Marshal(*p.state.Logs); err == nil {
+				logsJSON = sanitizeJSONBytes(b)
+			}
+		}
+		artifactsJSON := gen.Artifacts
+		if len(p.state.Artifacts) > 0 {
+			if b, err := json.Marshal(p.state.Artifacts); err == nil {
+				artifactsJSON = sanitizeJSONBytes(b)
+			}
+		}
+		_ = p.state.GenerationStore.UpdateFull(ctx, p.state.GenerationID, "paused", progress, nil, logsJSON, artifactsJSON, nil, nil, nil)
+		_ = p.state.DomainStore.UpdateStatus(ctx, p.state.DomainID, stableDomainStatus(p.state))
 		return fmt.Errorf("generation paused")
 	}
 
@@ -376,6 +423,16 @@ func (p *Pipeline) checkStatusAfterStep(ctx context.Context, stepName string, pr
 	}
 
 	return nil
+}
+
+func stableDomainStatus(state *PipelineState) string {
+	if state != nil && state.Domain != nil {
+		domain := state.Domain
+		if (domain.PublishedAt.Valid || strings.TrimSpace(domain.PublishedPath.String) != "") && domain.FileCount > 0 {
+			return "published"
+		}
+	}
+	return "waiting"
 }
 
 // restoreFromArtifacts восстанавливает данные из artifacts в context для следующих шагов
@@ -408,6 +465,12 @@ func (p *Pipeline) restoreFromArtifacts(stepName, artifactKey string) error {
 		} else if analysis, ok := p.state.Artifacts["llm_analysis"].(string); ok {
 			p.state.Context["llm_analysis"] = analysis
 			p.state.Context["competitor_analysis"] = analysis
+		}
+		if raw, ok := p.state.Artifacts["brand_resolution"]; ok {
+			p.state.Context["brand_resolution"] = raw
+		}
+		if raw, ok := p.state.Artifacts["brand_validation"]; ok {
+			p.state.Context["brand_validation"] = raw
 		}
 	case StepTechnicalSpec:
 		// Восстанавливаем technical_spec

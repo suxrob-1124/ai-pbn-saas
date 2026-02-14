@@ -18,6 +18,18 @@ model: gemini-2.5-pro
 
 1. **"Ключевые выводы по анализу конкурентов"**: Структурированный отчет из предыдущего этапа.
 2. **Идентификаторы выбора (IDs)**: Набор числовых ID для выбора конкретных вариантов дизайна и структуры.
+3. **Brand policy:** строгие правила ниже, сформированные системой на основе keyword и SERP.
+
+# BRAND POLICY (ОБЯЗАТЕЛЬНО)
+
+Ниже дана политика брендов, которую НЕЛЬЗЯ нарушать:
+
+{{ brand_policy }}
+
+Дополнительные переменные:
+- `brand_mode`: {{ brand_mode }}
+- `primary_brand`: {{ primary_brand }}
+- `allowed_brands_csv`: {{ allowed_brands_csv }}
 
 # ЦЕЛОСТНОСТЬ ДАННЫХ И РЕАЛИЗМ (DATA INTEGRITY & REALISM)
 
@@ -30,11 +42,11 @@ model: gemini-2.5-pro
 - `Lorem ipsum`, `Text goes here`
 
 ### 2. ГЕНЕРАЦИЯ РЕАЛИСТИЧНЫХ ДАННЫХ
-Если в анализе конкурентов отсутствуют конкретные данные (например, название бренда или email), ты **ОБЯЗАН** сгенерировать **реалистичные, культурно уместные вымышленные данные**:
-- Вместо `Brand 1` придумай название: `NordicSpins`, `SvenskaWin`, `RoyalVegas`.
+Если в анализе конкурентов отсутствуют конкретные данные (например, email или телефон), ты **ОБЯЗАН** сгенерировать **реалистичные, культурно уместные вымышленные данные**, но без нарушения brand-policy:
 - Вместо `support@example.com` используй: `support@nordicspins.com`.
 - Вместо `+46...` используй валидный формат: `+46 8 123 45 67`.
 - Данные должны соответствовать **Целевой Стране**.
+- **Запрещено** придумывать новый "главный бренд", если это запрещено brand-policy.
 
 ### 3. КОДИРОВКА (UTF-8)
 - Весь вывод должен быть в валидной **UTF-8** кодировке.
@@ -153,3 +165,7 @@ archetype_id: {{ archetype_id }}
 image_style_id: {{ image_style_id }}
 header_element_id: {{ header_element_id }}
 footer_variant_id: {{ footer_variant_id }}
+brand_mode: {{ brand_mode }}
+primary_brand: {{ primary_brand }}
+allowed_brands_csv: {{ allowed_brands_csv }}
+brand_policy: {{ brand_policy }}

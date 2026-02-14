@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { FiRefreshCw } from "react-icons/fi";
 import type { LinkTaskDTO } from "../types/linkTasks";
+import { canDeleteLinkTask, canEditLinkTask, canRetryLinkTask, getLinkTaskStatusMeta, normalizeLinkTaskStatus } from "../lib/linkTaskStatus";
 
 type LinkTaskListProps = {
   tasks: LinkTaskDTO[];
@@ -17,25 +18,14 @@ type LinkTaskListProps = {
   onBulkDelete: (tasks: LinkTaskDTO[]) => void;
 };
 
-const statusStyles: Record<string, string> = {
-  pending: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200",
-  searching: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-200",
-  removing: "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-200",
-  inserted: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200",
-  generated: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200",
-  removed: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200",
-  failed: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-200"
-};
-
-const statusLabels: Record<string, string> = {
-  all: "Все",
-  pending: "Ожидание",
-  searching: "Поиск",
-  removing: "Удаление",
-  inserted: "Вставлено",
-  generated: "Сгенерировано",
-  removed: "Удалено",
-  failed: "Ошибка"
+const STATUS_TONE_CLASSES: Record<string, string> = {
+  amber: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200",
+  blue: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-200",
+  orange: "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-200",
+  green: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200",
+  yellow: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-200",
+  slate: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200",
+  red: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-200"
 };
 
 export function LinkTaskList({
@@ -55,7 +45,10 @@ export function LinkTaskList({
 
   const availableStatuses = useMemo(() => {
     const unique = new Set<string>();
-    tasks.forEach((task) => unique.add(task.status));
+    tasks.forEach((task) => {
+      const normalized = normalizeLinkTaskStatus(task.status);
+      unique.add(normalized || task.status);
+    });
     return ["all", ...Array.from(unique)];
   }, [tasks]);
 
@@ -63,12 +56,23 @@ export function LinkTaskList({
     if (statusFilter === "all") {
       return tasks;
     }
-    return tasks.filter((task) => task.status === statusFilter);
+    return tasks.filter((task) => {
+      const normalized = normalizeLinkTaskStatus(task.status);
+      return (normalized || task.status) === statusFilter;
+    });
   }, [tasks, statusFilter]);
 
   const selectedTasks = useMemo(
     () => filteredTasks.filter((task) => selected[task.id]),
     [filteredTasks, selected]
+  );
+  const bulkRetryTasks = useMemo(
+    () => selectedTasks.filter((task) => canRetryLinkTask(task.status)),
+    [selectedTasks]
+  );
+  const bulkDeleteTasks = useMemo(
+    () => selectedTasks.filter((task) => canDeleteLinkTask(task.status)),
+    [selectedTasks]
   );
 
   const toggleAll = () => {
@@ -109,7 +113,7 @@ export function LinkTaskList({
             >
               {availableStatuses.map((status) => (
                 <option key={status} value={status}>
-                  {statusLabels[status] || status}
+                  {status === "all" ? "Все" : getLinkTaskStatusMeta(status).text}
                 </option>
               ))}
             </select>
@@ -127,15 +131,17 @@ export function LinkTaskList({
       <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
         <span>Выбрано: {selectedTasks.length}</span>
         <button
-          onClick={() => onBulkRetry(selectedTasks)}
-          disabled={loading || selectedTasks.length === 0}
+          onClick={() => onBulkRetry(bulkRetryTasks)}
+          disabled={loading || bulkRetryTasks.length === 0}
+          title={bulkRetryTasks.length === 0 ? "Повтор доступен только для задач со статусом Ошибка." : undefined}
           className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-white px-3 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700 dark:bg-slate-800 dark:text-emerald-300 disabled:opacity-50"
         >
           Массовый повтор
         </button>
         <button
-          onClick={() => onBulkDelete(selectedTasks)}
-          disabled={loading || selectedTasks.length === 0}
+          onClick={() => onBulkDelete(bulkDeleteTasks)}
+          disabled={loading || bulkDeleteTasks.length === 0}
+          title={bulkDeleteTasks.length === 0 ? "Удаление недоступно для активных задач (ожидает/поиск/удаление)." : undefined}
           className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200 disabled:opacity-50"
         >
           Массовое удаление
@@ -176,59 +182,71 @@ export function LinkTaskList({
                 <th className="py-2 pr-4 text-right">Действия</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-              {filteredTasks.map((task) => (
-                <tr key={task.id}>
-                  <td className="py-3 pr-2">
-                    <input
-                      type="checkbox"
-                      checked={Boolean(selected[task.id])}
-                      onChange={() => toggleOne(task.id)}
-                      disabled={loading}
-                    />
-                  </td>
-                  <td className="py-3 pr-4 font-medium">{task.anchor_text}</td>
-                  <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">{task.target_url}</td>
-                  <td className="py-3 pr-4">
-                    <span
-                      className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-semibold ${
-                        statusStyles[task.status] || statusStyles.pending
-                      }`}
-                    >
-                      {statusLabels[task.status] || task.status}
-                    </span>
-                  </td>
-                  <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">
-                    {new Date(task.scheduled_for).toLocaleString()}
-                  </td>
-                  <td className="py-3 pr-4 text-right space-x-2">
-                    <button
-                      onClick={() => onRetry(task)}
-                      disabled={loading}
-                      className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-white px-3 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700 dark:bg-slate-800 dark:text-emerald-300"
-                    >
-                      Повторить
-                    </button>
-                    <button
-                      onClick={() => onEdit(task)}
-                      disabled={loading}
-                      className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                    >
-                      Изменить
-                    </button>
-                    <button
-                      onClick={() => onDelete(task)}
-                      disabled={loading}
-                      className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
-                    >
-                      Удалить
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+	            <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+	              {filteredTasks.map((task) => {
+	                const canRetry = canRetryLinkTask(task.status);
+	                const canEdit = canEditLinkTask(task.status);
+	                const canDelete = canDeleteLinkTask(task.status);
+	                return (
+	                  <tr key={task.id}>
+	                    <td className="py-3 pr-2">
+	                      <input
+	                        type="checkbox"
+	                        checked={Boolean(selected[task.id])}
+	                        onChange={() => toggleOne(task.id)}
+	                        disabled={loading}
+	                      />
+	                    </td>
+	                    <td className="py-3 pr-4 font-medium">{task.anchor_text}</td>
+	                    <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">{task.target_url}</td>
+	                    <td className="py-3 pr-4">
+	                      {(() => {
+	                        const meta = getLinkTaskStatusMeta(task.status);
+	                        const style = STATUS_TONE_CLASSES[meta.tone] || STATUS_TONE_CLASSES.slate;
+	                        return (
+	                          <span
+	                            className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-semibold ${style}`}
+	                          >
+	                            {meta.text}
+	                          </span>
+	                        );
+	                      })()}
+	                    </td>
+	                    <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">
+	                      {new Date(task.scheduled_for).toLocaleString()}
+	                    </td>
+	                    <td className="py-3 pr-4 text-right space-x-2">
+	                      <button
+	                        onClick={() => onRetry(task)}
+	                        disabled={loading || !canRetry}
+	                        title={!canRetry ? "Повтор доступен только для задач со статусом Ошибка." : undefined}
+	                        className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-white px-3 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700 dark:bg-slate-800 dark:text-emerald-300"
+	                      >
+	                        Повторить
+	                      </button>
+	                      <button
+	                        onClick={() => onEdit(task)}
+	                        disabled={loading || !canEdit}
+	                        title={!canEdit ? "Редактирование доступно только для статусов Ожидает и Ошибка." : undefined}
+	                        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+	                      >
+	                        Изменить
+	                      </button>
+	                      <button
+	                        onClick={() => onDelete(task)}
+	                        disabled={loading || !canDelete}
+	                        title={!canDelete ? "Удаление недоступно для активных задач (ожидает/поиск/удаление)." : undefined}
+	                        className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
+	                      >
+	                        Удалить
+	                      </button>
+	                    </td>
+	                  </tr>
+	                );
+	              })}
+	            </tbody>
+	          </table>
+	        </div>
       )}
     </div>
   );

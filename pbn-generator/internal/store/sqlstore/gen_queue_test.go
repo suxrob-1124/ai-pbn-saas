@@ -391,6 +391,65 @@ func TestGenQueueStoreListByProject(t *testing.T) {
 	})
 }
 
+func TestGenQueueStoreListHistoryByProjectPage(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to create sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	store := NewGenQueueStore(db)
+	ctx := context.Background()
+
+	scheduledFor := time.Date(2026, 2, 4, 12, 0, 0, 0, time.UTC)
+	createdAt := scheduledFor.Add(-time.Minute)
+	processedAt := sql.NullTime{Time: scheduledFor.Add(time.Minute), Valid: true}
+	rows := sqlmock.NewRows([]string{
+		"id",
+		"domain_id",
+		"schedule_id",
+		"priority",
+		"scheduled_for",
+		"status",
+		"error_message",
+		"created_at",
+		"processed_at",
+	}).AddRow(
+		"queue-1",
+		"domain-1",
+		sql.NullString{String: "sched-1", Valid: true},
+		1,
+		scheduledFor,
+		"failed",
+		sql.NullString{String: "boom", Valid: true},
+		createdAt,
+		processedAt,
+	)
+
+	status := "failed"
+	dateFrom := scheduledFor.Add(-time.Hour)
+	dateTo := scheduledFor.Add(time.Hour)
+	expected := `(?s)SELECT q.id, q.domain_id, q.schedule_id, q.priority, q.scheduled_for, q.status, q.error_message, q.created_at, q.processed_at\s+FROM generation_queue q\s+JOIN domains d ON d.id = q.domain_id\s+WHERE d.project_id=\$1\s+AND q.status IN \('completed','failed'\)\s+AND q.status=\$2\s+AND q.scheduled_for >= \$3\s+AND q.scheduled_for <= \$4\s+AND \(LOWER\(COALESCE\(d.url, ''\)\) LIKE \$5 OR LOWER\(q.domain_id\) LIKE \$5\)\s+ORDER BY`
+	mock.ExpectQuery(expected).
+		WithArgs("project-1", status, dateFrom, dateTo, "%domain%").
+		WillReturnRows(rows)
+
+	items, err := store.ListHistoryByProjectPage(ctx, "project-1", 0, 0, "domain", &status, &dateFrom, &dateTo)
+	if err != nil {
+		t.Fatalf("list history failed: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if items[0].Status != "failed" {
+		t.Fatalf("expected failed status, got %s", items[0].Status)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
 func TestGenQueueStoreDelete(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

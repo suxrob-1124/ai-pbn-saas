@@ -23,13 +23,13 @@ export default function Home() {
               Войти
             </Link>
             <Link
-              href="/docs"
+              href={{ pathname: "/docs" }}
               className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
             >
               Документация
             </Link>
             <Link
-              href="/docs/api"
+              href={{ pathname: "/docs/api" }}
               className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
             >
               API

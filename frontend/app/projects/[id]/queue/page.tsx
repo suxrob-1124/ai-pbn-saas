@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { FiAlertTriangle, FiCheck, FiClock, FiRefreshCw, FiRotateCw, FiTrash2 } from "react-icons/fi";
-import { listQueue, deleteQueueItem, cleanupQueue } from "../../../../lib/queueApi";
+import { cleanupQueue, deleteQueueItem, listQueue, listQueueHistory } from "../../../../lib/queueApi";
 import { deleteLinkTask, listLinkTasks, retryLinkTask } from "../../../../lib/linkTasksApi";
 import { authFetch } from "../../../../lib/http";
 import { useAuthGuard } from "../../../../lib/useAuth";
@@ -12,13 +12,19 @@ import { showToast } from "../../../../lib/toastStore";
 import type { QueueItemDTO } from "../../../../types/queue";
 import type { LinkTaskDTO } from "../../../../types/linkTasks";
 import { Badge } from "../../../../components/Badge";
+import { canDeleteLinkTask, canRetryLinkTask, getLinkTaskStatusMeta, isLinkTaskInProgress, normalizeLinkTaskStatus } from "../../../../lib/linkTaskStatus";
 
-const statusOptions = ["all", "pending", "queued", "completed", "failed"];
+const statusOptions = ["all", "pending", "queued"];
 const STATUS_LABELS: Record<string, string> = {
   all: "Все",
   pending: "Ожидает",
-  queued: "В очереди",
-  completed: "Завершено",
+  queued: "В очереди"
+};
+
+const historyStatusOptions = ["all", "completed", "failed"];
+const HISTORY_STATUS_LABELS: Record<string, string> = {
+  all: "Все",
+  completed: "Обработано",
   failed: "Ошибка"
 };
 
@@ -61,9 +67,11 @@ export default function ProjectQueuePage() {
   const projectId = paramId && paramId !== "[id]" ? paramId : queryId;
 
   const [items, setItems] = useState<QueueItemDTO[]>([]);
+  const [historyItems, setHistoryItems] = useState<QueueItemDTO[]>([]);
   const [domains, setDomains] = useState<Record<string, Domain>>({});
   const [projectName, setProjectName] = useState("");
   const [loading, setLoading] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [cleaning, setCleaning] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -81,6 +89,12 @@ export default function ProjectQueuePage() {
   const [search, setSearch] = useState("");
   const [genPage, setGenPage] = useState(1);
   const genPageSize = 20;
+  const [historyStatusFilter, setHistoryStatusFilter] = useState("all");
+  const [historyDateFrom, setHistoryDateFrom] = useState("");
+  const [historyDateTo, setHistoryDateTo] = useState("");
+  const [historySearch, setHistorySearch] = useState("");
+  const [historyPage, setHistoryPage] = useState(1);
+  const historyPageSize = 20;
 
   const [linkStatusFilter, setLinkStatusFilter] = useState("all");
   const [linkDateFrom, setLinkDateFrom] = useState("");
@@ -113,6 +127,22 @@ export default function ProjectQueuePage() {
     };
   }, [projectId]);
 
+  const loadDomainsMap = async () => {
+    if (!projectId) {
+      return;
+    }
+    try {
+      const domainList = await authFetch<Domain[]>(`/api/projects/${projectId}/domains`);
+      const map: Record<string, Domain> = {};
+      (Array.isArray(domainList) ? domainList : []).forEach((d) => {
+        map[d.id] = d;
+      });
+      setDomains(map);
+    } catch {
+      // ignore domain mapping errors
+    }
+  };
+
   const load = async (opts?: { silent?: boolean }) => {
     if (!projectId) return;
     if (!opts?.silent) {
@@ -127,16 +157,7 @@ export default function ProjectQueuePage() {
         search: search.trim() ? search.trim() : undefined
       });
       setItems(Array.isArray(list) ? list : []);
-      try {
-        const domainList = await authFetch<Domain[]>(`/api/projects/${projectId}/domains`);
-        const map: Record<string, Domain> = {};
-        (Array.isArray(domainList) ? domainList : []).forEach((d) => {
-          map[d.id] = d;
-        });
-        setDomains(map);
-      } catch {
-        // ignore domain mapping errors
-      }
+      await loadDomainsMap();
     } catch (err: any) {
       const msg = err?.message || "Не удалось загрузить очередь";
       if (isPermissionError(msg)) {
@@ -147,6 +168,38 @@ export default function ProjectQueuePage() {
     } finally {
       if (!opts?.silent) {
         setLoading(false);
+      }
+    }
+  };
+
+  const loadHistory = async (opts?: { silent?: boolean }) => {
+    if (!projectId) return;
+    if (!opts?.silent) {
+      setHistoryLoading(true);
+    }
+    setError(null);
+    setPermissionDenied(false);
+    try {
+      const list = await listQueueHistory(projectId, {
+        limit: historyPageSize,
+        page: historyPage,
+        search: historySearch.trim() ? historySearch.trim() : undefined,
+        status: historyStatusFilter as "all" | "completed" | "failed",
+        dateFrom: historyDateFrom || undefined,
+        dateTo: historyDateTo || undefined
+      });
+      setHistoryItems(Array.isArray(list) ? list : []);
+      await loadDomainsMap();
+    } catch (err: any) {
+      const msg = err?.message || "Не удалось загрузить историю очереди";
+      if (isPermissionError(msg)) {
+        setPermissionDenied(true);
+      } else {
+        setError(msg);
+      }
+    } finally {
+      if (!opts?.silent) {
+        setHistoryLoading(false);
       }
     }
   };
@@ -163,7 +216,7 @@ export default function ProjectQueuePage() {
         projectId,
         limit: linkPageSize,
         page: linkPage,
-        status: linkStatusFilter !== "all" ? linkStatusFilter : undefined,
+        status: linkStatusFilter !== "all" ? (normalizeLinkTaskStatus(linkStatusFilter) || linkStatusFilter) : undefined,
         search: linkSearch.trim() ? linkSearch.trim() : undefined,
         scheduledFrom: linkDateFrom ? new Date(`${linkDateFrom}T00:00:00`) : undefined,
         scheduledTo: linkDateTo ? new Date(`${linkDateTo}T23:59:59`) : undefined
@@ -188,11 +241,15 @@ export default function ProjectQueuePage() {
   }, [projectId, genPage, search]);
 
   useEffect(() => {
+    loadHistory();
+  }, [projectId, historyPage, historyStatusFilter, historyDateFrom, historyDateTo, historySearch]);
+
+  useEffect(() => {
     loadLinkTasks();
   }, [projectId, linkPage, linkStatusFilter, linkDateFrom, linkDateTo, linkSearch]);
 
   useEffect(() => {
-    const hasActiveLinks = linkTasks.some((task) => ["pending", "searching", "removing"].includes(task.status));
+    const hasActiveLinks = linkTasks.some((task) => isLinkTaskInProgress(task.status));
     if (!hasActiveLinks) {
       return;
     }
@@ -231,7 +288,8 @@ export default function ProjectQueuePage() {
     const toDate = linkDateTo ? new Date(`${linkDateTo}T23:59:59`) : null;
     const term = linkSearch.trim().toLowerCase();
     return linkTasks.filter((task) => {
-      if (linkStatusFilter !== "all" && task.status !== linkStatusFilter) {
+      const normalizedStatus = normalizeLinkTaskStatus(task.status) || task.status;
+      if (linkStatusFilter !== "all" && normalizedStatus !== linkStatusFilter) {
         return false;
       }
       const scheduled = new Date(task.scheduled_for);
@@ -249,17 +307,47 @@ export default function ProjectQueuePage() {
     });
   }, [linkTasks, linkStatusFilter, linkDateFrom, linkDateTo, linkSearch, domains]);
 
+  const filteredHistory = useMemo(() => {
+    const fromDate = historyDateFrom ? new Date(`${historyDateFrom}T00:00:00`) : null;
+    const toDate = historyDateTo ? new Date(`${historyDateTo}T23:59:59`) : null;
+    const term = historySearch.trim().toLowerCase();
+    return historyItems.filter((item) => {
+      if (historyStatusFilter !== "all" && item.status !== historyStatusFilter) {
+        return false;
+      }
+      const scheduled = new Date(item.scheduled_for);
+      if (fromDate && scheduled < fromDate) {
+        return false;
+      }
+      if (toDate && scheduled > toDate) {
+        return false;
+      }
+      if (!term) {
+        return true;
+      }
+      const domain = domains[item.domain_id];
+      const label = (item.domain_url || domain?.url || item.domain_id || "").toLowerCase();
+      return label.includes(term);
+    });
+  }, [historyItems, historyStatusFilter, historyDateFrom, historyDateTo, historySearch, domains]);
+
   useEffect(() => {
     setGenPage(1);
   }, [statusFilter, dateFrom, dateTo, search]);
+
+  useEffect(() => {
+    setHistoryPage(1);
+  }, [historyStatusFilter, historyDateFrom, historyDateTo, historySearch]);
 
   useEffect(() => {
     setLinkPage(1);
   }, [linkStatusFilter, linkDateFrom, linkDateTo, linkSearch]);
 
   const genHasNext = items.length === genPageSize;
+  const historyHasNext = historyItems.length === historyPageSize;
   const linkHasNext = linkTasks.length === linkPageSize;
   const visibleItems = filtered;
+  const visibleHistoryItems = filteredHistory;
   const visibleLinks = filteredLinks;
 
   const handleRemove = async (item: QueueItemDTO) => {
@@ -354,7 +442,7 @@ export default function ProjectQueuePage() {
     if (!projectId) return;
     setRefreshing(true);
     try {
-      await load({ silent: true });
+      await Promise.all([load({ silent: true }), loadHistory({ silent: true })]);
     } finally {
       setRefreshing(false);
     }
@@ -457,7 +545,7 @@ export default function ProjectQueuePage() {
 
       {activeTab === "domains" && (
       <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3">
-        <div className="text-sm font-semibold">Фильтры генераций</div>
+        <div className="text-sm font-semibold">Фильтры активной очереди генераций</div>
         <div className="grid gap-3 md:grid-cols-3">
           <label className="text-sm space-y-1">
             <span className="text-slate-600 dark:text-slate-300">Фильтр по статусу</span>
@@ -497,6 +585,53 @@ export default function ProjectQueuePage() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Поиск по домену"
+          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
+        />
+      </div>
+      )}
+
+      {activeTab === "domains" && (
+      <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3">
+        <div className="text-sm font-semibold">Фильтры истории запусков</div>
+        <div className="grid gap-3 md:grid-cols-3">
+          <label className="text-sm space-y-1">
+            <span className="text-slate-600 dark:text-slate-300">Фильтр по статусу</span>
+            <select
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
+              value={historyStatusFilter}
+              onChange={(e) => setHistoryStatusFilter(e.target.value)}
+            >
+              {historyStatusOptions.map((opt) => (
+                <option key={opt} value={opt}>
+                  {HISTORY_STATUS_LABELS[opt] || opt}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-sm space-y-1">
+            <span className="text-slate-600 dark:text-slate-300">Фильтр по дате (от)</span>
+            <input
+              type="date"
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
+              value={historyDateFrom}
+              onChange={(e) => setHistoryDateFrom(e.target.value)}
+            />
+          </label>
+          <label className="text-sm space-y-1">
+            <span className="text-slate-600 dark:text-slate-300">Фильтр по дате (до)</span>
+            <input
+              type="date"
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
+              value={historyDateTo}
+              onChange={(e) => setHistoryDateTo(e.target.value)}
+            />
+          </label>
+        </div>
+        <input
+          type="search"
+          value={historySearch}
+          onChange={(e) => setHistorySearch(e.target.value)}
+          placeholder="Поиск по домену в истории"
           className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
         />
       </div>
@@ -595,6 +730,9 @@ export default function ProjectQueuePage() {
                   const domainLabel = domain?.url || "Домен";
                   const domainHref = `/domains/${domain?.id || task.domain_id}`;
                   const actionLabel = (task.action || "insert") === "remove" ? "Удаление" : "Вставка";
+                  const normalizedStatus = normalizeLinkTaskStatus(task.status) || task.status;
+                  const canRetry = canRetryLinkTask(task.status);
+                  const canDelete = canDeleteLinkTask(task.status);
                   const lastLog = task.log_lines?.length ? task.log_lines[task.log_lines.length - 1] : "";
                   const eventText = task.error_message || lastLog || "—";
                   return (
@@ -609,7 +747,7 @@ export default function ProjectQueuePage() {
                         {new Date(task.scheduled_for).toLocaleString()}
                       </td>
                       <td className="py-3 pr-4">
-                        <LinkTaskStatusBadge status={task.status} />
+                        <LinkTaskStatusBadge status={normalizedStatus} />
                       </td>
                       <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">{task.attempts}</td>
                       <td
@@ -623,7 +761,7 @@ export default function ProjectQueuePage() {
                           <Link href={{ pathname: `/links/${task.id}` }} className="text-indigo-600 hover:underline">
                             Открыть
                           </Link>
-                          {task.status === "failed" && (
+                          {canRetry && (
                             <button
                               onClick={() => handleLinkRetry(task)}
                               disabled={linkLoading}
@@ -634,7 +772,8 @@ export default function ProjectQueuePage() {
                           )}
                           <button
                             onClick={() => handleLinkDelete(task)}
-                            disabled={linkLoading}
+                            disabled={linkLoading || !canDelete}
+                            title={!canDelete ? "Удаление недоступно для активных задач (ожидает/поиск/удаление)." : undefined}
                             className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
                           >
                             <FiTrash2 /> Удалить
@@ -756,23 +895,103 @@ export default function ProjectQueuePage() {
         )}
       </div>
       )}
+
+      {activeTab === "domains" && (
+      <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="font-semibold">История запусков</h3>
+          <span className="text-xs text-slate-500 dark:text-slate-400">Всего: {filteredHistory.length}</span>
+        </div>
+        {historyLoading && <div className="text-sm text-slate-500 dark:text-slate-400">Загрузка...</div>}
+        {!historyLoading && !permissionDenied && filteredHistory.length === 0 && (
+          <div className="text-sm text-slate-500 dark:text-slate-400">История запусков пуста.</div>
+        )}
+        {!historyLoading && !permissionDenied && filteredHistory.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="text-left text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
+                  <th className="py-2 pr-4">Домен</th>
+                  <th className="py-2 pr-4">Запланировано</th>
+                  <th className="py-2 pr-4">Завершено</th>
+                  <th className="py-2 pr-4">Статус</th>
+                  <th className="py-2 pr-4">Детали</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                {visibleHistoryItems.map((item) => {
+                  const domain = domains[item.domain_id];
+                  const domainLabel = item.domain_url || domain?.url || "Домен";
+                  return (
+                    <tr key={item.id}>
+                      <td className="py-3 pr-4">
+                        <Link href={{ pathname: `/domains/${domain?.id || item.domain_id}` }} className="text-indigo-600 hover:underline">
+                          {domainLabel}
+                        </Link>
+                      </td>
+                      <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">
+                        {new Date(item.scheduled_for).toLocaleString()}
+                      </td>
+                      <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">
+                        {item.processed_at ? new Date(item.processed_at).toLocaleString() : "—"}
+                      </td>
+                      <td className="py-3 pr-4">{HISTORY_STATUS_LABELS[item.status] || item.status}</td>
+                      <td
+                        className={`py-3 pr-4 max-w-xs truncate ${item.status === "failed" && item.error_message ? "text-red-500" : "text-slate-500 dark:text-slate-400"}`}
+                        title={formatQueueHistoryDetails(item)}
+                      >
+                        {formatQueueHistoryDetails(item)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {filteredHistory.length > 0 && (
+          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+            <span>Страница {historyPage}</span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setHistoryPage((p) => Math.max(1, p - 1))}
+                disabled={historyPage <= 1}
+                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              >
+                Назад
+              </button>
+              <button
+                onClick={() => setHistoryPage((p) => p + 1)}
+                disabled={!historyHasNext}
+                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              >
+                Вперёд
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+      )}
     </div>
   );
 }
 
+function formatQueueHistoryDetails(item: QueueItemDTO): string {
+  const text = (item.error_message || "").trim();
+  if (!text) {
+    return "—";
+  }
+  if (item.status === "completed" && text.toLowerCase() === "generation enqueued") {
+    return "Поставлено в генерацию";
+  }
+  return text;
+}
+
 function LinkTaskStatusBadge({ status }: { status: string }) {
-  const map: Record<string, { text: string; tone: "amber" | "blue" | "orange" | "sky" | "green" | "yellow" | "slate" | "red"; icon: ReactNode }> = {
-    pending: { text: "Ожидает", tone: "amber", icon: <FiClock /> },
-    searching: { text: "Поиск", tone: "blue", icon: <FiRefreshCw /> },
-    removing: { text: "Удаление", tone: "orange", icon: <FiRefreshCw /> },
-    found: { text: "Найдено", tone: "sky", icon: <FiCheck /> },
-    inserted: { text: "Вставлено", tone: "green", icon: <FiCheck /> },
-    generated: { text: "Вставлено (ген. текст)", tone: "yellow", icon: <FiCheck /> },
-    removed: { text: "Удалено", tone: "slate", icon: <FiCheck /> },
-    failed: { text: "Ошибка", tone: "red", icon: <FiAlertTriangle /> }
-  };
-  const cfg = map[status] || { text: status, tone: "slate" as const, icon: <FiClock /> };
-  return <Badge label={cfg.text} tone={cfg.tone} icon={cfg.icon} className="text-xs" />;
+  const meta = getLinkTaskStatusMeta(status);
+  const icon =
+    meta.icon === "refresh" ? <FiRefreshCw /> : meta.icon === "check" ? <FiCheck /> : meta.icon === "alert" ? <FiAlertTriangle /> : <FiClock />;
+  return <Badge label={meta.text} tone={meta.tone} icon={icon} className="text-xs" />;
 }
 
 type LinkHref = Parameters<typeof Link>[0]["href"];

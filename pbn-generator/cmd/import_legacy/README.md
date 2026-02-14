@@ -10,7 +10,8 @@ CLI для импорта уже опубликованных сайтов из 
 4. Синхронизирует файлы из `server/<domain>` в `site_files` (включая удаление stale-записей).
 5. Ставит домен в `published`.
 6. Пытается декодировать внешнюю `https://` ссылку из `index.html` (`body a[href]`) и записывает baseline link state.
-7. Пишет JSON-отчет.
+7. Декодирует файлы сайта и создает/обновляет synthetic generation с артефактами (`legacy_decode_v2`).
+8. Пишет JSON-отчет.
 
 ## Важный момент: `dry-run` ничего не записывает
 
@@ -70,6 +71,7 @@ go run ./cmd/import_legacy \
   --batch-size 50 \
   --batch-number 1 \
   --server-dir ../server \
+  --decode-source import_legacy \
   --report ../scripts/legacy_import_report.json
 ```
 
@@ -82,6 +84,7 @@ go run ./cmd/import_legacy \
   --batch-size 50 \
   --batch-number 1 \
   --server-dir ../server \
+  --decode-source import_legacy \
   --report ../scripts/legacy_import_report_apply.json
 ```
 
@@ -95,8 +98,26 @@ for n in $(seq 1 10); do
     --batch-size 50 \
     --batch-number "$n" \
     --server-dir ../server \
+    --decode-source import_legacy \
     --report "../scripts/legacy_import_batch_${n}.json"
 done
+```
+
+### 4) Принудительное обновление synthetic artifacts
+
+Если у домена уже есть не-legacy генерации, importer по умолчанию не перезаписывает synthetic decode.
+Для принудительного режима добавьте `--force`:
+
+```bash
+go run ./cmd/import_legacy \
+  --manifest ../scripts/legacy_sites_manifest.csv \
+  --mode apply \
+  --batch-size 50 \
+  --batch-number 1 \
+  --server-dir ../server \
+  --decode-source import_legacy \
+  --force \
+  --report ../scripts/legacy_import_force_report.json
 ```
 
 ## Как понять результат после запуска
@@ -114,6 +135,8 @@ done
 - `files_synced`
 - `domain_published`
 - `link_baseline_created` (если ссылка найдена)
+- `legacy_artifacts_created` / `legacy_artifacts_updated` / `legacy_artifacts_unchanged`
+- `legacy_artifacts_skipped_non_legacy_exists` (если есть обычные генерации и не указан `--force`)
 
 ## Почему “добавления не видно на сайте” (чеклист)
 

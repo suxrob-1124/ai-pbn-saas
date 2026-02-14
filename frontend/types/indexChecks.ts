@@ -19,6 +19,8 @@ export type IndexCheckDTO = {
   error_message?: string | null;
   completed_at?: string | null;
   created_at: string;
+  run_now_enqueued?: boolean;
+  run_now_error?: string | null;
 };
 
 export type IndexCheckHistoryDTO = {
@@ -79,6 +81,9 @@ export type IndexCheckBatchResponse = {
   created: number;
   updated: number;
   skipped: number;
+  upsert_failed?: number;
+  enqueued?: number;
+  enqueue_failed?: number;
 };
 
 export type IndexCheckCalendarResponse = IndexCheckCalendarDayDTO[];

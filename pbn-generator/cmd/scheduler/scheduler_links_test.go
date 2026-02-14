@@ -345,3 +345,75 @@ func TestApplyLinkSchedulesPublishedAfterScheduleTime(t *testing.T) {
 		t.Fatalf("expected 1 task after delay_minutes, got %d", len(linkTaskStore.tasks))
 	}
 }
+
+func TestApplyLinkSchedulesDoesNotFailActiveTaskWithTemporaryIneligibleStatus(t *testing.T) {
+	now := time.Date(2026, 2, 5, 12, 0, 0, 0, time.UTC)
+	schedule := sqlstore.LinkSchedule{
+		ID:        "link-s-5",
+		ProjectID: "project-5",
+		Name:      "Links",
+		Config:    json.RawMessage(`{"limit":2}`),
+		IsActive:  true,
+		CreatedBy: "owner@example.com",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	scheduleStore := &stubLinkScheduleStore{[]sqlstore.LinkSchedule{schedule}}
+
+	domainStore := &stubDomainStore{
+		byProject: map[string][]sqlstore.Domain{
+			"project-5": {
+				{
+					ID:              "domain-eligible",
+					ProjectID:       "project-5",
+					URL:             "eligible.example.com",
+					Status:          "published",
+					LinkStatus:      sql.NullString{String: "pending", Valid: true},
+					LinkAnchorText:  sql.NullString{String: "Anchor A", Valid: true},
+					LinkAcceptorURL: sql.NullString{String: "https://acceptor/a", Valid: true},
+				},
+				{
+					ID:              "domain-active",
+					ProjectID:       "project-5",
+					URL:             "active.example.com",
+					Status:          "published",
+					LinkStatus:      sql.NullString{String: "searching", Valid: true},
+					LinkAnchorText:  sql.NullString{String: "Anchor B", Valid: true},
+					LinkAcceptorURL: sql.NullString{String: "https://acceptor/b", Valid: true},
+				},
+			},
+		},
+	}
+
+	linkTaskStore := &stubLinkTaskStore{
+		tasks: map[string]sqlstore.LinkTask{
+			"task-active": {
+				ID:           "task-active",
+				DomainID:     "domain-active",
+				AnchorText:   "Anchor B",
+				TargetURL:    "https://acceptor/b",
+				ScheduledFor: now.Add(-time.Hour),
+				Action:       "insert",
+				Status:       "searching",
+				CreatedBy:    "owner@example.com",
+				CreatedAt:    now.Add(-2 * time.Hour),
+			},
+		},
+		domainToProject: map[string]string{
+			"domain-eligible": "project-5",
+			"domain-active":   "project-5",
+		},
+	}
+
+	if err := applyLinkSchedulesAt(context.Background(), scheduleStore, linkTaskStore, domainStore, nil, now); err != nil {
+		t.Fatalf("apply link schedules: %v", err)
+	}
+
+	activeTask := linkTaskStore.tasks["task-active"]
+	if activeTask.Status != "searching" {
+		t.Fatalf("expected active task to keep searching status, got %s", activeTask.Status)
+	}
+	if activeTask.ErrorMessage.Valid {
+		t.Fatalf("expected active task error message to stay empty, got %q", activeTask.ErrorMessage.String)
+	}
+}

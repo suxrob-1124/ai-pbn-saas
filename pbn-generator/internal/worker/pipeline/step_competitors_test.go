@@ -91,6 +91,12 @@ func TestCompetitorAnalysisStep(t *testing.T) {
 	if state.Context["llm_analysis"] != llmAnalysis {
 		t.Errorf("expected llm_analysis to be saved in context")
 	}
+	if _, ok := artifacts["brand_resolution"]; !ok {
+		t.Fatalf("expected brand_resolution artifact")
+	}
+	if _, ok := state.Context["brand_resolution"]; !ok {
+		t.Fatalf("expected brand_resolution in context")
+	}
 }
 
 func TestCompetitorAnalysisStep_WithOldKeys(t *testing.T) {

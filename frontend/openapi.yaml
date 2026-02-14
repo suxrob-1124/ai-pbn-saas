@@ -528,10 +528,51 @@ paths:
           name: search
           schema:
             type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/QueueItem"
+  /api/projects/{projectId}/queue/history:
+    get:
+      tags: [Queue]
+      summary: История очереди проекта
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+        - in: query
+          name: page
+          schema:
+            type: integer
+            minimum: 1
         - in: query
           name: search
           schema:
             type: string
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [all, completed, failed]
+        - in: query
+          name: date_from
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: date_to
+          schema:
+            type: string
+            format: date
       responses:
         "200":
           description: OK
@@ -967,6 +1008,10 @@ paths:
     post:
       tags: [Links]
       summary: Повторить link task
+      description: |
+        Сбрасывает lifecycle задачи для нового ручного запуска:
+        `attempts=0`, `scheduled_for=now`, `created_at=now`,
+        очищает `found_location`, `generated_content`, `error_message`, `completed_at`.
       parameters:
         - $ref: "#/components/parameters/LinkId"
       responses:
@@ -1899,6 +1944,8 @@ components:
           type: string
         status:
           type: string
+          description: Канонические статусы link-task
+          enum: [pending, searching, removing, inserted, generated, removed, failed]
         target_country:
           type: string
         target_language:
@@ -1964,6 +2011,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ProjectMember"
+        my_role:
+          type: string
     ProjectMember:
       type: object
       properties:
@@ -2015,12 +2064,26 @@ components:
           nullable: true
         status:
           type: string
-        last_generation_id:
+        last_attempt_generation_id:
+          type: string
+          nullable: true
+        last_success_generation_id:
           type: string
           nullable: true
         published_at:
           type: string
           format: date-time
+          nullable: true
+        published_path:
+          type: string
+          nullable: true
+        file_count:
+          type: integer
+        total_size_bytes:
+          type: integer
+          format: int64
+        deployment_mode:
+          type: string
           nullable: true
         link_anchor_text:
           type: string
@@ -2030,6 +2093,13 @@ components:
           nullable: true
         link_status:
           type: string
+          nullable: true
+        link_status_effective:
+          type: string
+          nullable: true
+        link_status_source:
+          type: string
+          enum: [domain, active_task]
           nullable: true
         link_updated_at:
           type: string
@@ -2309,6 +2379,9 @@ components:
         artifacts:
           type: object
           nullable: true
+        artifacts_summary:
+          type: object
+          nullable: true
       required: [id, domain_id, status, progress, created_at, updated_at]
     LinkTask:
       type: object
@@ -2482,10 +2555,16 @@ components:
           $ref: "#/components/schemas/Domain"
         project_name:
           type: string
+        my_role:
+          type: string
         generations:
           type: array
           items:
             $ref: "#/components/schemas/Generation"
+        latest_attempt:
+          $ref: "#/components/schemas/Generation"
+        latest_success:
+          $ref: "#/components/schemas/Generation"
         link_tasks:
           type: array
           items:
@@ -2712,6 +2791,12 @@ components:
         created_at:
           type: string
           format: date-time
+        run_now_enqueued:
+          type: boolean
+          nullable: true
+        run_now_error:
+          type: string
+          nullable: true
       required: [id, domain_id, check_date, status, attempts, created_at]
     IndexCheckHistory:
       type: object
@@ -2757,6 +2842,12 @@ components:
         updated:
           type: integer
         skipped:
+          type: integer
+        upsert_failed:
+          type: integer
+        enqueued:
+          type: integer
+        enqueue_failed:
           type: integer
       required: [created, updated, skipped]
     IndexCheckRunRequest:

@@ -13,6 +13,7 @@ import (
 
 	"obzornik-pbn-generator/internal/auth"
 	"obzornik-pbn-generator/internal/store/sqlstore"
+	"obzornik-pbn-generator/internal/tasks"
 )
 
 func TestDomainIndexChecksList(t *testing.T) {
@@ -177,6 +178,9 @@ func TestDomainIndexChecksManualRun(t *testing.T) {
 	if dto.IsIndexed != nil {
 		t.Fatalf("expected is_indexed nil after reset, got %#v", dto.IsIndexed)
 	}
+	if dto.RunNowEnqueued == nil || !*dto.RunNowEnqueued {
+		t.Fatalf("expected run_now_enqueued=true, got %#v", dto.RunNowEnqueued)
+	}
 }
 
 func TestDomainIndexChecksManualRunUnpublished(t *testing.T) {
@@ -241,8 +245,7 @@ func TestProjectIndexChecksManualRunStoreError(t *testing.T) {
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),
 	}
-	checkStore.errGetByDomain = sql.ErrNoRows
-	checkStore.errCreate = errors.New("boom")
+	checkStore.errUpsert = errors.New("boom")
 
 	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 		Email:      "owner@example.com",
@@ -253,8 +256,21 @@ func TestProjectIndexChecksManualRunStoreError(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/projects/project-1/index-checks", nil).WithContext(ctx)
 	rec := httptest.NewRecorder()
 	s.handleProjectByID(rec, req)
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]int
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["skipped"] != 0 {
+		t.Fatalf("expected skipped=0, got %#v", resp)
+	}
+	if resp["upsert_failed"] != 1 {
+		t.Fatalf("expected upsert_failed=1, got %#v", resp)
+	}
+	if resp["enqueued"] != 0 || resp["enqueue_failed"] != 0 {
+		t.Fatalf("unexpected enqueue counters: %#v", resp)
 	}
 }
 
@@ -605,6 +621,60 @@ func TestAdminIndexChecksRun(t *testing.T) {
 	}
 	if dto.Status != "pending" {
 		t.Fatalf("expected status pending, got %s", dto.Status)
+	}
+	if dto.RunNowEnqueued == nil || !*dto.RunNowEnqueued {
+		t.Fatalf("expected run_now_enqueued=true, got %#v", dto.RunNowEnqueued)
+	}
+}
+
+func TestDomainIndexChecksManualRunEnqueueFailure(t *testing.T) {
+	s := setupServer(t)
+
+	projStore := s.projects.(*stubProjectStore)
+	domStore := s.domains.(*stubDomainStore)
+	enqueuer := s.tasks.(*stubEnqueuer)
+	enqueuer.failTypes[tasks.TaskProcessIndex] = errors.New("redis down")
+
+	project := sqlstore.Project{
+		ID:        "project-1",
+		UserEmail: "owner@example.com",
+		Name:      "Demo",
+		Status:    "draft",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+	projStore.projects[project.ID] = project
+	domain := sqlstore.Domain{
+		ID:        "domain-1",
+		ProjectID: project.ID,
+		URL:       "example.com",
+		Status:    "published",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+	domStore.domains[domain.ID] = domain
+
+	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email:      "owner@example.com",
+		Role:       "manager",
+		IsApproved: true,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/domains/domain-1/index-checks", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	s.handleDomainActions(rec, req)
+	if rec.Code != http.StatusCreated && rec.Code != http.StatusOK {
+		t.Fatalf("expected 200/201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var dto indexCheckDTO
+	if err := json.NewDecoder(rec.Body).Decode(&dto); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if dto.RunNowEnqueued == nil || *dto.RunNowEnqueued {
+		t.Fatalf("expected run_now_enqueued=false, got %#v", dto.RunNowEnqueued)
+	}
+	if dto.RunNowError == nil || strings.TrimSpace(*dto.RunNowError) == "" {
+		t.Fatalf("expected run_now_error, got %#v", dto.RunNowError)
 	}
 }
 

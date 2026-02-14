@@ -19,6 +19,8 @@
     "verify:link-ui": "node --import tsx scripts/verify_link_ui.ts",
     "verify:link-task-form": "node --import tsx scripts/verify_link_task_form.ts",
     "verify:link-task-list": "node --import tsx scripts/verify_link_task_list.ts",
+    "verify:link-task-guards": "node --import tsx scripts/verify_link_task_list_guards.ts",
+    "verify:link-status-consistency": "node --import tsx scripts/verify_link_status_consistency.ts",
     "verify:index-checks-api": "node --import tsx scripts/verify_index_checks_api.ts",
     "verify:index-checks-pagination": "node --import tsx scripts/verify_index_checks_pagination.ts",
     "verify:index-monitoring-ui": "node --import tsx scripts/verify_index_monitoring_ui.ts",
@@ -26,7 +28,18 @@
     "verify:index-table": "node --import tsx scripts/verify_index_table.ts",
     "verify:index-stats": "node --import tsx scripts/verify_index_stats.ts",
     "verify:failed-checks-alert": "node --import tsx scripts/verify_failed_checks_alert.ts",
-    "verify:csv-import": "node --import tsx scripts/verify_csv_import.ts"
+    "verify:project-queue-active-filters": "node --import tsx scripts/verify_project_queue_active_filters.ts",
+    "verify:project-queue-history": "node --import tsx scripts/verify_project_queue_history.ts",
+    "verify:project-queue-link-normalization": "node --import tsx scripts/verify_project_queue_link_status_normalization.ts",
+    "verify:csv-import": "node --import tsx scripts/verify_csv_import.ts",
+    "verify:file-editor-route": "node --import tsx scripts/verify_file_editor_route.ts",
+    "verify:file-editor-permissions": "node --import tsx scripts/verify_file_editor_permissions.ts",
+    "verify:file-editor-query-open": "node --import tsx scripts/verify_file_editor_query_open.ts",
+    "verify:domain-editor-button": "node --import tsx scripts/verify_domain_editor_button.ts",
+    "verify:domain-result-block": "node --import tsx scripts/verify_domain_result_block.ts",
+    "verify:artifacts-final-highlight": "node --import tsx scripts/verify_artifacts_viewer_final_highlight.ts",
+    "verify:artifacts-zip-download": "node --import tsx scripts/verify_artifacts_zip_download.ts",
+    "verify:artifacts-final-html-preview": "node --import tsx scripts/verify_artifacts_final_html_preview.ts"
   },
   "dependencies": {
     "@mdx-js/loader": "3.0.1",

@@ -161,6 +161,88 @@ func TestProjectLinkScheduleTriggerCreatesTasks(t *testing.T) {
 	}
 }
 
+func TestProjectLinkScheduleTriggerPreservesRemoveActionForActiveTask(t *testing.T) {
+	s := setupServer(t)
+
+	projStore := s.projects.(*stubProjectStore)
+	domStore := s.domains.(*stubDomainStore)
+	linkStore := s.linkTasks.(*stubLinkTaskStore)
+	linkScheduleStore := s.linkSchedules.(*stubLinkScheduleStore)
+
+	project := sqlstore.Project{
+		ID:        "project-link-trigger-remove",
+		UserEmail: "owner@example.com",
+		Name:      "Demo",
+		Status:    "draft",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+	projStore.projects[project.ID] = project
+
+	domain := sqlstore.Domain{
+		ID:              "domain-remove",
+		ProjectID:       project.ID,
+		URL:             "remove.example.com",
+		Status:          "published",
+		LinkStatus:      sql.NullString{String: "pending", Valid: true},
+		LinkAnchorText:  sql.NullString{String: "Anchor Remove", Valid: true},
+		LinkAcceptorURL: sql.NullString{String: "https://acceptor/remove", Valid: true},
+		CreatedAt:       time.Now().UTC(),
+		UpdatedAt:       time.Now().UTC(),
+	}
+	domStore.domains[domain.ID] = domain
+	linkStore.domainToProject[domain.ID] = project.ID
+	linkStore.tasks["task-remove"] = sqlstore.LinkTask{
+		ID:           "task-remove",
+		DomainID:     domain.ID,
+		AnchorText:   "Anchor Remove",
+		TargetURL:    "https://acceptor/remove",
+		ScheduledFor: time.Now().Add(-time.Hour),
+		Action:       "remove",
+		Status:       "removing",
+		Attempts:     2,
+		CreatedBy:    "owner@example.com",
+		CreatedAt:    time.Now().Add(-2 * time.Hour),
+	}
+
+	_, err := linkScheduleStore.Upsert(context.Background(), sqlstore.LinkSchedule{
+		ID:        "ls-remove",
+		ProjectID: project.ID,
+		Name:      "Links",
+		Config:    json.RawMessage(`{"limit":1}`),
+		IsActive:  true,
+		CreatedBy: "owner@example.com",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("seed link schedule: %v", err)
+	}
+
+	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email:      "owner@example.com",
+		Role:       "manager",
+		IsApproved: true,
+	})
+	triggerReq := httptest.NewRequest(http.MethodPost, "/api/projects/project-link-trigger-remove/link-schedule/trigger", nil).WithContext(ctx)
+	triggerRec := httptest.NewRecorder()
+	s.handleProjectByID(triggerRec, triggerReq)
+	if triggerRec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", triggerRec.Code, triggerRec.Body.String())
+	}
+
+	task := linkStore.tasks["task-remove"]
+	if task.Action != "remove" {
+		t.Fatalf("expected active task action to remain remove, got %s", task.Action)
+	}
+	if task.Status != "pending" {
+		t.Fatalf("expected pending status, got %s", task.Status)
+	}
+	if task.Attempts != 0 {
+		t.Fatalf("expected attempts reset to 0, got %d", task.Attempts)
+	}
+}
+
 func TestProjectLinkScheduleInvalidTimezone(t *testing.T) {
 	s := setupServer(t)
 

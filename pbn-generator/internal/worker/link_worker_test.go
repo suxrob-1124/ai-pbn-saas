@@ -62,6 +62,9 @@ func (s *stubLinkTaskStore) Update(ctx context.Context, taskID string, updates s
 	if updates.ScheduledFor != nil {
 		task.ScheduledFor = *updates.ScheduledFor
 	}
+	if updates.CreatedAt != nil {
+		task.CreatedAt = *updates.CreatedAt
+	}
 	if updates.CompletedAt != nil {
 		task.CompletedAt = *updates.CompletedAt
 	}
@@ -81,6 +84,17 @@ func (s *stubDomainStore) Get(ctx context.Context, id string) (sqlstore.Domain, 
 		return sqlstore.Domain{}, sql.ErrNoRows
 	}
 	return d, nil
+}
+
+func (s *stubDomainStore) UpdateLinkStatus(ctx context.Context, id string, status string) error {
+	d, ok := s.domains[id]
+	if !ok {
+		return sql.ErrNoRows
+	}
+	d.LinkStatus = sqlstore.NullableString(status)
+	d.LinkUpdatedAt = sql.NullTime{Time: time.Now().UTC(), Valid: true}
+	s.domains[id] = d
+	return nil
 }
 
 func (s *stubDomainStore) UpdateLinkState(ctx context.Context, id string, status string, lastTaskID string, filePath string, anchorSnapshot string) error {
@@ -362,19 +376,16 @@ func TestLinkWorkerFailsWhenNoHTML(t *testing.T) {
 		Now:       func() time.Time { return now },
 	}
 
-	if err := w.ProcessTask(context.Background(), "task-3"); err == nil {
-		t.Fatalf("expected error")
+	if err := w.ProcessTask(context.Background(), "task-3"); err != nil {
+		t.Fatalf("expected nil error for terminal worker failure, got %v", err)
 	}
 
 	updated := taskStore.tasks["task-3"]
-	if updated.Status != "pending" {
-		t.Fatalf("expected pending, got %s", updated.Status)
+	if updated.Status != "failed" {
+		t.Fatalf("expected failed, got %s", updated.Status)
 	}
 	if updated.ErrorMessage.Valid == false {
 		t.Fatalf("expected error message")
-	}
-	if !updated.ScheduledFor.After(now) {
-		t.Fatalf("expected scheduled_for after now")
 	}
 }
 
@@ -409,8 +420,8 @@ func TestLinkWorkerRetryWindowExceeded(t *testing.T) {
 		Now:       func() time.Time { return now },
 	}
 
-	if err := w.ProcessTask(context.Background(), "task-old"); err == nil {
-		t.Fatalf("expected error")
+	if err := w.ProcessTask(context.Background(), "task-old"); err != nil {
+		t.Fatalf("expected nil error for terminal worker failure, got %v", err)
 	}
 
 	updated := taskStore.tasks["task-old"]
@@ -494,7 +505,7 @@ func TestLinkWorkerReplaceFromFoundLocation(t *testing.T) {
 	}
 }
 
-func TestLinkWorkerReplaceFallsBackToNewAnchor(t *testing.T) {
+func TestLinkWorkerRelinkFailsWhenSourceNotFound(t *testing.T) {
 	baseDir := t.TempDir()
 	domainDir := filepath.Join(baseDir, "example.com")
 	if err := os.MkdirAll(domainDir, 0o755); err != nil {
@@ -548,16 +559,19 @@ func TestLinkWorkerReplaceFallsBackToNewAnchor(t *testing.T) {
 	}
 
 	if err := w.ProcessTask(context.Background(), "task-new-2"); err != nil {
-		t.Fatalf("process task: %v", err)
+		t.Fatalf("process task should not return error for business failure: %v", err)
 	}
 
 	out, _ := os.ReadFile(htmlPath)
-	if !strings.Contains(string(out), `<a href="https://new.example">new anchor</a>`) {
-		t.Fatalf("expected new link inserted")
+	if strings.Contains(string(out), `<a href="https://new.example">new anchor</a>`) {
+		t.Fatalf("expected no fallback insertion for relink when source not found")
 	}
 	updated := taskStore.tasks["task-new-2"]
-	if updated.Status != "inserted" {
-		t.Fatalf("expected inserted, got %s", updated.Status)
+	if updated.Status != "failed" {
+		t.Fatalf("expected failed, got %s", updated.Status)
+	}
+	if !updated.ErrorMessage.Valid || !strings.Contains(strings.ToLower(updated.ErrorMessage.String), "relink source not found") {
+		t.Fatalf("expected relink source not found error, got: %v", updated.ErrorMessage)
 	}
 }
 
@@ -616,5 +630,69 @@ func TestLinkWorkerRemove(t *testing.T) {
 	}
 	if !foundLog {
 		t.Fatalf("expected log about title removal")
+	}
+}
+
+func TestLinkWorkerRemoveNotFoundIsIdempotent(t *testing.T) {
+	baseDir := t.TempDir()
+	domainDir := filepath.Join(baseDir, "example.com")
+	if err := os.MkdirAll(domainDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	htmlPath := filepath.Join(domainDir, "index.html")
+	content := `<html><body><h1>Header</h1><p>No matching link here</p></body></html>`
+	if err := os.WriteFile(htmlPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write html: %v", err)
+	}
+
+	task := sqlstore.LinkTask{
+		ID:         "task-remove-not-found",
+		DomainID:   "domain-remove-not-found",
+		AnchorText: "anchor",
+		TargetURL:  "https://example.com",
+		Action:     "remove",
+		CreatedBy:  "user@example.com",
+	}
+	taskStore := newStubLinkTaskStore(task)
+	domainStore := &stubDomainStore{domains: map[string]sqlstore.Domain{
+		"domain-remove-not-found": {ID: "domain-remove-not-found", ProjectID: "project-1", URL: "example.com"},
+	}}
+
+	w := &LinkWorker{
+		BaseDir:   baseDir,
+		Config:    config.Config{},
+		Tasks:     taskStore,
+		Domains:   domainStore,
+		Projects:  &stubProjectStore{projects: map[string]sqlstore.Project{"project-1": {ID: "project-1", UserEmail: "owner@example.com"}}},
+		Users:     &stubUserStore{},
+		SiteFiles: newStubSiteFileStore(),
+		FileEdits: &stubFileEditStore{},
+		Now:       func() time.Time { return time.Date(2026, 2, 4, 10, 0, 0, 0, time.UTC) },
+	}
+
+	if err := w.ProcessTask(context.Background(), "task-remove-not-found"); err != nil {
+		t.Fatalf("process task: %v", err)
+	}
+
+	updated := taskStore.tasks["task-remove-not-found"]
+	if updated.Status != "removed" {
+		t.Fatalf("expected removed, got %s", updated.Status)
+	}
+	if updated.ErrorMessage.Valid {
+		t.Fatalf("expected empty error message, got %s", updated.ErrorMessage.String)
+	}
+	foundWarning := false
+	for _, line := range updated.LogLines {
+		if strings.Contains(strings.ToLower(line), "идемпотентно") {
+			foundWarning = true
+			break
+		}
+	}
+	if !foundWarning {
+		t.Fatalf("expected idempotent warning in logs")
+	}
+	domain := domainStore.domains["domain-remove-not-found"]
+	if !domain.LinkStatus.Valid || domain.LinkStatus.String != "removed" {
+		t.Fatalf("expected domain link status removed, got %#v", domain.LinkStatus)
 	}
 }

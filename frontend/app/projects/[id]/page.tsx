@@ -9,6 +9,7 @@ import {
   FiPlay,
   FiRefreshCw,
   FiList,
+  FiEdit2,
   FiClock,
   FiPauseCircle,
   FiCheck,
@@ -27,8 +28,10 @@ import { deleteLinkSchedule, getLinkSchedule, triggerLinkSchedule, upsertLinkSch
 import type { ScheduleDTO } from "../../../types/schedules";
 import { ScheduleForm } from "../../../components/ScheduleForm";
 import { ScheduleList } from "../../../components/ScheduleList";
+import { PromptOverridesPanel } from "../../../components/PromptOverridesPanel";
 import type { ScheduleFormValue } from "../../../lib/scheduleFormValidation";
 import { Badge } from "../../../components/Badge";
+import { getDomainLinkStatusMeta, hasInsertedLink, isLinkTaskInProgress } from "../../../lib/linkTaskStatus";
 
 type Project = {
   id: string;
@@ -49,14 +52,24 @@ type Domain = {
   target_language?: string;
   exclude_domains?: string;
   status: string;
-  last_generation_id?: string;
+  last_attempt_generation_id?: string;
+  last_success_generation_id?: string;
+  published_path?: string;
+  file_count?: number;
+  total_size_bytes?: number;
+  deployment_mode?: string;
   link_anchor_text?: string;
   link_acceptor_url?: string;
   link_status?: string;
+  link_status_effective?: string;
+  link_status_source?: "domain" | "active_task";
   link_last_task_id?: string;
   link_ready_at?: string;
   updated_at?: string;
 };
+
+const effectiveDomainLinkStatus = (domain: Domain | null | undefined) =>
+  domain?.link_status_effective || domain?.link_status || "";
 
 type Generation = {
   id: string;
@@ -75,6 +88,7 @@ type ProjectSummary = {
   project: Project;
   domains: Domain[];
   members: Array<{ email: string; role: string; createdAt: string }>;
+  my_role?: "admin" | "owner" | "editor" | "viewer";
 };
 
 type ProjectTab = "domains" | "schedules" | "errors" | "settings";
@@ -88,6 +102,7 @@ export default function ProjectDetailPage() {
   const searchParams = useSearchParams();
   const projectId = params?.id as string;
   const [project, setProject] = useState<Project | null>(null);
+  const [myRole, setMyRole] = useState<"admin" | "owner" | "editor" | "viewer">("viewer");
   const [domains, setDomains] = useState<Domain[]>([]);
   const [domainSearch, setDomainSearch] = useState("");
   const domainById = useMemo(() => {
@@ -249,6 +264,7 @@ export default function ProjectDetailPage() {
       const d = Array.isArray(summary?.domains) ? summary.domains : [];
       const m = Array.isArray(summary?.members) ? summary.members : [];
       setProject(p);
+      setMyRole(summary?.my_role || "viewer");
       setCountry(p?.target_country || "");
       setLanguage(p?.target_language || "");
       setProjectName(p?.name || "");
@@ -280,6 +296,7 @@ export default function ProjectDetailPage() {
 
   const isPermissionError = (message: string) =>
     /permission|access denied|admin only|forbidden/i.test(message);
+  const canEditPrompts = myRole === "admin" || myRole === "owner" || myRole === "editor";
 
   const resolvedProjectTimezone = (projectTimezone || project?.timezone || "UTC").trim() || "UTC";
 
@@ -1037,8 +1054,16 @@ export default function ProjectDetailPage() {
   const runLinkTask = async (id: string) => {
     const domain = domainById[id];
     if (!domain) return;
-    const linkStatus = (domain.link_status || "").toLowerCase();
-    const hasActiveLink = ["inserted", "generated"].includes(linkStatus);
+    const linkStatus = effectiveDomainLinkStatus(domain);
+    const hasActiveLink = hasInsertedLink(linkStatus);
+    if (isLinkTaskInProgress(linkStatus)) {
+      showToast({
+        type: "error",
+        title: "Задача уже выполняется",
+        message: "Дождитесь завершения текущей задачи по ссылке."
+      });
+      return;
+    }
     const anchor = (domain.link_anchor_text || "").trim();
     const acceptor = (domain.link_acceptor_url || "").trim();
     const draft = linkEdits[id] || { anchor, acceptor };
@@ -1083,8 +1108,8 @@ export default function ProjectDetailPage() {
   const removeLinkTask = async (id: string) => {
     const domain = domainById[id];
     if (!domain) return;
-    const linkStatus = (domain.link_status || "").toLowerCase();
-    const canRemoveLink = ["inserted", "generated"].includes(linkStatus);
+    const linkStatus = effectiveDomainLinkStatus(domain);
+    const canRemoveLink = hasInsertedLink(linkStatus) && !isLinkTaskInProgress(linkStatus);
     const anchor = (domain.link_anchor_text || "").trim();
     const acceptor = (domain.link_acceptor_url || "").trim();
     const draft = linkEdits[id] || { anchor, acceptor };
@@ -1214,7 +1239,7 @@ export default function ProjectDetailPage() {
             </Link>
             {projectId && (
               <Link
-                href={`/monitoring/indexing?projectId=${encodeURIComponent(projectId)}`}
+                href={{ pathname: "/monitoring/indexing", query: { projectId } } as UrlObject}
                 className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
               >
                 <FiActivity /> Индексация
@@ -1404,9 +1429,10 @@ export default function ProjectDetailPage() {
         )}
         <div className="space-y-3">
           {filteredDomains.map((d) => {
-            const linkStatus = (d.link_status || "").toLowerCase();
-            const hasActiveLink = ["inserted", "generated"].includes(linkStatus);
-            const canRemoveLink = hasActiveLink;
+            const linkStatus = effectiveDomainLinkStatus(d);
+            const hasActiveLink = hasInsertedLink(linkStatus);
+            const linkInProgress = isLinkTaskInProgress(linkStatus);
+            const canRemoveLink = hasActiveLink && !linkInProgress;
             const isPublished = (d.status || "").toLowerCase() === "published";
             const linkReadyAtDate = d.link_ready_at ? new Date(d.link_ready_at) : null;
             const linkReadyValid = linkReadyAtDate && !Number.isNaN(linkReadyAtDate.getTime());
@@ -1428,6 +1454,16 @@ export default function ProjectDetailPage() {
                       {d.url}
                     </Link>
                     <StatusBadge status={d.status} />
+                    <Badge
+                      label={`Попытка: ${d.status}`}
+                      tone={["processing", "pending", "pause_requested", "cancelling"].includes((d.status || "").toLowerCase()) ? "amber" : "slate"}
+                      className="text-[11px]"
+                    />
+                    <Badge
+                      label={d.last_success_generation_id ? "Успех: есть" : "Успех: нет"}
+                      tone={d.last_success_generation_id ? "green" : "slate"}
+                      className="text-[11px]"
+                    />
                     <LinkStatusBadge domain={d} />
                   </div>
                   <div className="text-xs text-slate-500 dark:text-slate-400">
@@ -1452,18 +1488,18 @@ export default function ProjectDetailPage() {
                 <div className="flex flex-wrap items-center gap-2 md:justify-end">
                   <button
                     onClick={() => runLinkTask(d.id)}
-                    disabled={loading || linkLoadingId === d.id}
+                    disabled={loading || linkLoadingId === d.id || linkInProgress}
                     className="hidden sm:inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   >
                     <FiLink />
-                    {hasActiveLink ? "Обновить ссылку" : "Добавить ссылку"}
+                    {linkInProgress ? "В работе..." : hasActiveLink ? "Обновить ссылку" : "Добавить ссылку"}
                   </button>
                   <button
                     onClick={() => runLinkTask(d.id)}
-                    disabled={loading || linkLoadingId === d.id}
+                    disabled={loading || linkLoadingId === d.id || linkInProgress}
                     className="inline-flex sm:hidden items-center justify-center rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                    title={hasActiveLink ? "Обновить ссылку" : "Добавить ссылку"}
-                    aria-label={hasActiveLink ? "Обновить ссылку" : "Добавить ссылку"}
+                    title={linkInProgress ? "Задача в работе" : hasActiveLink ? "Обновить ссылку" : "Добавить ссылку"}
+                    aria-label={linkInProgress ? "Задача в работе" : hasActiveLink ? "Обновить ссылку" : "Добавить ссылку"}
                   >
                     <FiLink />
                   </button>
@@ -1488,9 +1524,17 @@ export default function ProjectDetailPage() {
                       </button>
                     </>
                   ) : (
-                    <span className="hidden sm:inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
-                      <FiInfo className="h-3 w-3" /> Нет ссылки
-                    </span>
+                    <>
+                      {linkInProgress ? (
+                        <span className="hidden sm:inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-600 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
+                          <FiRefreshCw className="h-3 w-3" /> Выполняется
+                        </span>
+                      ) : (
+                        <span className="hidden sm:inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
+                          <FiInfo className="h-3 w-3" /> Нет ссылки
+                        </span>
+                      )}
+                    </>
                   )}
                   <button
                     onClick={() => loadGens(d.id)}
@@ -1509,13 +1553,47 @@ export default function ProjectDetailPage() {
                   {isPublished ? (
                     <>
                       <Link
-                        href={`/monitoring/indexing?domainId=${encodeURIComponent(d.id)}`}
+                        href={{ pathname: `/domains/${d.id}/editor` } as UrlObject}
+                        className="hidden sm:inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                      >
+                        <FiEdit2 /> Редактор
+                      </Link>
+                      <Link
+                        href={{ pathname: `/domains/${d.id}/editor` } as UrlObject}
+                        className="inline-flex sm:hidden items-center justify-center rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                        title="Редактор"
+                        aria-label="Открыть редактор"
+                      >
+                        <FiEdit2 />
+                      </Link>
+                    </>
+                  ) : (
+                    <>
+                      <span
+                        title="Редактор доступен после публикации сайта"
+                        className="hidden sm:inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400"
+                      >
+                        <FiEdit2 /> Редактор
+                      </span>
+                      <span
+                        title="Редактор доступен после публикации сайта"
+                        aria-label="Редактор доступен после публикации"
+                        className="inline-flex sm:hidden items-center justify-center rounded-lg border border-slate-200 bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400"
+                      >
+                        <FiEdit2 />
+                      </span>
+                    </>
+                  )}
+                  {isPublished ? (
+                    <>
+                      <Link
+                        href={{ pathname: "/monitoring/indexing", query: { domainId: d.id } } as UrlObject}
                         className="hidden sm:inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                       >
                         <FiActivity /> Проверки индексации
                       </Link>
                       <Link
-                        href={`/monitoring/indexing?domainId=${encodeURIComponent(d.id)}`}
+                        href={{ pathname: "/monitoring/indexing", query: { domainId: d.id } } as UrlObject}
                         className="inline-flex sm:hidden items-center justify-center rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                         title="Проверки индексации"
                         aria-label="Проверки индексации"
@@ -1959,6 +2037,12 @@ export default function ProjectDetailPage() {
               </div>
             </div>
 
+            <PromptOverridesPanel
+              title="Переопределения промптов (проект)"
+              endpoint={`/api/projects/${projectId}/prompts`}
+              canEdit={canEditPrompts}
+            />
+
             <div className="border-t border-slate-200 dark:border-slate-800 pt-4 space-y-4">
               <h3 className="font-semibold">Участники проекта</h3>
               <div className="bg-white/60 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3">
@@ -2104,23 +2188,15 @@ function StatusBadge({ status }: { status: string }) {
   return <Badge label={cfg.text} tone={cfg.tone} icon={cfg.icon} className="text-xs" />;
 }
 
-function LinkStatusBadge({ domain }: { domain: { link_anchor_text?: string; link_acceptor_url?: string; link_status?: string; link_last_task_id?: string } }) {
+function LinkStatusBadge({
+  domain
+}: {
+  domain: { link_anchor_text?: string; link_acceptor_url?: string; link_status?: string; link_status_effective?: string; link_last_task_id?: string };
+}) {
   const hasSettings = Boolean((domain.link_anchor_text || "").trim()) && Boolean((domain.link_acceptor_url || "").trim());
-  if (!hasSettings) {
-    return <Badge label="Ожидает настройки" tone="slate" icon={<FiClock />} className="text-xs" />;
-  }
-  const status = domain.link_status || (domain.link_last_task_id ? "pending" : "ready");
-  const map: Record<string, { text: string; tone: "slate" | "amber" | "blue" | "orange" | "sky" | "green" | "yellow" | "red"; icon: ReactNode }> = {
-    ready: { text: "Готово к запуску", tone: "slate", icon: <FiClock /> },
-    pending: { text: "Ожидает добавления", tone: "amber", icon: <FiClock /> },
-    searching: { text: "Поиск места", tone: "blue", icon: <FiRefreshCw /> },
-    removing: { text: "Удаление", tone: "orange", icon: <FiRefreshCw /> },
-    found: { text: "Место найдено", tone: "sky", icon: <FiCheck /> },
-    inserted: { text: "Ссылка вставлена", tone: "green", icon: <FiCheck /> },
-    generated: { text: "Вставлено (ген. текст)", tone: "yellow", icon: <FiCheck /> },
-    removed: { text: "Ссылка удалена", tone: "slate", icon: <FiCheck /> },
-    failed: { text: "Ошибка ссылки", tone: "red", icon: <FiPauseCircle /> },
-  };
-  const cfg = map[status] || map.ready;
-  return <Badge label={cfg.text} tone={cfg.tone} icon={cfg.icon} className="text-xs" />;
+  const status = domain.link_status_effective || domain.link_status || (domain.link_last_task_id ? "pending" : "ready");
+  const meta = getDomainLinkStatusMeta(status, hasSettings);
+  const icon =
+    meta.icon === "refresh" ? <FiRefreshCw /> : meta.icon === "check" ? <FiCheck /> : meta.icon === "alert" ? <FiPauseCircle /> : <FiClock />;
+  return <Badge label={meta.text} tone={meta.tone} icon={icon} className="text-xs" />;
 }
