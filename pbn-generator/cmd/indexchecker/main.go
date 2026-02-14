@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 
@@ -13,8 +14,6 @@ import (
 	"obzornik-pbn-generator/internal/indexchecker"
 	"obzornik-pbn-generator/internal/store/sqlstore"
 )
-
-const indexCheckerSchedule = "@every 1h"
 
 func main() {
 	cfg := config.Load()
@@ -39,7 +38,17 @@ func main() {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 		defer cancel()
 		now := time.Now().UTC()
-		if err := indexchecker.RunIndexCheckerTick(ctx, now, projectStore, domainStore, checkStore, historyStore, checker, sugar); err != nil {
+		if err := indexchecker.RunIndexCheckerTick(
+			ctx,
+			now,
+			cfg.IndexCheckStaleTimeout,
+			projectStore,
+			domainStore,
+			checkStore,
+			historyStore,
+			checker,
+			sugar,
+		); err != nil {
 			sugar.Errorf("index checker tick failed: %v", err)
 		} else {
 			sugar.Infof("index checker tick completed")
@@ -49,11 +58,12 @@ func main() {
 	run()
 
 	c := cron.New(cron.WithLocation(time.UTC))
-	if _, err := c.AddFunc(indexCheckerSchedule, run); err != nil {
+	schedule := fmt.Sprintf("@every %s", cfg.IndexCheckerInterval.String())
+	if _, err := c.AddFunc(schedule, run); err != nil {
 		sugar.Fatalf("failed to register index checker cron: %v", err)
 	}
 	c.Start()
 
-	sugar.Infof("index checker started with schedule %s", indexCheckerSchedule)
+	sugar.Infow("index checker started", "schedule", schedule, "stale_timeout", cfg.IndexCheckStaleTimeout)
 	select {}
 }

@@ -156,6 +156,7 @@ type LinkTaskStore interface {
 
 type IndexCheckStore interface {
 	Create(ctx context.Context, check sqlstore.IndexCheck) error
+	UpsertManualByDomainAndDate(ctx context.Context, domainID string, date, now time.Time) (sqlstore.IndexCheck, bool, error)
 	Get(ctx context.Context, checkID string) (*sqlstore.IndexCheck, error)
 	GetByDomainAndDate(ctx context.Context, domainID string, date time.Time) (*sqlstore.IndexCheck, error)
 	ListByDomain(ctx context.Context, domainID string, filters sqlstore.IndexCheckFilters) ([]sqlstore.IndexCheck, error)
@@ -172,7 +173,6 @@ type IndexCheckStore interface {
 	AggregateDaily(ctx context.Context, filters sqlstore.IndexCheckFilters) ([]sqlstore.IndexCheckDailySummary, error)
 	AggregateDailyByDomain(ctx context.Context, domainID string, filters sqlstore.IndexCheckFilters) ([]sqlstore.IndexCheckDailySummary, error)
 	AggregateDailyByProject(ctx context.Context, projectID string, filters sqlstore.IndexCheckFilters) ([]sqlstore.IndexCheckDailySummary, error)
-	ResetForManual(ctx context.Context, checkID string, nextRetry time.Time) error
 }
 
 type CheckHistoryStore interface {
@@ -2677,6 +2677,13 @@ func (s *Server) handleDomainIndexChecks(w http.ResponseWriter, r *http.Request,
 			return
 		}
 		dto := toIndexCheckDTO(check)
+		enqueueErr := s.enqueueIndexCheckRunNow(r.Context(), domain, check.ID)
+		enqueued := enqueueErr == nil
+		dto.RunNowEnqueued = &enqueued
+		if enqueueErr != nil {
+			msg := enqueueErr.Error()
+			dto.RunNowError = &msg
+		}
 		if url := strings.TrimSpace(domain.URL); url != "" {
 			dto.DomainURL = &url
 		}
@@ -2818,39 +2825,24 @@ func (s *Server) upsertManualIndexCheck(ctx context.Context, domainID string, no
 		return sqlstore.IndexCheck{}, false, errors.New("index checks not configured")
 	}
 	today := dateOnlyUTC(now)
-	check, err := s.indexChecks.GetByDomainAndDate(ctx, domainID, today)
+	return s.indexChecks.UpsertManualByDomainAndDate(ctx, domainID, today, now)
+}
+
+func (s *Server) enqueueIndexCheckRunNow(ctx context.Context, domain sqlstore.Domain, checkID string) error {
+	if s.tasks == nil {
+		return errors.New("task queue is not configured")
+	}
+	task := tasks.NewIndexCheckTask(checkID)
+	queueName := tasks.QueueForProject(domain.ProjectID, s.cfg.GenQueueShards)
+	opts := make([]asynq.Option, 0, 1)
+	if strings.TrimSpace(queueName) != "" {
+		opts = append(opts, asynq.Queue(queueName))
+	}
+	_, err := s.tasks.Enqueue(ctx, task, opts...)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			newCheck := sqlstore.IndexCheck{
-				ID:        uuid.NewString(),
-				DomainID:  domainID,
-				CheckDate: today,
-				Status:    "pending",
-				Attempts:  0,
-				NextRetryAt: sql.NullTime{
-					Time:  now,
-					Valid: true,
-				},
-				CreatedAt: now,
-			}
-			if err := s.indexChecks.Create(ctx, newCheck); err != nil {
-				return sqlstore.IndexCheck{}, false, err
-			}
-			return newCheck, true, nil
-		}
-		return sqlstore.IndexCheck{}, false, err
+		return fmt.Errorf("enqueue index check run-now: %w", err)
 	}
-	if err := s.indexChecks.ResetForManual(ctx, check.ID, now); err != nil {
-		return sqlstore.IndexCheck{}, false, err
-	}
-	check.Status = "pending"
-	check.Attempts = 0
-	check.IsIndexed = sql.NullBool{}
-	check.ErrorMessage = sql.NullString{}
-	check.LastAttemptAt = sql.NullTime{}
-	check.CompletedAt = sql.NullTime{}
-	check.NextRetryAt = sql.NullTime{Time: now, Valid: true}
-	return *check, false, nil
+	return nil
 }
 
 func (s *Server) handleDomainLinkRun(w http.ResponseWriter, r *http.Request, domainID string, parts []string) {
@@ -4904,6 +4896,8 @@ func (s *Server) handleProjectIndexChecks(w http.ResponseWriter, r *http.Request
 		created := 0
 		updated := 0
 		skipped := 0
+		enqueued := 0
+		enqueueFailed := 0
 		for _, d := range domains {
 			if strings.TrimSpace(d.URL) == "" {
 				skipped++
@@ -4913,10 +4907,15 @@ func (s *Server) handleProjectIndexChecks(w http.ResponseWriter, r *http.Request
 				skipped++
 				continue
 			}
-			_, wasCreated, err := s.upsertManualIndexCheck(r.Context(), d.ID, now)
+			check, wasCreated, err := s.upsertManualIndexCheck(r.Context(), d.ID, now)
 			if err != nil {
-				writeError(w, http.StatusInternalServerError, "could not start index checks")
-				return
+				skipped++
+				continue
+			}
+			if err := s.enqueueIndexCheckRunNow(r.Context(), d, check.ID); err != nil {
+				enqueueFailed++
+			} else {
+				enqueued++
 			}
 			if wasCreated {
 				created++
@@ -4925,9 +4924,11 @@ func (s *Server) handleProjectIndexChecks(w http.ResponseWriter, r *http.Request
 			}
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"created": created,
-			"updated": updated,
-			"skipped": skipped,
+			"created":        created,
+			"updated":        updated,
+			"skipped":        skipped,
+			"enqueued":       enqueued,
+			"enqueue_failed": enqueueFailed,
 		})
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -5817,6 +5818,13 @@ func (s *Server) handleAdminIndexChecksRun(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	dto := toIndexCheckDTO(check)
+	enqueueErr := s.enqueueIndexCheckRunNow(r.Context(), domain, check.ID)
+	enqueued := enqueueErr == nil
+	dto.RunNowEnqueued = &enqueued
+	if enqueueErr != nil {
+		msg := enqueueErr.Error()
+		dto.RunNowError = &msg
+	}
 	if url := strings.TrimSpace(domain.URL); url != "" {
 		dto.DomainURL = &url
 	}
@@ -6141,19 +6149,21 @@ type linkTaskDTO struct {
 }
 
 type indexCheckDTO struct {
-	ID            string     `json:"id"`
-	DomainID      string     `json:"domain_id"`
-	ProjectID     *string    `json:"project_id,omitempty"`
-	DomainURL     *string    `json:"domain_url,omitempty"`
-	CheckDate     time.Time  `json:"check_date"`
-	Status        string     `json:"status"`
-	IsIndexed     *bool      `json:"is_indexed,omitempty"`
-	Attempts      int        `json:"attempts"`
-	LastAttemptAt *time.Time `json:"last_attempt_at,omitempty"`
-	NextRetryAt   *time.Time `json:"next_retry_at,omitempty"`
-	ErrorMessage  *string    `json:"error_message,omitempty"`
-	CompletedAt   *time.Time `json:"completed_at,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
+	ID             string     `json:"id"`
+	DomainID       string     `json:"domain_id"`
+	ProjectID      *string    `json:"project_id,omitempty"`
+	DomainURL      *string    `json:"domain_url,omitempty"`
+	CheckDate      time.Time  `json:"check_date"`
+	Status         string     `json:"status"`
+	IsIndexed      *bool      `json:"is_indexed,omitempty"`
+	Attempts       int        `json:"attempts"`
+	LastAttemptAt  *time.Time `json:"last_attempt_at,omitempty"`
+	NextRetryAt    *time.Time `json:"next_retry_at,omitempty"`
+	ErrorMessage   *string    `json:"error_message,omitempty"`
+	CompletedAt    *time.Time `json:"completed_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	RunNowEnqueued *bool      `json:"run_now_enqueued,omitempty"`
+	RunNowError    *string    `json:"run_now_error,omitempty"`
 }
 
 type indexCheckListDTO struct {

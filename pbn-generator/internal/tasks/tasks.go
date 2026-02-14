@@ -16,6 +16,7 @@ const (
 	TaskGenerate      = "generate:domain"
 	TaskSchedulerTick = "scheduler:tick"
 	TaskProcessLink   = "link:process"
+	TaskProcessIndex  = "index:process"
 )
 
 const (
@@ -35,6 +36,10 @@ type LinkTaskPayload struct {
 	TaskID string `json:"task_id"`
 }
 
+type IndexCheckPayload struct {
+	CheckID string `json:"check_id"`
+}
+
 func NewGenerateTask(genID, domainID string, forceStep string) *asynq.Task {
 	payload, _ := json.Marshal(GeneratePayload{
 		GenerationID: genID,
@@ -52,6 +57,11 @@ func NewSchedulerTickTask() *asynq.Task {
 func NewLinkTaskTask(taskID string) *asynq.Task {
 	payload, _ := json.Marshal(LinkTaskPayload{TaskID: taskID})
 	return asynq.NewTask(TaskProcessLink, payload, asynq.MaxRetry(5))
+}
+
+func NewIndexCheckTask(checkID string) *asynq.Task {
+	payload, _ := json.Marshal(IndexCheckPayload{CheckID: checkID})
+	return asynq.NewTask(TaskProcessIndex, payload, asynq.MaxRetry(0))
 }
 
 type Enqueuer interface {
@@ -162,6 +172,17 @@ func ParseLinkTaskPayload(task *asynq.Task) (LinkTaskPayload, error) {
 	}
 	if p.TaskID == "" {
 		return p, fmt.Errorf("missing task id")
+	}
+	return p, nil
+}
+
+func ParseIndexCheckPayload(task *asynq.Task) (IndexCheckPayload, error) {
+	var p IndexCheckPayload
+	if err := json.Unmarshal(task.Payload(), &p); err != nil {
+		return p, fmt.Errorf("invalid payload: %w", err)
+	}
+	if strings.TrimSpace(p.CheckID) == "" {
+		return p, fmt.Errorf("missing check id")
 	}
 	return p, nil
 }

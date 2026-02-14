@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 	"go.uber.org/zap"
 
@@ -1979,11 +1980,27 @@ func (s *stubGenerationStore) Get(ctx context.Context, id string) (sqlstore.Gene
 	return sqlstore.Generation{}, errors.New("not found")
 }
 
-type stubEnqueuer struct{}
+type stubEnqueuer struct {
+	mu        sync.Mutex
+	calls     []string
+	failTypes map[string]error
+}
 
-func newStubEnqueuer() tasks.Enqueuer { return &stubEnqueuer{} }
+func newStubEnqueuer() tasks.Enqueuer {
+	return &stubEnqueuer{
+		calls:     make([]string, 0),
+		failTypes: make(map[string]error),
+	}
+}
 
 func (s *stubEnqueuer) Enqueue(ctx context.Context, task *asynq.Task, opts ...asynq.Option) (*asynq.TaskInfo, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	taskType := task.Type()
+	s.calls = append(s.calls, taskType)
+	if err, ok := s.failTypes[taskType]; ok && err != nil {
+		return nil, err
+	}
 	return &asynq.TaskInfo{ID: "stub"}, nil
 }
 
@@ -2563,7 +2580,7 @@ type stubIndexCheckStore struct {
 	domainURL       map[string]string
 	errGetByDomain  error
 	errCreate       error
-	errReset        error
+	errUpsert       error
 	errListDomain   error
 	errListProject  error
 	errListAll      error
@@ -2595,6 +2612,38 @@ func (s *stubIndexCheckStore) Create(ctx context.Context, check sqlstore.IndexCh
 	}
 	s.checks[check.ID] = check
 	return nil
+}
+
+func (s *stubIndexCheckStore) UpsertManualByDomainAndDate(ctx context.Context, domainID string, date, now time.Time) (sqlstore.IndexCheck, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.errUpsert != nil {
+		return sqlstore.IndexCheck{}, false, s.errUpsert
+	}
+	for id, check := range s.checks {
+		if check.DomainID == domainID && check.CheckDate.Equal(date) {
+			check.Status = "pending"
+			check.Attempts = 0
+			check.IsIndexed = sql.NullBool{}
+			check.ErrorMessage = sql.NullString{}
+			check.LastAttemptAt = sql.NullTime{}
+			check.CompletedAt = sql.NullTime{}
+			check.NextRetryAt = sql.NullTime{Time: now, Valid: true}
+			s.checks[id] = check
+			return check, false, nil
+		}
+	}
+	check := sqlstore.IndexCheck{
+		ID:          "check-" + uuid.NewString(),
+		DomainID:    domainID,
+		CheckDate:   date,
+		Status:      "pending",
+		Attempts:    0,
+		NextRetryAt: sql.NullTime{Time: now, Valid: true},
+		CreatedAt:   now,
+	}
+	s.checks[check.ID] = check
+	return check, true, nil
 }
 
 func (s *stubIndexCheckStore) Get(ctx context.Context, checkID string) (*sqlstore.IndexCheck, error) {
@@ -2774,27 +2823,6 @@ func (s *stubIndexCheckStore) CountFailed(ctx context.Context, filters sqlstore.
 		count++
 	}
 	return count, nil
-}
-
-func (s *stubIndexCheckStore) ResetForManual(ctx context.Context, checkID string, nextRetry time.Time) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.errReset != nil {
-		return s.errReset
-	}
-	check, ok := s.checks[checkID]
-	if !ok {
-		return sql.ErrNoRows
-	}
-	check.Status = "pending"
-	check.Attempts = 0
-	check.IsIndexed = sql.NullBool{}
-	check.ErrorMessage = sql.NullString{}
-	check.LastAttemptAt = sql.NullTime{}
-	check.CompletedAt = sql.NullTime{}
-	check.NextRetryAt = sql.NullTime{Time: nextRetry, Valid: true}
-	s.checks[checkID] = check
-	return nil
 }
 
 func (s *stubIndexCheckStore) AggregateStats(ctx context.Context, filters sqlstore.IndexCheckFilters) (sqlstore.IndexCheckStats, error) {

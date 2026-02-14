@@ -16,21 +16,28 @@ import (
 	"obzornik-pbn-generator/internal/store/sqlstore"
 )
 
+const defaultStaleCheckingTimeout = 20 * time.Minute
+
 // ProjectStore описывает доступ к проектам для index checker worker.
 type ProjectStore interface {
 	ListAll(ctx context.Context) ([]sqlstore.Project, error)
+	GetByID(ctx context.Context, id string) (sqlstore.Project, error)
 }
 
 // DomainStore описывает доступ к доменам для index checker worker.
 type DomainStore interface {
 	ListByProject(ctx context.Context, projectID string) ([]sqlstore.Domain, error)
+	Get(ctx context.Context, id string) (sqlstore.Domain, error)
 }
 
 // IndexCheckStore описывает доступ к проверкам индексации для index checker worker.
 type IndexCheckStore interface {
 	Create(ctx context.Context, check sqlstore.IndexCheck) error
+	Get(ctx context.Context, checkID string) (*sqlstore.IndexCheck, error)
 	GetByDomainAndDate(ctx context.Context, domainID string, date time.Time) (*sqlstore.IndexCheck, error)
 	ListPendingRetries(ctx context.Context) ([]sqlstore.IndexCheck, error)
+	ListStaleChecking(ctx context.Context, olderThan time.Time) ([]sqlstore.IndexCheck, error)
+	TryMarkChecking(ctx context.Context, checkID string) (bool, sqlstore.IndexCheck, error)
 	UpdateStatus(ctx context.Context, checkID string, status string, isIndexed *bool, errMsg *string) error
 	IncrementAttempts(ctx context.Context, checkID string) error
 	SetNextRetry(ctx context.Context, checkID string, nextRetry time.Time) error
@@ -41,10 +48,18 @@ type CheckHistoryStore interface {
 	Create(ctx context.Context, history sqlstore.CheckHistory) error
 }
 
+// ProcessCheckResult возвращает результат одиночной проверки.
+type ProcessCheckResult struct {
+	Started bool
+	Status  string
+	Skipped string
+}
+
 // RunIndexCheckerTick выполняет одну итерацию index checker.
 func RunIndexCheckerTick(
 	ctx context.Context,
 	now time.Time,
+	staleTimeout time.Duration,
 	projectStore ProjectStore,
 	domainStore DomainStore,
 	checkStore IndexCheckStore,
@@ -61,20 +76,22 @@ func RunIndexCheckerTick(
 	if logger == nil {
 		logger = zap.NewNop().Sugar()
 	}
+	if staleTimeout <= 0 {
+		staleTimeout = defaultStaleCheckingTimeout
+	}
+
+	if err := failStaleChecks(ctx, now, staleTimeout, checkStore, historyStore, logger); err != nil {
+		logger.Errorf("index checker: stale checks pre-step failed: %v", err)
+	}
 
 	today := dateOnlyUTC(now)
-
 	projects, err := projectStore.ListAll(ctx)
 	if err != nil {
 		return fmt.Errorf("list projects: %w", err)
 	}
-	projectByID := make(map[string]sqlstore.Project, len(projects))
-	for _, p := range projects {
-		projectByID[p.ID] = p
-	}
 
-	domainByID := make(map[string]sqlstore.Domain)
 	dueChecks := make(map[string]sqlstore.IndexCheck)
+	gatherErrors := 0
 
 	for _, p := range projects {
 		if ctx.Err() != nil {
@@ -82,14 +99,12 @@ func RunIndexCheckerTick(
 		}
 		domains, err := domainStore.ListByProject(ctx, p.ID)
 		if err != nil {
-			return fmt.Errorf("list domains for project %s: %w", p.ID, err)
+			logger.Errorf("index checker: list domains failed for project %s: %v", p.ID, err)
+			gatherErrors++
+			continue
 		}
 		for _, d := range domains {
-			domainByID[d.ID] = d
-			if !isDomainPublished(d) {
-				continue
-			}
-			if strings.TrimSpace(d.URL) == "" {
+			if !isDomainPublished(d) || strings.TrimSpace(d.URL) == "" {
 				continue
 			}
 			check, err := checkStore.GetByDomainAndDate(ctx, d.ID, today)
@@ -104,14 +119,29 @@ func RunIndexCheckerTick(
 						CreatedAt: now.UTC(),
 					}
 					if err := checkStore.Create(ctx, newCheck); err != nil {
-						return fmt.Errorf("create index check: %w", err)
+						if isUniqueViolation(err) {
+							existing, getErr := checkStore.GetByDomainAndDate(ctx, d.ID, today)
+							if getErr != nil {
+								logger.Errorf("index checker: load existing check failed for domain %s: %v", d.ID, getErr)
+								gatherErrors++
+								continue
+							}
+							check = existing
+						} else {
+							logger.Errorf("index checker: create check failed for domain %s: %v", d.ID, err)
+							gatherErrors++
+							continue
+						}
+					} else {
+						check = &newCheck
 					}
-					check = &newCheck
 				} else {
-					return fmt.Errorf("get index check: %w", err)
+					logger.Errorf("index checker: get check failed for domain %s: %v", d.ID, err)
+					gatherErrors++
+					continue
 				}
 			}
-			if isDuePending(*check, now) {
+			if check != nil && isDuePending(*check, now) {
 				dueChecks[check.ID] = *check
 			}
 		}
@@ -125,31 +155,99 @@ func RunIndexCheckerTick(
 		dueChecks[check.ID] = check
 	}
 
+	var (
+		processed int
+		successes int
+		failures  int
+		skipped   int
+		runErrors int
+	)
 	for _, check := range dueChecks {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		domain, ok := domainByID[check.DomainID]
-		if !ok {
-			logger.Warnf("domain %s not found for check %s", check.DomainID, check.ID)
+		processed++
+		result, err := ProcessCheckByID(ctx, now, check.ID, projectStore, domainStore, checkStore, historyStore, checker, logger)
+		if err != nil {
+			runErrors++
+			logger.Errorf("index checker: process check %s failed: %v", check.ID, err)
 			continue
 		}
-		if !isDomainPublished(domain) {
-			logger.Warnf("domain %s is not published for check %s", check.DomainID, check.ID)
+		if !result.Started {
+			skipped++
 			continue
 		}
-		if strings.TrimSpace(domain.URL) == "" {
-			logger.Warnf("domain url is empty for check %s", check.ID)
-			continue
-		}
-		project := projectByID[domain.ProjectID]
-		geo := resolveGeo(domain, project)
-		if err := processCheck(ctx, now, check, domain.URL, geo, checkStore, historyStore, checker, logger); err != nil {
-			return err
+		switch result.Status {
+		case "success":
+			successes++
+		case "failed_investigation":
+			failures++
+		default:
+			// checking = retry scheduled
 		}
 	}
 
+	logger.Infow(
+		"index checker tick summary",
+		"processed", processed,
+		"success", successes,
+		"failed", failures,
+		"skipped", skipped,
+		"errors", runErrors+gatherErrors,
+	)
 	return nil
+}
+
+// ProcessCheckByID запускает проверку индексации для конкретного check_id.
+func ProcessCheckByID(
+	ctx context.Context,
+	now time.Time,
+	checkID string,
+	projectStore ProjectStore,
+	domainStore DomainStore,
+	checkStore IndexCheckStore,
+	historyStore CheckHistoryStore,
+	checker IndexChecker,
+	logger *zap.SugaredLogger,
+) (ProcessCheckResult, error) {
+	if checker == nil {
+		return ProcessCheckResult{}, errors.New("index checker is required")
+	}
+	check, err := checkStore.Get(ctx, checkID)
+	if err != nil {
+		return ProcessCheckResult{}, fmt.Errorf("load check: %w", err)
+	}
+
+	domain, err := domainStore.Get(ctx, check.DomainID)
+	if err != nil {
+		return ProcessCheckResult{}, fmt.Errorf("load domain: %w", err)
+	}
+	if !isDomainPublished(domain) {
+		return ProcessCheckResult{Started: false, Skipped: "domain_not_published"}, nil
+	}
+	if strings.TrimSpace(domain.URL) == "" {
+		return ProcessCheckResult{Started: false, Skipped: "domain_url_empty"}, nil
+	}
+
+	project, err := projectStore.GetByID(ctx, domain.ProjectID)
+	if err != nil {
+		return ProcessCheckResult{}, fmt.Errorf("load project: %w", err)
+	}
+
+	started, current, err := checkStore.TryMarkChecking(ctx, check.ID)
+	if err != nil {
+		return ProcessCheckResult{}, fmt.Errorf("mark checking: %w", err)
+	}
+	if !started {
+		return ProcessCheckResult{Started: false, Skipped: "already_in_progress"}, nil
+	}
+
+	geo := resolveGeo(domain, project)
+	status, err := processCheck(ctx, now, current, domain.URL, geo, checkStore, historyStore, checker, logger)
+	if err != nil {
+		return ProcessCheckResult{}, err
+	}
+	return ProcessCheckResult{Started: true, Status: status}, nil
 }
 
 func processCheck(
@@ -162,7 +260,7 @@ func processCheck(
 	historyStore CheckHistoryStore,
 	checker IndexChecker,
 	logger *zap.SugaredLogger,
-) error {
+) (string, error) {
 	startedAt := time.Now()
 	indexed, err := checker.Check(ctx, domain, geo)
 	duration := time.Since(startedAt)
@@ -172,7 +270,7 @@ func processCheck(
 	if err == nil {
 		payload, encErr := json.Marshal(map[string]any{"indexed": indexed})
 		if encErr != nil {
-			return fmt.Errorf("encode response data: %w", encErr)
+			return "", fmt.Errorf("encode response data: %w", encErr)
 		}
 		history := sqlstore.CheckHistory{
 			ID:            uuid.NewString(),
@@ -184,15 +282,15 @@ func processCheck(
 			DurationMS:    durationMS,
 		}
 		if err := historyStore.Create(ctx, history); err != nil {
-			return fmt.Errorf("create check history: %w", err)
+			return "", fmt.Errorf("create check history: %w", err)
 		}
 		if err := checkStore.IncrementAttempts(ctx, check.ID); err != nil {
-			return fmt.Errorf("increment attempts: %w", err)
+			return "", fmt.Errorf("increment attempts: %w", err)
 		}
 		if err := checkStore.UpdateStatus(ctx, check.ID, "success", &indexed, nil); err != nil {
-			return fmt.Errorf("update index check status: %w", err)
+			return "", fmt.Errorf("update index check status: %w", err)
 		}
-		return nil
+		return "success", nil
 	}
 
 	errMsg := err.Error()
@@ -207,29 +305,76 @@ func processCheck(
 		DurationMS:    durationMS,
 	}
 	if err := historyStore.Create(ctx, history); err != nil {
-		return fmt.Errorf("create check history: %w", err)
+		return "", fmt.Errorf("create check history: %w", err)
 	}
 	if err := checkStore.IncrementAttempts(ctx, check.ID); err != nil {
-		return fmt.Errorf("increment attempts: %w", err)
+		return "", fmt.Errorf("increment attempts: %w", err)
 	}
 	check.Attempts++
 
 	if ShouldRetry(check) {
 		nextRetry := now.Add(CalculateNextRetry(check.Attempts))
 		if err := checkStore.SetNextRetry(ctx, check.ID, nextRetry); err != nil {
-			return fmt.Errorf("set next retry: %w", err)
+			return "", fmt.Errorf("set next retry: %w", err)
 		}
 		if err := checkStore.UpdateStatus(ctx, check.ID, "checking", nil, &errMsg); err != nil {
-			return fmt.Errorf("update index check status: %w", err)
+			return "", fmt.Errorf("update index check status: %w", err)
 		}
-		return nil
+		return "checking", nil
 	}
 
 	if err := checkStore.UpdateStatus(ctx, check.ID, "failed_investigation", nil, &errMsg); err != nil {
-		return fmt.Errorf("update index check status: %w", err)
+		return "", fmt.Errorf("update index check status: %w", err)
 	}
 	if logger != nil {
 		logger.Warnf("index check %s failed without retry: %s", check.ID, errMsg)
+	}
+	return "failed_investigation", nil
+}
+
+func failStaleChecks(
+	ctx context.Context,
+	now time.Time,
+	staleTimeout time.Duration,
+	checkStore IndexCheckStore,
+	historyStore CheckHistoryStore,
+	logger *zap.SugaredLogger,
+) error {
+	olderThan := now.Add(-staleTimeout)
+	staleChecks, err := checkStore.ListStaleChecking(ctx, olderThan)
+	if err != nil {
+		return fmt.Errorf("list stale checking: %w", err)
+	}
+
+	for _, check := range staleChecks {
+		msg := "stale checking timeout"
+		attempt := check.Attempts
+		if attempt < 1 {
+			attempt = 1
+		}
+		history := sqlstore.CheckHistory{
+			ID:            uuid.NewString(),
+			CheckID:       check.ID,
+			AttemptNumber: attempt,
+			Result:        sqlstore.NullableString("failed_investigation"),
+			ErrorMessage:  sqlstore.NullableString(msg),
+			DurationMS:    sql.NullInt64{},
+		}
+		if err := historyStore.Create(ctx, history); err != nil {
+			if logger != nil {
+				logger.Errorf("index checker: stale history create failed for %s: %v", check.ID, err)
+			}
+			continue
+		}
+		if err := checkStore.UpdateStatus(ctx, check.ID, "failed_investigation", nil, &msg); err != nil {
+			if logger != nil {
+				logger.Errorf("index checker: stale status update failed for %s: %v", check.ID, err)
+			}
+			continue
+		}
+		if logger != nil {
+			logger.Warnf("index checker: check %s marked failed_investigation due to stale checking", check.ID)
+		}
 	}
 	return nil
 }
@@ -281,4 +426,12 @@ func isDomainPublished(d sqlstore.Domain) bool {
 		return true
 	}
 	return strings.EqualFold(strings.TrimSpace(d.Status), "published")
+}
+
+func isUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "duplicate key value") || strings.Contains(text, "unique constraint")
 }
