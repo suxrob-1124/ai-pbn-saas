@@ -34,7 +34,7 @@ func TestProjectQueueList(t *testing.T) {
 		ID:        "domain-queue",
 		ProjectID: project.ID,
 		URL:       "example.com",
-		Status:    "waiting",
+		Status:    "published",
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),
 	}

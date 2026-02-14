@@ -165,8 +165,7 @@ func (s *GenQueueSQLStore) ListByProjectPage(ctx context.Context, projectID stri
 		FROM generation_queue q
 		JOIN domains d ON d.id = q.domain_id
 		WHERE d.project_id=$1
-			AND q.status IN ('pending','queued')
-			AND LOWER(TRIM(d.status))='waiting'`
+			AND q.status IN ('pending','queued')`
 	args := []interface{}{projectID}
 	if term := strings.TrimSpace(search); term != "" {
 		query += fmt.Sprintf(" AND (LOWER(COALESCE(d.url, '')) LIKE $%d OR LOWER(q.domain_id) LIKE $%d)", len(args)+1, len(args)+1)

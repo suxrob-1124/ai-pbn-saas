@@ -4606,19 +4606,14 @@ func (s *Server) handleProjectQueue(w http.ResponseWriter, r *http.Request, proj
 		return
 	}
 	domainMap := map[string]string{}
-	domainByID := map[string]sqlstore.Domain{}
 	if domains, err := s.domains.ListByProject(r.Context(), projectID); err == nil {
 		for _, d := range domains {
 			domainMap[d.ID] = d.URL
-			domainByID[d.ID] = d
 		}
 	}
 	resp := make([]queueItemDTO, 0, len(items))
 	for _, item := range items {
 		if item.Status != "pending" && item.Status != "queued" {
-			continue
-		}
-		if domain, ok := domainByID[item.DomainID]; ok && !isDomainWaiting(domain) {
 			continue
 		}
 		dto := toQueueItemDTO(item)

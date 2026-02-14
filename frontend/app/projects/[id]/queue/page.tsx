@@ -24,7 +24,7 @@ const STATUS_LABELS: Record<string, string> = {
 const historyStatusOptions = ["all", "completed", "failed"];
 const HISTORY_STATUS_LABELS: Record<string, string> = {
   all: "Все",
-  completed: "Завершено",
+  completed: "Обработано",
   failed: "Ошибка"
 };
 
@@ -915,7 +915,7 @@ export default function ProjectQueuePage() {
                   <th className="py-2 pr-4">Запланировано</th>
                   <th className="py-2 pr-4">Завершено</th>
                   <th className="py-2 pr-4">Статус</th>
-                  <th className="py-2 pr-4">Ошибка</th>
+                  <th className="py-2 pr-4">Детали</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
@@ -937,10 +937,10 @@ export default function ProjectQueuePage() {
                       </td>
                       <td className="py-3 pr-4">{HISTORY_STATUS_LABELS[item.status] || item.status}</td>
                       <td
-                        className={`py-3 pr-4 max-w-xs truncate ${item.error_message ? "text-red-500" : "text-slate-500 dark:text-slate-400"}`}
-                        title={item.error_message || "—"}
+                        className={`py-3 pr-4 max-w-xs truncate ${item.status === "failed" && item.error_message ? "text-red-500" : "text-slate-500 dark:text-slate-400"}`}
+                        title={formatQueueHistoryDetails(item)}
                       >
-                        {item.error_message || "—"}
+                        {formatQueueHistoryDetails(item)}
                       </td>
                     </tr>
                   );
@@ -974,6 +974,17 @@ export default function ProjectQueuePage() {
       )}
     </div>
   );
+}
+
+function formatQueueHistoryDetails(item: QueueItemDTO): string {
+  const text = (item.error_message || "").trim();
+  if (!text) {
+    return "—";
+  }
+  if (item.status === "completed" && text.toLowerCase() === "generation enqueued") {
+    return "Поставлено в генерацию";
+  }
+  return text;
 }
 
 function LinkTaskStatusBadge({ status }: { status: string }) {
