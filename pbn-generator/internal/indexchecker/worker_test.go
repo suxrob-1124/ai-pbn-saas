@@ -480,3 +480,129 @@ func TestProcessCheckByIDNoDuplicateStart(t *testing.T) {
 		t.Fatalf("expected second run skipped, got %#v", second)
 	}
 }
+
+func TestProcessCheckByIDUnpublishedDomainTerminatesCheck(t *testing.T) {
+	now := time.Now().UTC()
+	projectStore := &stubProjectStore{
+		projects: []sqlstore.Project{},
+		byID:     map[string]sqlstore.Project{},
+	}
+	domain := sqlstore.Domain{
+		ID:        "dom-1",
+		ProjectID: "proj-1",
+		URL:       "example.com",
+		Status:    "waiting",
+	}
+	domainStore := &stubDomainStore{
+		byProject: map[string][]sqlstore.Domain{},
+		byID:      map[string]sqlstore.Domain{domain.ID: domain},
+	}
+	checkStore := newStubIndexCheckStore()
+	checkStore.checks["check-1"] = sqlstore.IndexCheck{
+		ID:        "check-1",
+		DomainID:  domain.ID,
+		CheckDate: dateOnlyUTC(now),
+		Status:    "pending",
+		CreatedAt: now.Add(-time.Hour),
+	}
+	historyStore := &stubHistoryStore{}
+	checker := &stubChecker{defaultIndexed: true}
+
+	result, err := ProcessCheckByID(
+		context.Background(),
+		now,
+		"check-1",
+		projectStore,
+		domainStore,
+		checkStore,
+		historyStore,
+		checker,
+		zap.NewNop().Sugar(),
+	)
+	if err != nil {
+		t.Fatalf("process failed: %v", err)
+	}
+	if !result.Started || result.Status != "failed_investigation" {
+		t.Fatalf("expected terminal failed_investigation, got %#v", result)
+	}
+	check := checkStore.checks["check-1"]
+	if check.Status != "failed_investigation" {
+		t.Fatalf("expected failed_investigation status, got %s", check.Status)
+	}
+	if check.Attempts != 1 {
+		t.Fatalf("expected attempts=1, got %d", check.Attempts)
+	}
+	if len(historyStore.created) != 1 {
+		t.Fatalf("expected 1 history record, got %d", len(historyStore.created))
+	}
+	entry := historyStore.created[0]
+	if !entry.Result.Valid || entry.Result.String != "failed_investigation" {
+		t.Fatalf("unexpected history result: %#v", entry.Result)
+	}
+	if !entry.ErrorMessage.Valid || entry.ErrorMessage.String != "domain is not published" {
+		t.Fatalf("unexpected history error message: %#v", entry.ErrorMessage)
+	}
+}
+
+func TestProcessCheckByIDEmptyDomainURLTerminatesCheck(t *testing.T) {
+	now := time.Now().UTC()
+	projectStore := &stubProjectStore{
+		projects: []sqlstore.Project{},
+		byID:     map[string]sqlstore.Project{},
+	}
+	domain := sqlstore.Domain{
+		ID:        "dom-1",
+		ProjectID: "proj-1",
+		URL:       "   ",
+		Status:    "published",
+	}
+	domainStore := &stubDomainStore{
+		byProject: map[string][]sqlstore.Domain{},
+		byID:      map[string]sqlstore.Domain{domain.ID: domain},
+	}
+	checkStore := newStubIndexCheckStore()
+	checkStore.checks["check-1"] = sqlstore.IndexCheck{
+		ID:        "check-1",
+		DomainID:  domain.ID,
+		CheckDate: dateOnlyUTC(now),
+		Status:    "pending",
+		CreatedAt: now.Add(-time.Hour),
+	}
+	historyStore := &stubHistoryStore{}
+	checker := &stubChecker{defaultIndexed: true}
+
+	result, err := ProcessCheckByID(
+		context.Background(),
+		now,
+		"check-1",
+		projectStore,
+		domainStore,
+		checkStore,
+		historyStore,
+		checker,
+		zap.NewNop().Sugar(),
+	)
+	if err != nil {
+		t.Fatalf("process failed: %v", err)
+	}
+	if !result.Started || result.Status != "failed_investigation" {
+		t.Fatalf("expected terminal failed_investigation, got %#v", result)
+	}
+	check := checkStore.checks["check-1"]
+	if check.Status != "failed_investigation" {
+		t.Fatalf("expected failed_investigation status, got %s", check.Status)
+	}
+	if check.Attempts != 1 {
+		t.Fatalf("expected attempts=1, got %d", check.Attempts)
+	}
+	if len(historyStore.created) != 1 {
+		t.Fatalf("expected 1 history record, got %d", len(historyStore.created))
+	}
+	entry := historyStore.created[0]
+	if !entry.Result.Valid || entry.Result.String != "failed_investigation" {
+		t.Fatalf("unexpected history result: %#v", entry.Result)
+	}
+	if !entry.ErrorMessage.Valid || entry.ErrorMessage.String != "domain url is empty" {
+		t.Fatalf("unexpected history error message: %#v", entry.ErrorMessage)
+	}
+}

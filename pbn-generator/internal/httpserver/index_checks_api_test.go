@@ -263,8 +263,11 @@ func TestProjectIndexChecksManualRunStoreError(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if resp["skipped"] != 1 {
-		t.Fatalf("expected skipped=1, got %#v", resp)
+	if resp["skipped"] != 0 {
+		t.Fatalf("expected skipped=0, got %#v", resp)
+	}
+	if resp["upsert_failed"] != 1 {
+		t.Fatalf("expected upsert_failed=1, got %#v", resp)
 	}
 	if resp["enqueued"] != 0 || resp["enqueue_failed"] != 0 {
 		t.Fatalf("unexpected enqueue counters: %#v", resp)

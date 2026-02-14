@@ -223,10 +223,24 @@ func ProcessCheckByID(
 		return ProcessCheckResult{}, fmt.Errorf("load domain: %w", err)
 	}
 	if !isDomainPublished(domain) {
-		return ProcessCheckResult{Started: false, Skipped: "domain_not_published"}, nil
+		return failInvalidCheck(
+			ctx,
+			checkStore,
+			historyStore,
+			check.ID,
+			"domain is not published",
+			logger,
+		)
 	}
 	if strings.TrimSpace(domain.URL) == "" {
-		return ProcessCheckResult{Started: false, Skipped: "domain_url_empty"}, nil
+		return failInvalidCheck(
+			ctx,
+			checkStore,
+			historyStore,
+			check.ID,
+			"domain url is empty",
+			logger,
+		)
 	}
 
 	project, err := projectStore.GetByID(ctx, domain.ProjectID)
@@ -248,6 +262,45 @@ func ProcessCheckByID(
 		return ProcessCheckResult{}, err
 	}
 	return ProcessCheckResult{Started: true, Status: status}, nil
+}
+
+func failInvalidCheck(
+	ctx context.Context,
+	checkStore IndexCheckStore,
+	historyStore CheckHistoryStore,
+	checkID string,
+	reason string,
+	logger *zap.SugaredLogger,
+) (ProcessCheckResult, error) {
+	started, current, err := checkStore.TryMarkChecking(ctx, checkID)
+	if err != nil {
+		return ProcessCheckResult{}, fmt.Errorf("mark checking: %w", err)
+	}
+	if !started {
+		return ProcessCheckResult{Started: false, Skipped: "already_in_progress"}, nil
+	}
+	attemptNumber := current.Attempts + 1
+	history := sqlstore.CheckHistory{
+		ID:            uuid.NewString(),
+		CheckID:       current.ID,
+		AttemptNumber: attemptNumber,
+		Result:        sqlstore.NullableString("failed_investigation"),
+		ErrorMessage:  sqlstore.NullableString(reason),
+		DurationMS:    sql.NullInt64{},
+	}
+	if err := historyStore.Create(ctx, history); err != nil {
+		return ProcessCheckResult{}, fmt.Errorf("create check history: %w", err)
+	}
+	if err := checkStore.IncrementAttempts(ctx, current.ID); err != nil {
+		return ProcessCheckResult{}, fmt.Errorf("increment attempts: %w", err)
+	}
+	if err := checkStore.UpdateStatus(ctx, current.ID, "failed_investigation", nil, &reason); err != nil {
+		return ProcessCheckResult{}, fmt.Errorf("update index check status: %w", err)
+	}
+	if logger != nil {
+		logger.Warnf("index check %s terminated: %s", current.ID, reason)
+	}
+	return ProcessCheckResult{Started: true, Status: "failed_investigation"}, nil
 }
 
 func processCheck(

@@ -4896,6 +4896,7 @@ func (s *Server) handleProjectIndexChecks(w http.ResponseWriter, r *http.Request
 		created := 0
 		updated := 0
 		skipped := 0
+		upsertFailed := 0
 		enqueued := 0
 		enqueueFailed := 0
 		for _, d := range domains {
@@ -4909,7 +4910,10 @@ func (s *Server) handleProjectIndexChecks(w http.ResponseWriter, r *http.Request
 			}
 			check, wasCreated, err := s.upsertManualIndexCheck(r.Context(), d.ID, now)
 			if err != nil {
-				skipped++
+				upsertFailed++
+				if s.logger != nil {
+					s.logger.Warnw("project index run: upsert manual check failed", "project_id", projectID, "domain_id", d.ID, "err", err)
+				}
 				continue
 			}
 			if err := s.enqueueIndexCheckRunNow(r.Context(), d, check.ID); err != nil {
@@ -4927,6 +4931,7 @@ func (s *Server) handleProjectIndexChecks(w http.ResponseWriter, r *http.Request
 			"created":        created,
 			"updated":        updated,
 			"skipped":        skipped,
+			"upsert_failed":  upsertFailed,
 			"enqueued":       enqueued,
 			"enqueue_failed": enqueueFailed,
 		})
