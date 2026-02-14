@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -8,6 +9,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"math"
 	"mime"
@@ -129,16 +134,22 @@ type GenQueueStore interface {
 }
 
 type SiteFileStore interface {
+	Create(ctx context.Context, file sqlstore.SiteFile) error
 	Get(ctx context.Context, fileID string) (*sqlstore.SiteFile, error)
 	List(ctx context.Context, domainID string) ([]sqlstore.SiteFile, error)
 	GetByPath(ctx context.Context, domainID, path string) (*sqlstore.SiteFile, error)
 	Update(ctx context.Context, fileID string, content []byte) error
 	Delete(ctx context.Context, fileID string) error
+	Move(ctx context.Context, fileID, newPath string) error
+	SetLastEditedBy(ctx context.Context, fileID string, editedBy sql.NullString) error
 }
 
 type FileEditStore interface {
 	Create(ctx context.Context, edit sqlstore.FileEdit) error
 	ListByFile(ctx context.Context, fileID string, limit int) ([]sqlstore.FileEdit, error)
+	CreateRevision(ctx context.Context, rev sqlstore.FileRevision) error
+	GetRevision(ctx context.Context, revisionID string) (*sqlstore.FileRevision, error)
+	ListRevisionsByFile(ctx context.Context, fileID string, limit int) ([]sqlstore.FileRevision, error)
 }
 
 type LinkTaskStore interface {
@@ -1977,6 +1988,8 @@ func (s *Server) handleDomainActions(w http.ResponseWriter, r *http.Request) {
 		s.handleDomainPrompts(w, r, domainID, stage)
 	case "deployments":
 		s.handleDomainDeployments(w, r, domainID)
+	case "editor":
+		s.handleDomainEditorActions(w, r, domainID, parts[2:])
 	case "":
 		s.handleDomainBase(w, r, domainID)
 	default:
@@ -2290,48 +2303,151 @@ func (s *Server) handleDomainFiles(w http.ResponseWriter, r *http.Request, domai
 		memberRole = role
 	}
 
-	// История файла: /api/domains/:id/files/:fileId/history
-	if len(parts) == 2 && parts[1] == "history" {
-		if !hasProjectPermission(user.Role, memberRole, "viewer") {
-			writeError(w, http.StatusForbidden, "insufficient permissions: viewer role required")
-			return
+	// /api/domains/:id/files
+	if len(parts) == 0 || parts[0] == "" {
+		switch r.Method {
+		case http.MethodGet:
+			if !hasProjectPermission(user.Role, memberRole, "viewer") {
+				writeError(w, http.StatusForbidden, "insufficient permissions: viewer role required")
+				return
+			}
+			files, err := s.siteFiles.List(r.Context(), domainID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "could not list files")
+				return
+			}
+			resp := make([]fileDTO, 0, len(files))
+			for _, f := range files {
+				item := toFileDTO(domain, f)
+				resp = append(resp, item)
+			}
+			writeJSON(w, http.StatusOK, resp)
+		case http.MethodPost:
+			if !hasProjectPermission(user.Role, memberRole, "editor") {
+				writeError(w, http.StatusForbidden, "insufficient permissions: editor role required")
+				return
+			}
+			s.handleCreateDomainFile(w, r, domain, user.Email)
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
-		fileID, err := url.PathUnescape(parts[0])
-		if err != nil || strings.TrimSpace(fileID) == "" {
-			writeError(w, http.StatusBadRequest, "invalid file id")
-			return
-		}
-		s.handleFileHistory(w, r, domain.ID, fileID)
 		return
 	}
 
-	// Список файлов
-	if len(parts) == 0 || parts[0] == "" {
-		if r.Method != http.MethodGet {
+	// /api/domains/:id/files/upload
+	if len(parts) == 1 && strings.EqualFold(parts[0], "upload") {
+		if r.Method != http.MethodPost {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
-		if !hasProjectPermission(user.Role, memberRole, "viewer") {
-			writeError(w, http.StatusForbidden, "insufficient permissions: viewer role required")
+		if !hasProjectPermission(user.Role, memberRole, "editor") {
+			writeError(w, http.StatusForbidden, "insufficient permissions: editor role required")
 			return
 		}
-		files, err := s.siteFiles.List(r.Context(), domainID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "could not list files")
-			return
-		}
-		resp := make([]fileDTO, 0, len(files))
-		for _, f := range files {
-			resp = append(resp, fileDTO{
-				ID:        f.ID,
-				Path:      f.Path,
-				Size:      f.SizeBytes,
-				MimeType:  f.MimeType,
-				UpdatedAt: f.UpdatedAt,
-			})
-		}
-		writeJSON(w, http.StatusOK, resp)
+		s.handleUploadDomainFile(w, r, domain, user.Email)
 		return
+	}
+
+	// suffix маршруты /files/:path/meta|history|revert|ai-suggest
+	if len(parts) >= 2 {
+		last := strings.ToLower(parts[len(parts)-1])
+		switch last {
+		case "meta":
+			if !hasProjectPermission(user.Role, memberRole, "viewer") {
+				writeError(w, http.StatusForbidden, "insufficient permissions: viewer role required")
+				return
+			}
+			rawPath, err := joinURLPath(parts[:len(parts)-1])
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid path")
+				return
+			}
+			cleanPath, err := sanitizeFilePath(rawPath)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid path")
+				return
+			}
+			s.handleFileMeta(w, r, domain, cleanPath)
+			return
+		case "revert":
+			if r.Method != http.MethodPost {
+				writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+				return
+			}
+			if !hasProjectPermission(user.Role, memberRole, "editor") {
+				writeError(w, http.StatusForbidden, "insufficient permissions: editor role required")
+				return
+			}
+			rawPath, err := joinURLPath(parts[:len(parts)-1])
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid path")
+				return
+			}
+			cleanPath, err := sanitizeFilePath(rawPath)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid path")
+				return
+			}
+			s.handleRevertFile(w, r, domain, cleanPath, user.Email)
+			return
+		case "history":
+			if !hasProjectPermission(user.Role, memberRole, "viewer") {
+				writeError(w, http.StatusForbidden, "insufficient permissions: viewer role required")
+				return
+			}
+			// Legacy compatibility: /files/:fileId/history
+			if len(parts) == 2 {
+				rawFirst, err := url.PathUnescape(parts[0])
+				if err == nil {
+					if cleanFirst, serr := sanitizeFilePath(rawFirst); serr == nil {
+						if fileByPath, ferr := s.siteFiles.GetByPath(r.Context(), domain.ID, cleanFirst); ferr == nil && fileByPath != nil {
+							s.handleFileHistoryByPath(w, r, domain.ID, cleanFirst)
+							return
+						}
+					}
+				}
+				fileID := strings.TrimSpace(rawFirst)
+				if fileID == "" {
+					writeError(w, http.StatusBadRequest, "invalid file id")
+					return
+				}
+				s.handleFileHistory(w, r, domain.ID, fileID)
+				return
+			}
+			rawPath, err := joinURLPath(parts[:len(parts)-1])
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid path")
+				return
+			}
+			cleanPath, err := sanitizeFilePath(rawPath)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid path")
+				return
+			}
+			s.handleFileHistoryByPath(w, r, domain.ID, cleanPath)
+			return
+		case "ai-suggest":
+			if r.Method != http.MethodPost {
+				writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+				return
+			}
+			if !hasProjectPermission(user.Role, memberRole, "editor") {
+				writeError(w, http.StatusForbidden, "insufficient permissions: editor role required")
+				return
+			}
+			rawPath, err := joinURLPath(parts[:len(parts)-1])
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid path")
+				return
+			}
+			cleanPath, err := sanitizeFilePath(rawPath)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid path")
+				return
+			}
+			s.handleFileAISuggest(w, r, domain, project, cleanPath, user.Email)
+			return
+		}
 	}
 
 	rawPath, err := joinURLPath(parts)
@@ -2358,15 +2474,165 @@ func (s *Server) handleDomainFiles(w http.ResponseWriter, r *http.Request, domai
 			return
 		}
 		s.handleUpdateFile(w, r, domain, cleanPath, user.Email)
+	case http.MethodPatch:
+		if !hasProjectPermission(user.Role, memberRole, "editor") {
+			writeError(w, http.StatusForbidden, "insufficient permissions: editor role required")
+			return
+		}
+		s.handleMoveFile(w, r, domain, cleanPath)
 	case http.MethodDelete:
-		if !strings.EqualFold(user.Role, "admin") {
-			writeError(w, http.StatusForbidden, "admin only")
+		if !hasProjectPermission(user.Role, memberRole, "editor") {
+			writeError(w, http.StatusForbidden, "insufficient permissions: editor role required")
 			return
 		}
 		s.handleDeleteFile(w, r, domain, cleanPath)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+func (s *Server) handleDomainEditorActions(w http.ResponseWriter, r *http.Request, domainID string, parts []string) {
+	user, ok := currentUserFromContext(r.Context())
+	if !ok || user.Email == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	domain, project, err := s.authorizeDomain(r.Context(), domainID)
+	if err != nil {
+		respondAuthzError(w, err, "domain not found")
+		return
+	}
+	memberRole := ""
+	if !strings.EqualFold(user.Role, "admin") {
+		role, err := s.getProjectMemberRole(r.Context(), project.ID, user.Email)
+		if err != nil {
+			writeError(w, http.StatusForbidden, "access denied")
+			return
+		}
+		memberRole = role
+	}
+	if !hasProjectPermission(user.Role, memberRole, "editor") {
+		writeError(w, http.StatusForbidden, "insufficient permissions: editor role required")
+		return
+	}
+	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if parts[0] != "ai-create-page" || r.Method != http.MethodPost {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if !ensureJSON(w, r) {
+		return
+	}
+	defer r.Body.Close()
+	var body struct {
+		Instruction string `json:"instruction"`
+		TargetPath  string `json:"target_path"`
+		WithAssets  bool   `json:"with_assets"`
+		Model       string `json:"model"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	instruction := strings.TrimSpace(body.Instruction)
+	targetPath := strings.TrimSpace(body.TargetPath)
+	if instruction == "" || targetPath == "" {
+		writeError(w, http.StatusBadRequest, "instruction and target_path are required")
+		return
+	}
+	if !strings.HasSuffix(strings.ToLower(targetPath), ".html") {
+		targetPath += ".html"
+	}
+	cleanTarget, err := sanitizeFilePath(targetPath)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid target_path")
+		return
+	}
+	if err := validateEditorPath(cleanTarget); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	systemPrompt := "Ты помощник редактора сайтов. Верни JSON объект вида {\"files\":[{\"path\":\"...\",\"content\":\"...\",\"mime_type\":\"...\"}],\"warnings\":[]}. Только JSON, без пояснений."
+	promptSource := "fallback"
+	if s.promptOverrides != nil {
+		if resolved, rerr := s.promptOverrides.ResolveForDomainStage(r.Context(), domain.ID, project.ID, "editor_assistant"); rerr == nil && strings.TrimSpace(resolved.Body) != "" {
+			systemPrompt = resolved.Body
+			promptSource = resolved.Source
+		}
+	}
+	selectedModel := strings.TrimSpace(body.Model)
+	withAssets := "false"
+	if body.WithAssets {
+		withAssets = "true"
+	}
+	prompt := llm.BuildPrompt(systemPrompt, "", map[string]string{
+		"instruction": instruction,
+		"target_path": cleanTarget,
+		"domain_url":  domain.URL,
+		"language":    domain.TargetLanguage,
+		"keyword":     domain.MainKeyword,
+		"with_assets": withAssets,
+	})
+	response, tokenUsage, err := s.generateEditorSuggestion(r.Context(), user.Email, project.UserEmail, selectedModel, prompt)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	files := make([]map[string]any, 0)
+	warnings := make([]string, 0)
+	var parsed struct {
+		Files []struct {
+			Path    string `json:"path"`
+			Content string `json:"content"`
+			Mime    string `json:"mime_type"`
+		} `json:"files"`
+		Warnings []string `json:"warnings"`
+	}
+	if err := json.Unmarshal([]byte(response), &parsed); err != nil || len(parsed.Files) == 0 {
+		files = append(files, map[string]any{
+			"path":      cleanTarget,
+			"content":   response,
+			"mime_type": "text/html",
+		})
+		warnings = append(warnings, "LLM вернул не-JSON, использован fallback в один HTML файл")
+	} else {
+		for _, file := range parsed.Files {
+			cleanPath, err := sanitizeFilePath(file.Path)
+			if err != nil {
+				continue
+			}
+			if err := validateEditorPath(cleanPath); err != nil {
+				continue
+			}
+			mimeType := strings.TrimSpace(file.Mime)
+			if mimeType == "" {
+				mimeType = detectMimeType(cleanPath, []byte(file.Content))
+			}
+			files = append(files, map[string]any{
+				"path":      cleanPath,
+				"content":   file.Content,
+				"mime_type": mimeType,
+			})
+		}
+		warnings = append(warnings, parsed.Warnings...)
+	}
+	if len(files) == 0 {
+		writeError(w, http.StatusBadGateway, "could not build files from ai response")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"files":    files,
+		"warnings": warnings,
+		"prompt_trace": map[string]any{
+			"resolved_source": promptSource,
+			"model":           selectedModel,
+		},
+		"token_usage": tokenUsage,
+	})
 }
 
 func (s *Server) handleDomainLinks(w http.ResponseWriter, r *http.Request, domainID string, parts []string) {
@@ -3005,28 +3271,14 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request, domain sq
 		writeError(w, http.StatusInternalServerError, "could not load file")
 		return
 	}
-	domainDir, err := domainFilesDir(domain.URL)
+	content, mimeType, err := s.readDomainFileContent(r.Context(), domain, relPath)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid domain")
-		return
-	}
-	fullPath := filepath.Join(domainDir, filepath.FromSlash(relPath))
-	if err := ensurePathWithin(domainDir, fullPath); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid path")
-		return
-	}
-	content, err := os.ReadFile(fullPath)
-	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "file not found")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "could not read file")
 		return
-	}
-	mimeType := file.MimeType
-	if mimeType == "" {
-		mimeType = detectMimeType(relPath, content)
 	}
 	if r.URL.Query().Get("raw") == "1" {
 		if strings.HasPrefix(mimeType, "text/") && !strings.Contains(strings.ToLower(mimeType), "charset=") {
@@ -3035,13 +3287,224 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request, domain sq
 		w.Header().Set("Content-Type", mimeType)
 		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(content)
+		_, _ = w.Write([]byte(content))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"content":  string(content),
+		"content":  content,
 		"mimeType": mimeType,
+		"version":  file.Version,
 	})
+}
+
+func (s *Server) handleCreateDomainFile(w http.ResponseWriter, r *http.Request, domain sqlstore.Domain, editedBy string) {
+	if !ensureJSON(w, r) {
+		return
+	}
+	defer r.Body.Close()
+	var body struct {
+		Path     string `json:"path"`
+		Kind     string `json:"kind"`
+		Content  string `json:"content"`
+		MimeType string `json:"mime_type"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	kind := strings.ToLower(strings.TrimSpace(body.Kind))
+	if kind == "" {
+		kind = "file"
+	}
+	if kind != "file" && kind != "dir" {
+		writeError(w, http.StatusBadRequest, "kind must be file or dir")
+		return
+	}
+	cleanPath, err := sanitizeFilePath(body.Path)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid path")
+		return
+	}
+	if err := validateEditorPath(cleanPath); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	domainDir, err := domainFilesDir(domain.URL)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid domain")
+		return
+	}
+	fullPath := filepath.Join(domainDir, filepath.FromSlash(cleanPath))
+	if err := ensurePathWithin(domainDir, fullPath); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid path")
+		return
+	}
+	if _, err := os.Stat(fullPath); err == nil {
+		writeError(w, http.StatusConflict, "path already exists")
+		return
+	} else if err != nil && !os.IsNotExist(err) {
+		writeError(w, http.StatusInternalServerError, "could not inspect path")
+		return
+	}
+	if kind == "dir" {
+		if err := os.MkdirAll(fullPath, 0o755); err != nil {
+			writeError(w, http.StatusInternalServerError, "could not create directory")
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{"status": "created", "kind": "dir", "path": cleanPath})
+		return
+	}
+	newBytes := []byte(body.Content)
+	detected := detectMimeType(cleanPath, newBytes)
+	if err := validateMimeType(cleanPath, detected, strings.TrimSpace(body.MimeType)); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not create parent directory")
+		return
+	}
+	if err := os.WriteFile(fullPath, newBytes, 0o644); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not write file")
+		return
+	}
+	hash := sha256.Sum256(newBytes)
+	file := sqlstore.SiteFile{
+		ID:           uuid.NewString(),
+		DomainID:     domain.ID,
+		Path:         cleanPath,
+		ContentHash:  sql.NullString{String: hex.EncodeToString(hash[:]), Valid: true},
+		SizeBytes:    int64(len(newBytes)),
+		MimeType:     detected,
+		Version:      1,
+		LastEditedBy: sqlstore.NullableString(editedBy),
+	}
+	if err := s.siteFiles.Create(r.Context(), file); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not create file metadata")
+		return
+	}
+	_ = s.fileEdits.CreateRevision(r.Context(), buildRevision(&file, newBytes, "manual", editedBy, "file created"))
+	_ = s.fileEdits.Create(r.Context(), sqlstore.FileEdit{
+		ID:               uuid.NewString(),
+		FileID:           file.ID,
+		EditedBy:         editedBy,
+		EditType:         "create",
+		EditDescription:  sql.NullString{String: "file created", Valid: true},
+		ContentAfterHash: sql.NullString{String: hex.EncodeToString(hash[:]), Valid: true},
+	})
+	writeJSON(w, http.StatusCreated, toFileDTO(domain, file))
+}
+
+func (s *Server) handleUploadDomainFile(w http.ResponseWriter, r *http.Request, domain sqlstore.Domain, editedBy string) {
+	const maxUploadBytes = 20 << 20 // 20MB
+	if err := r.ParseMultipartForm(maxUploadBytes); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid multipart form")
+		return
+	}
+	uploaded, header, err := r.FormFile("file")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "file is required")
+		return
+	}
+	defer uploaded.Close()
+	rawPath := strings.TrimSpace(r.FormValue("path"))
+	if strings.HasSuffix(rawPath, "/") || strings.HasSuffix(rawPath, "\\") {
+		rawPath = path.Join(rawPath, header.Filename)
+	}
+	if rawPath == "" {
+		rawPath = header.Filename
+	}
+	cleanPath, err := sanitizeFilePath(rawPath)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid path")
+		return
+	}
+	if err := validateEditorPath(cleanPath); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	content, err := io.ReadAll(io.LimitReader(uploaded, maxUploadBytes+1))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not read upload")
+		return
+	}
+	if int64(len(content)) > maxUploadBytes {
+		writeError(w, http.StatusBadRequest, "file too large")
+		return
+	}
+	domainDir, err := domainFilesDir(domain.URL)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid domain")
+		return
+	}
+	fullPath := filepath.Join(domainDir, filepath.FromSlash(cleanPath))
+	if err := ensurePathWithin(domainDir, fullPath); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid path")
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not create parent directory")
+		return
+	}
+	existing, getErr := s.siteFiles.GetByPath(r.Context(), domain.ID, cleanPath)
+	if getErr != nil && !errors.Is(getErr, sql.ErrNoRows) {
+		writeError(w, http.StatusInternalServerError, "could not load file")
+		return
+	}
+	var oldContent []byte
+	if existing != nil {
+		oldContent, _ = os.ReadFile(fullPath)
+		_ = s.fileEdits.CreateRevision(r.Context(), buildRevision(existing, oldContent, "manual", editedBy, "baseline before upload"))
+	}
+	if err := os.WriteFile(fullPath, content, 0o644); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not save upload")
+		return
+	}
+	detected := detectMimeType(cleanPath, content)
+	if existing == nil {
+		hash := sha256.Sum256(content)
+		file := sqlstore.SiteFile{
+			ID:           uuid.NewString(),
+			DomainID:     domain.ID,
+			Path:         cleanPath,
+			ContentHash:  sql.NullString{String: hex.EncodeToString(hash[:]), Valid: true},
+			SizeBytes:    int64(len(content)),
+			MimeType:     detected,
+			Version:      1,
+			LastEditedBy: sqlstore.NullableString(editedBy),
+		}
+		if err := s.siteFiles.Create(r.Context(), file); err != nil {
+			writeError(w, http.StatusInternalServerError, "could not create file metadata")
+			return
+		}
+		_ = s.fileEdits.CreateRevision(r.Context(), buildRevision(&file, content, "manual", editedBy, "uploaded file"))
+		writeJSON(w, http.StatusCreated, toFileDTO(domain, file))
+		return
+	}
+	if err := s.siteFiles.Update(r.Context(), existing.ID, content); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not update file metadata")
+		return
+	}
+	_ = s.siteFiles.SetLastEditedBy(r.Context(), existing.ID, sqlstore.NullableString(editedBy))
+	updated, _ := s.siteFiles.Get(r.Context(), existing.ID)
+	if updated != nil {
+		_ = s.fileEdits.CreateRevision(r.Context(), buildRevision(updated, content, "manual", editedBy, "uploaded update"))
+	}
+	beforeHash := sha256.Sum256(oldContent)
+	afterHash := sha256.Sum256(content)
+	_ = s.fileEdits.Create(r.Context(), sqlstore.FileEdit{
+		ID:                uuid.NewString(),
+		FileID:            existing.ID,
+		EditedBy:          editedBy,
+		EditType:          "upload_update",
+		ContentBeforeHash: sql.NullString{String: hex.EncodeToString(beforeHash[:]), Valid: len(oldContent) > 0},
+		ContentAfterHash:  sql.NullString{String: hex.EncodeToString(afterHash[:]), Valid: true},
+	})
+	if updated != nil {
+		writeJSON(w, http.StatusOK, toFileDTO(domain, *updated))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "uploaded"})
 }
 
 func (s *Server) handleUpdateFile(w http.ResponseWriter, r *http.Request, domain sqlstore.Domain, relPath, editedBy string) {
@@ -3050,14 +3513,15 @@ func (s *Server) handleUpdateFile(w http.ResponseWriter, r *http.Request, domain
 	}
 	defer r.Body.Close()
 	var body struct {
-		Content     string `json:"content"`
-		Description string `json:"description"`
+		Content         string `json:"content"`
+		Description     string `json:"description"`
+		ExpectedVersion *int   `json:"expected_version"`
+		Source          string `json:"source"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-
 	file, err := s.siteFiles.GetByPath(r.Context(), domain.ID, relPath)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -3067,7 +3531,23 @@ func (s *Server) handleUpdateFile(w http.ResponseWriter, r *http.Request, domain
 		writeError(w, http.StatusInternalServerError, "could not load file")
 		return
 	}
-
+	if body.ExpectedVersion != nil && *body.ExpectedVersion != file.Version {
+		currentHash := ""
+		if file.ContentHash.Valid {
+			currentHash = file.ContentHash.String
+		}
+		resp := map[string]any{
+			"error":           "version conflict",
+			"current_version": file.Version,
+			"current_hash":    currentHash,
+			"updated_at":      file.UpdatedAt,
+		}
+		if file.LastEditedBy.Valid {
+			resp["updated_by"] = file.LastEditedBy.String
+		}
+		writeJSON(w, http.StatusConflict, resp)
+		return
+	}
 	domainDir, err := domainFilesDir(domain.URL)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid domain")
@@ -3078,7 +3558,6 @@ func (s *Server) handleUpdateFile(w http.ResponseWriter, r *http.Request, domain
 		writeError(w, http.StatusBadRequest, "invalid path")
 		return
 	}
-
 	oldContent, err := os.ReadFile(fullPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -3088,14 +3567,13 @@ func (s *Server) handleUpdateFile(w http.ResponseWriter, r *http.Request, domain
 		writeError(w, http.StatusInternalServerError, "could not read file")
 		return
 	}
-
+	_ = s.fileEdits.CreateRevision(r.Context(), buildRevision(file, oldContent, "manual", editedBy, "baseline before update"))
 	newBytes := []byte(body.Content)
 	detected := detectMimeType(relPath, newBytes)
 	if err := validateMimeType(relPath, detected, file.MimeType); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
 		writeError(w, http.StatusInternalServerError, "could not write file")
 		return
@@ -3104,12 +3582,15 @@ func (s *Server) handleUpdateFile(w http.ResponseWriter, r *http.Request, domain
 		writeError(w, http.StatusInternalServerError, "could not write file")
 		return
 	}
-
 	if err := s.siteFiles.Update(r.Context(), file.ID, newBytes); err != nil {
 		writeError(w, http.StatusInternalServerError, "could not update file metadata")
 		return
 	}
-
+	_ = s.siteFiles.SetLastEditedBy(r.Context(), file.ID, sqlstore.NullableString(editedBy))
+	updatedFile, _ := s.siteFiles.Get(r.Context(), file.ID)
+	if updatedFile != nil {
+		_ = s.fileEdits.CreateRevision(r.Context(), buildRevision(updatedFile, newBytes, normalizeRevisionSource(body.Source), editedBy, strings.TrimSpace(body.Description)))
+	}
 	beforeHash := sha256.Sum256(oldContent)
 	afterHash := sha256.Sum256(newBytes)
 	edit := sqlstore.FileEdit{
@@ -3118,7 +3599,7 @@ func (s *Server) handleUpdateFile(w http.ResponseWriter, r *http.Request, domain
 		EditedBy:          editedBy,
 		ContentBeforeHash: sql.NullString{String: hex.EncodeToString(beforeHash[:]), Valid: true},
 		ContentAfterHash:  sql.NullString{String: hex.EncodeToString(afterHash[:]), Valid: true},
-		EditType:          "manual",
+		EditType:          normalizeRevisionSource(body.Source),
 	}
 	if strings.TrimSpace(body.Description) != "" {
 		edit.EditDescription = sql.NullString{String: strings.TrimSpace(body.Description), Valid: true}
@@ -3127,11 +3608,151 @@ func (s *Server) handleUpdateFile(w http.ResponseWriter, r *http.Request, domain
 		writeError(w, http.StatusInternalServerError, "could not log file edit")
 		return
 	}
+	resp := map[string]any{"status": "updated"}
+	if updatedFile != nil {
+		resp["version"] = updatedFile.Version
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+func (s *Server) handleMoveFile(w http.ResponseWriter, r *http.Request, domain sqlstore.Domain, oldPath string) {
+	if !ensureJSON(w, r) {
+		return
+	}
+	defer r.Body.Close()
+	var body struct {
+		Op      string `json:"op"`
+		NewPath string `json:"new_path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if strings.ToLower(strings.TrimSpace(body.Op)) != "move" {
+		writeError(w, http.StatusBadRequest, "op must be move")
+		return
+	}
+	newPath, err := sanitizeFilePath(body.NewPath)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid new_path")
+		return
+	}
+	if err := validateEditorPath(newPath); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if oldPath == newPath {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "moved"})
+		return
+	}
+	domainDir, err := domainFilesDir(domain.URL)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid domain")
+		return
+	}
+	oldFull := filepath.Join(domainDir, filepath.FromSlash(oldPath))
+	newFull := filepath.Join(domainDir, filepath.FromSlash(newPath))
+	if err := ensurePathWithin(domainDir, oldFull); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid path")
+		return
+	}
+	if err := ensurePathWithin(domainDir, newFull); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid new_path")
+		return
+	}
+	if _, err := os.Stat(newFull); err == nil {
+		writeError(w, http.StatusConflict, "destination already exists")
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(newFull), 0o755); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not prepare destination")
+		return
+	}
+	if err := os.Rename(oldFull, newFull); err != nil {
+		if os.IsNotExist(err) {
+			writeError(w, http.StatusNotFound, "file not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not move file")
+		return
+	}
+	if file, err := s.siteFiles.GetByPath(r.Context(), domain.ID, oldPath); err == nil && file != nil {
+		if err := s.siteFiles.Move(r.Context(), file.ID, newPath); err != nil {
+			writeError(w, http.StatusInternalServerError, "could not update file metadata")
+			return
+		}
+	} else {
+		files, err := s.siteFiles.List(r.Context(), domain.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not list files")
+			return
+		}
+		prefix := oldPath + "/"
+		for _, f := range files {
+			if !strings.HasPrefix(f.Path, prefix) {
+				continue
+			}
+			targetPath := newPath + strings.TrimPrefix(f.Path, oldPath)
+			if err := s.siteFiles.Move(r.Context(), f.ID, targetPath); err != nil {
+				writeError(w, http.StatusInternalServerError, "could not move nested file metadata")
+				return
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "moved", "path": newPath})
 }
 
 func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request, domain sqlstore.Domain, relPath string) {
+	domainDir, err := domainFilesDir(domain.URL)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid domain")
+		return
+	}
+	fullPath := filepath.Join(domainDir, filepath.FromSlash(relPath))
+	if err := ensurePathWithin(domainDir, fullPath); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid path")
+		return
+	}
+	if file, err := s.siteFiles.GetByPath(r.Context(), domain.ID, relPath); err == nil && file != nil {
+		if err := os.Remove(fullPath); err != nil && !os.IsNotExist(err) {
+			writeError(w, http.StatusInternalServerError, "could not delete file")
+			return
+		}
+		if err := s.siteFiles.Delete(r.Context(), file.ID); err != nil {
+			writeError(w, http.StatusInternalServerError, "could not delete file metadata")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+		return
+	}
+	info, err := os.Stat(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			writeError(w, http.StatusNotFound, "file not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not inspect path")
+		return
+	}
+	if !info.IsDir() {
+		writeError(w, http.StatusNotFound, "file not found")
+		return
+	}
+	if err := os.RemoveAll(fullPath); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not delete directory")
+		return
+	}
+	files, _ := s.siteFiles.List(r.Context(), domain.ID)
+	prefix := relPath + "/"
+	for _, f := range files {
+		if strings.HasPrefix(f.Path, prefix) {
+			_ = s.siteFiles.Delete(r.Context(), f.ID)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "deleted", "kind": "dir"})
+}
+
+func (s *Server) handleFileMeta(w http.ResponseWriter, r *http.Request, domain sqlstore.Domain, relPath string) {
 	file, err := s.siteFiles.GetByPath(r.Context(), domain.ID, relPath)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -3139,6 +3760,49 @@ func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request, domain
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "could not load file")
+		return
+	}
+	writeJSON(w, http.StatusOK, toFileDTO(domain, *file))
+}
+
+func (s *Server) handleRevertFile(w http.ResponseWriter, r *http.Request, domain sqlstore.Domain, relPath, editedBy string) {
+	if !ensureJSON(w, r) {
+		return
+	}
+	defer r.Body.Close()
+	var body struct {
+		RevisionID  string `json:"revision_id"`
+		Description string `json:"description"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	revisionID := strings.TrimSpace(body.RevisionID)
+	if revisionID == "" {
+		writeError(w, http.StatusBadRequest, "revision_id is required")
+		return
+	}
+	file, err := s.siteFiles.GetByPath(r.Context(), domain.ID, relPath)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "file not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not load file")
+		return
+	}
+	rev, err := s.fileEdits.GetRevision(r.Context(), revisionID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "revision not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not load revision")
+		return
+	}
+	if rev.FileID != file.ID {
+		writeError(w, http.StatusBadRequest, "revision does not belong to file")
 		return
 	}
 	domainDir, err := domainFilesDir(domain.URL)
@@ -3151,15 +3815,125 @@ func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request, domain
 		writeError(w, http.StatusBadRequest, "invalid path")
 		return
 	}
-	if err := os.Remove(fullPath); err != nil && !os.IsNotExist(err) {
-		writeError(w, http.StatusInternalServerError, "could not delete file")
+	oldContent, _ := os.ReadFile(fullPath)
+	_ = s.fileEdits.CreateRevision(r.Context(), buildRevision(file, oldContent, "manual", editedBy, "baseline before revert"))
+	if err := os.WriteFile(fullPath, rev.Content, 0o644); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not write file")
 		return
 	}
-	if err := s.siteFiles.Delete(r.Context(), file.ID); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not delete file metadata")
+	if err := s.siteFiles.Update(r.Context(), file.ID, rev.Content); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not update file metadata")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	_ = s.siteFiles.SetLastEditedBy(r.Context(), file.ID, sqlstore.NullableString(editedBy))
+	updated, _ := s.siteFiles.Get(r.Context(), file.ID)
+	if updated != nil {
+		desc := strings.TrimSpace(body.Description)
+		if desc == "" {
+			desc = fmt.Sprintf("revert to revision %s", revisionID)
+		}
+		_ = s.fileEdits.CreateRevision(r.Context(), buildRevision(updated, rev.Content, "revert", editedBy, desc))
+	}
+	beforeHash := sha256.Sum256(oldContent)
+	afterHash := sha256.Sum256(rev.Content)
+	_ = s.fileEdits.Create(r.Context(), sqlstore.FileEdit{
+		ID:                uuid.NewString(),
+		FileID:            file.ID,
+		EditedBy:          editedBy,
+		EditType:          "revert",
+		EditDescription:   sql.NullString{String: strings.TrimSpace(body.Description), Valid: strings.TrimSpace(body.Description) != ""},
+		ContentBeforeHash: sql.NullString{String: hex.EncodeToString(beforeHash[:]), Valid: len(oldContent) > 0},
+		ContentAfterHash:  sql.NullString{String: hex.EncodeToString(afterHash[:]), Valid: true},
+	})
+	resp := map[string]any{"status": "updated"}
+	if updated != nil {
+		resp["version"] = updated.Version
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleFileAISuggest(w http.ResponseWriter, r *http.Request, domain sqlstore.Domain, project sqlstore.Project, relPath, requesterEmail string) {
+	if !ensureJSON(w, r) {
+		return
+	}
+	defer r.Body.Close()
+	var body struct {
+		Instruction  string   `json:"instruction"`
+		Model        string   `json:"model"`
+		Selection    string   `json:"selection"`
+		ContextFiles []string `json:"context_files"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	instruction := strings.TrimSpace(body.Instruction)
+	if instruction == "" {
+		writeError(w, http.StatusBadRequest, "instruction is required")
+		return
+	}
+	content, mimeType, err := s.readDomainFileContent(r.Context(), domain, relPath)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "file not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not read file")
+		return
+	}
+	systemPrompt := "Ты редактор файлов сайта. Верни только финальную версию файла без пояснений."
+	promptSource := "fallback"
+	if s.promptOverrides != nil {
+		if resolved, rerr := s.promptOverrides.ResolveForDomainStage(r.Context(), domain.ID, project.ID, "editor_assistant"); rerr == nil && strings.TrimSpace(resolved.Body) != "" {
+			systemPrompt = resolved.Body
+			promptSource = resolved.Source
+		}
+	}
+	var ctxText strings.Builder
+	for _, item := range body.ContextFiles {
+		clean, err := sanitizeFilePath(item)
+		if err != nil || clean == relPath {
+			continue
+		}
+		ctxContent, _, err := s.readDomainFileContent(r.Context(), domain, clean)
+		if err != nil {
+			continue
+		}
+		if len(ctxContent) > 8000 {
+			ctxContent = ctxContent[:8000]
+		}
+		ctxText.WriteString("\n\n[CONTEXT FILE] " + clean + "\n" + ctxContent)
+	}
+	selectedModel := strings.TrimSpace(body.Model)
+	prompt := llm.BuildPrompt(systemPrompt, "", map[string]string{
+		"instruction":          instruction,
+		"current_file_path":    relPath,
+		"current_file_content": content,
+		"domain_url":           domain.URL,
+		"language":             domain.TargetLanguage,
+		"keyword":              domain.MainKeyword,
+		"selection":            strings.TrimSpace(body.Selection),
+		"context_files":        ctxText.String(),
+	})
+	suggested, tokenUsage, err := s.generateEditorSuggestion(r.Context(), requesterEmail, project.UserEmail, selectedModel, prompt)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"suggested_content": suggested,
+		"diff_summary": map[string]any{
+			"old_bytes": len(content),
+			"new_bytes": len(suggested),
+		},
+		"warnings": []string{},
+		"prompt_trace": map[string]any{
+			"resolved_source": promptSource,
+			"model":           selectedModel,
+		},
+		"token_usage": tokenUsage,
+		"mime_type":   mimeType,
+	})
 }
 
 func (s *Server) handleFileHistory(w http.ResponseWriter, r *http.Request, domainID, fileID string) {
@@ -3201,6 +3975,55 @@ func (s *Server) handleFileHistory(w http.ResponseWriter, r *http.Request, domai
 		}
 		if e.EditDescription.Valid {
 			item.Description = e.EditDescription.String
+		}
+		resp = append(resp, item)
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleFileHistoryByPath(w http.ResponseWriter, r *http.Request, domainID, relPath string) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	file, err := s.siteFiles.GetByPath(r.Context(), domainID, relPath)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "file not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not load file")
+		return
+	}
+	limit := 50
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 200 {
+			limit = n
+		}
+	}
+	revisions, err := s.fileEdits.ListRevisionsByFile(r.Context(), file.ID, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not list file revisions")
+		return
+	}
+	resp := make([]fileRevisionDTO, 0, len(revisions))
+	for _, rev := range revisions {
+		item := fileRevisionDTO{
+			ID:          rev.ID,
+			FileID:      rev.FileID,
+			Version:     rev.Version,
+			EditedBy:    rev.EditedBy,
+			Source:      rev.Source,
+			ContentHash: rev.ContentHash,
+			SizeBytes:   rev.SizeBytes,
+			MimeType:    rev.MimeType,
+			CreatedAt:   rev.CreatedAt,
+		}
+		if rev.Description.Valid {
+			item.Description = rev.Description.String
+		}
+		if !isBinaryMimeType(rev.MimeType) {
+			item.Content = string(rev.Content)
 		}
 		resp = append(resp, item)
 	}
@@ -6115,11 +6938,17 @@ type domainDTO struct {
 }
 
 type fileDTO struct {
-	ID        string    `json:"id"`
-	Path      string    `json:"path"`
-	Size      int64     `json:"size"`
-	MimeType  string    `json:"mimeType"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	ID           string    `json:"id"`
+	Path         string    `json:"path"`
+	Size         int64     `json:"size"`
+	MimeType     string    `json:"mimeType"`
+	Version      int       `json:"version"`
+	IsEditable   bool      `json:"isEditable"`
+	IsBinary     bool      `json:"isBinary"`
+	Width        *int      `json:"width,omitempty"`
+	Height       *int      `json:"height,omitempty"`
+	LastEditedBy *string   `json:"lastEditedBy,omitempty"`
+	UpdatedAt    time.Time `json:"updatedAt"`
 }
 
 type fileEditDTO struct {
@@ -6128,6 +6957,20 @@ type fileEditDTO struct {
 	EditType    string    `json:"editType"`
 	Description string    `json:"description,omitempty"`
 	CreatedAt   time.Time `json:"createdAt"`
+}
+
+type fileRevisionDTO struct {
+	ID          string    `json:"id"`
+	FileID      string    `json:"file_id"`
+	Version     int       `json:"version"`
+	EditedBy    string    `json:"edited_by"`
+	Source      string    `json:"source"`
+	Description string    `json:"description,omitempty"`
+	ContentHash string    `json:"content_hash"`
+	SizeBytes   int64     `json:"size_bytes"`
+	MimeType    string    `json:"mime_type"`
+	Content     string    `json:"content,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 type linkTaskDTO struct {
@@ -7868,6 +8711,213 @@ func validateMimeType(path string, detected string, existing string) error {
 		return fmt.Errorf("mime type mismatch: expected %s, got %s", baseMimeType(existing), baseMimeType(detected))
 	}
 	return nil
+}
+
+func validateEditorPath(relPath string) error {
+	parts := strings.Split(relPath, "/")
+	for _, part := range parts {
+		p := strings.TrimSpace(part)
+		if p == "" || p == "." || p == ".." {
+			return errors.New("invalid path segment")
+		}
+		if strings.HasPrefix(p, ".") && p != ".well-known" {
+			return errors.New("hidden files are not allowed")
+		}
+		switch strings.ToLower(p) {
+		case ".git", ".gitignore", ".env", ".env.local", ".env.production", ".env.development":
+			return errors.New("protected path is not allowed")
+		}
+	}
+	return nil
+}
+
+func isEditableMimeType(mimeType string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(baseMimeType(mimeType)))
+	if strings.HasPrefix(normalized, "text/") {
+		return true
+	}
+	switch normalized {
+	case "application/json", "application/javascript", "application/xml", "image/svg+xml":
+		return true
+	default:
+		return false
+	}
+}
+
+func isBinaryMimeType(mimeType string) bool {
+	return !isEditableMimeType(mimeType)
+}
+
+func normalizeRevisionSource(source string) string {
+	switch strings.ToLower(strings.TrimSpace(source)) {
+	case "ai":
+		return "ai"
+	case "revert":
+		return "revert"
+	default:
+		return "manual"
+	}
+}
+
+func buildRevision(file *sqlstore.SiteFile, content []byte, source, editedBy, description string) sqlstore.FileRevision {
+	hash := sha256.Sum256(content)
+	rev := sqlstore.FileRevision{
+		ID:          uuid.NewString(),
+		FileID:      "",
+		Version:     1,
+		Content:     content,
+		ContentHash: hex.EncodeToString(hash[:]),
+		SizeBytes:   int64(len(content)),
+		MimeType:    detectMimeType("", content),
+		Source:      normalizeRevisionSource(source),
+		EditedBy:    editedBy,
+	}
+	if file != nil {
+		rev.FileID = file.ID
+		if file.Version > 0 {
+			rev.Version = file.Version
+		}
+		if strings.TrimSpace(file.MimeType) != "" {
+			rev.MimeType = file.MimeType
+		}
+	}
+	if strings.TrimSpace(description) != "" {
+		rev.Description = sqlstore.NullableString(strings.TrimSpace(description))
+	}
+	return rev
+}
+
+func (s *Server) readDomainFileContent(ctx context.Context, domain sqlstore.Domain, relPath string) (string, string, error) {
+	file, err := s.siteFiles.GetByPath(ctx, domain.ID, relPath)
+	if err != nil {
+		return "", "", err
+	}
+	domainDir, err := domainFilesDir(domain.URL)
+	if err != nil {
+		return "", "", err
+	}
+	fullPath := filepath.Join(domainDir, filepath.FromSlash(relPath))
+	if err := ensurePathWithin(domainDir, fullPath); err != nil {
+		return "", "", err
+	}
+	content, err := os.ReadFile(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", "", sql.ErrNoRows
+		}
+		return "", "", err
+	}
+	mimeType := file.MimeType
+	if mimeType == "" {
+		mimeType = detectMimeType(relPath, content)
+	}
+	return string(content), mimeType, nil
+}
+
+func toFileDTO(domain sqlstore.Domain, f sqlstore.SiteFile) fileDTO {
+	item := fileDTO{
+		ID:         f.ID,
+		Path:       f.Path,
+		Size:       f.SizeBytes,
+		MimeType:   f.MimeType,
+		Version:    f.Version,
+		IsEditable: isEditableMimeType(f.MimeType),
+		IsBinary:   isBinaryMimeType(f.MimeType),
+		UpdatedAt:  f.UpdatedAt,
+	}
+	if item.Version <= 0 {
+		item.Version = 1
+	}
+	if f.LastEditedBy.Valid {
+		v := strings.TrimSpace(f.LastEditedBy.String)
+		if v != "" {
+			item.LastEditedBy = &v
+		}
+	}
+	if strings.HasPrefix(strings.ToLower(baseMimeType(f.MimeType)), "image/") {
+		if w, h, ok := detectImageDimensions(domain, f.Path); ok {
+			item.Width = &w
+			item.Height = &h
+		}
+	}
+	return item
+}
+
+func detectImageDimensions(domain sqlstore.Domain, relPath string) (int, int, bool) {
+	domainDir, err := domainFilesDir(domain.URL)
+	if err != nil {
+		return 0, 0, false
+	}
+	fullPath := filepath.Join(domainDir, filepath.FromSlash(relPath))
+	if err := ensurePathWithin(domainDir, fullPath); err != nil {
+		return 0, 0, false
+	}
+	content, err := os.ReadFile(fullPath)
+	if err != nil || len(content) == 0 {
+		return 0, 0, false
+	}
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(content))
+	if err != nil {
+		return 0, 0, false
+	}
+	return cfg.Width, cfg.Height, true
+}
+
+func (s *Server) resolveEditorAPIKey(ctx context.Context, requesterEmail, ownerEmail string) (string, string, error) {
+	tryUser := func(email string) (string, bool) {
+		email = strings.TrimSpace(email)
+		if email == "" {
+			return "", false
+		}
+		encKey, err := s.svc.GetUserAPIKeyEncrypted(ctx, email)
+		if err != nil || len(encKey) == 0 {
+			return "", false
+		}
+		keySecret := secretbox.DeriveKey(s.cfg.APIKeySecret)
+		decrypted, err := secretbox.Decrypt(keySecret, encKey)
+		if err != nil {
+			return "", false
+		}
+		val := strings.TrimSpace(string(decrypted))
+		if val == "" {
+			return "", false
+		}
+		return val, true
+	}
+	if key, ok := tryUser(requesterEmail); ok {
+		return key, "user", nil
+	}
+	if key, ok := tryUser(ownerEmail); ok {
+		return key, "owner", nil
+	}
+	if key := strings.TrimSpace(s.cfg.GeminiAPIKey); key != "" {
+		return key, "global", nil
+	}
+	return "", "", errors.New("gemini api key not configured")
+}
+
+func (s *Server) generateEditorSuggestion(ctx context.Context, requesterEmail, ownerEmail, model, prompt string) (string, map[string]any, error) {
+	apiKey, source, err := s.resolveEditorAPIKey(ctx, requesterEmail, ownerEmail)
+	if err != nil {
+		return "", nil, err
+	}
+	client := llm.NewClient(llm.Config{
+		APIKey:          apiKey,
+		DefaultModel:    s.cfg.GeminiDefaultModel,
+		MaxRetries:      s.cfg.GeminiMaxRetries,
+		RetryDelay:      s.cfg.GeminiRetryDelay,
+		RequestTimeout:  s.cfg.GeminiRequestTimeout,
+		RateLimitPerMin: s.cfg.GeminiRateLimitPerMin,
+	})
+	selectedModel := strings.TrimSpace(model)
+	result, err := client.Generate(ctx, "editor_assistant", prompt, selectedModel)
+	if err != nil {
+		return "", nil, llm.SanitizeError(err)
+	}
+	return strings.TrimSpace(result), map[string]any{
+		"source": source,
+		"model":  selectedModel,
+	}, nil
 }
 
 // requireProjectRole проверяет права доступа к проекту

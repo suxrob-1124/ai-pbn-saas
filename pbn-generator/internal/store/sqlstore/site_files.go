@@ -15,14 +15,16 @@ import (
 
 // SiteFile описывает файл, опубликованный для домена.
 type SiteFile struct {
-	ID          string
-	DomainID    string
-	Path        string
-	ContentHash sql.NullString
-	SizeBytes   int64
-	MimeType    string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID           string
+	DomainID     string
+	Path         string
+	ContentHash  sql.NullString
+	SizeBytes    int64
+	MimeType     string
+	Version      int
+	LastEditedBy sql.NullString
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // SiteFileStore определяет операции над файлами домена.
@@ -33,6 +35,8 @@ type SiteFileStore interface {
 	List(ctx context.Context, domainID string) ([]SiteFile, error)
 	Update(ctx context.Context, fileID string, content []byte) error
 	Delete(ctx context.Context, fileID string) error
+	Move(ctx context.Context, fileID, newPath string) error
+	SetLastEditedBy(ctx context.Context, fileID string, editedBy sql.NullString) error
 	UpdateHash(ctx context.Context, fileID, hash string) error
 }
 
@@ -48,14 +52,20 @@ func NewSiteFileStore(db *sql.DB) *SiteFileSQLStore {
 
 // Create создает запись о файле домена.
 func (s *SiteFileSQLStore) Create(ctx context.Context, file SiteFile) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO site_files(id, domain_id, path, content_hash, size_bytes, mime_type, created_at, updated_at)
-		VALUES($1,$2,$3,$4,$5,$6,NOW(),NOW())`,
+	version := file.Version
+	if version <= 0 {
+		version = 1
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO site_files(id, domain_id, path, content_hash, size_bytes, mime_type, version, last_edited_by, created_at, updated_at)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,NOW(),NOW())`,
 		file.ID,
 		file.DomainID,
 		file.Path,
 		nullableString(file.ContentHash),
 		file.SizeBytes,
 		file.MimeType,
+		version,
+		nullableString(file.LastEditedBy),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create site file: %w", err)
@@ -66,9 +76,9 @@ func (s *SiteFileSQLStore) Create(ctx context.Context, file SiteFile) error {
 // Get возвращает файл по ID.
 func (s *SiteFileSQLStore) Get(ctx context.Context, fileID string) (*SiteFile, error) {
 	var f SiteFile
-	err := s.db.QueryRowContext(ctx, `SELECT id, domain_id, path, content_hash, size_bytes, mime_type, created_at, updated_at
+	err := s.db.QueryRowContext(ctx, `SELECT id, domain_id, path, content_hash, size_bytes, mime_type, version, last_edited_by, created_at, updated_at
 		FROM site_files WHERE id=$1`, fileID).
-		Scan(&f.ID, &f.DomainID, &f.Path, &f.ContentHash, &f.SizeBytes, &f.MimeType, &f.CreatedAt, &f.UpdatedAt)
+		Scan(&f.ID, &f.DomainID, &f.Path, &f.ContentHash, &f.SizeBytes, &f.MimeType, &f.Version, &f.LastEditedBy, &f.CreatedAt, &f.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -78,9 +88,9 @@ func (s *SiteFileSQLStore) Get(ctx context.Context, fileID string) (*SiteFile, e
 // GetByPath возвращает файл по домену и пути.
 func (s *SiteFileSQLStore) GetByPath(ctx context.Context, domainID, path string) (*SiteFile, error) {
 	var f SiteFile
-	err := s.db.QueryRowContext(ctx, `SELECT id, domain_id, path, content_hash, size_bytes, mime_type, created_at, updated_at
+	err := s.db.QueryRowContext(ctx, `SELECT id, domain_id, path, content_hash, size_bytes, mime_type, version, last_edited_by, created_at, updated_at
 		FROM site_files WHERE domain_id=$1 AND path=$2`, domainID, path).
-		Scan(&f.ID, &f.DomainID, &f.Path, &f.ContentHash, &f.SizeBytes, &f.MimeType, &f.CreatedAt, &f.UpdatedAt)
+		Scan(&f.ID, &f.DomainID, &f.Path, &f.ContentHash, &f.SizeBytes, &f.MimeType, &f.Version, &f.LastEditedBy, &f.CreatedAt, &f.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +99,7 @@ func (s *SiteFileSQLStore) GetByPath(ctx context.Context, domainID, path string)
 
 // List возвращает список файлов домена.
 func (s *SiteFileSQLStore) List(ctx context.Context, domainID string) ([]SiteFile, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, domain_id, path, content_hash, size_bytes, mime_type, created_at, updated_at
+	rows, err := s.db.QueryContext(ctx, `SELECT id, domain_id, path, content_hash, size_bytes, mime_type, version, last_edited_by, created_at, updated_at
 		FROM site_files WHERE domain_id=$1 ORDER BY path`, domainID)
 	if err != nil {
 		return nil, err
@@ -98,7 +108,7 @@ func (s *SiteFileSQLStore) List(ctx context.Context, domainID string) ([]SiteFil
 	var res []SiteFile
 	for rows.Next() {
 		var f SiteFile
-		if err := rows.Scan(&f.ID, &f.DomainID, &f.Path, &f.ContentHash, &f.SizeBytes, &f.MimeType, &f.CreatedAt, &f.UpdatedAt); err != nil {
+		if err := rows.Scan(&f.ID, &f.DomainID, &f.Path, &f.ContentHash, &f.SizeBytes, &f.MimeType, &f.Version, &f.LastEditedBy, &f.CreatedAt, &f.UpdatedAt); err != nil {
 			return nil, err
 		}
 		res = append(res, f)
@@ -116,7 +126,7 @@ func (s *SiteFileSQLStore) Update(ctx context.Context, fileID string, content []
 	hashStr := hex.EncodeToString(hash[:])
 	mimeType := detectMimeType(file.Path, content)
 	_, err = s.db.ExecContext(ctx, `UPDATE site_files
-		SET content_hash=$1, size_bytes=$2, mime_type=$3, updated_at=NOW()
+		SET content_hash=$1, size_bytes=$2, mime_type=$3, version = GREATEST(1, version + 1), updated_at=NOW()
 		WHERE id=$4`, hashStr, int64(len(content)), mimeType, fileID)
 	if err != nil {
 		return fmt.Errorf("failed to update site file: %w", err)
@@ -128,6 +138,24 @@ func (s *SiteFileSQLStore) Update(ctx context.Context, fileID string, content []
 func (s *SiteFileSQLStore) Delete(ctx context.Context, fileID string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM site_files WHERE id=$1`, fileID)
 	return err
+}
+
+// Move обновляет путь файла.
+func (s *SiteFileSQLStore) Move(ctx context.Context, fileID, newPath string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE site_files SET path=$1, updated_at=NOW() WHERE id=$2`, newPath, fileID)
+	if err != nil {
+		return fmt.Errorf("failed to move site file: %w", err)
+	}
+	return nil
+}
+
+// SetLastEditedBy обновляет автора последнего изменения файла.
+func (s *SiteFileSQLStore) SetLastEditedBy(ctx context.Context, fileID string, editedBy sql.NullString) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE site_files SET last_edited_by=$1, updated_at=NOW() WHERE id=$2`, nullableString(editedBy), fileID)
+	if err != nil {
+		return fmt.Errorf("failed to set file editor: %w", err)
+	}
+	return nil
 }
 
 // UpdateHash обновляет только хэш файла.

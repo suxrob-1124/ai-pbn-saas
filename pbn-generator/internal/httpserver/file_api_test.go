@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -45,6 +46,9 @@ func (s *memorySiteFileStore) add(file sqlstore.SiteFile) {
 	if file.UpdatedAt.IsZero() {
 		file.UpdatedAt = file.CreatedAt
 	}
+	if file.Version <= 0 {
+		file.Version = 1
+	}
 	s.files[file.ID] = file
 	key := file.DomainID + "::" + file.Path
 	s.byDomainPath[key] = file.ID
@@ -59,6 +63,11 @@ func (s *memorySiteFileStore) Get(ctx context.Context, fileID string) (*sqlstore
 	}
 	copy := file
 	return &copy, nil
+}
+
+func (s *memorySiteFileStore) Create(ctx context.Context, file sqlstore.SiteFile) error {
+	s.add(file)
+	return nil
 }
 
 func (s *memorySiteFileStore) List(ctx context.Context, domainID string) ([]sqlstore.SiteFile, error) {
@@ -102,6 +111,7 @@ func (s *memorySiteFileStore) Update(ctx context.Context, fileID string, content
 	file.ContentHash = sql.NullString{String: hex.EncodeToString(hash[:]), Valid: true}
 	file.SizeBytes = int64(len(content))
 	file.MimeType = detectMimeType(file.Path, content)
+	file.Version++
 	file.UpdatedAt = time.Now().UTC()
 	s.files[fileID] = file
 	return nil
@@ -119,13 +129,45 @@ func (s *memorySiteFileStore) Delete(ctx context.Context, fileID string) error {
 	return nil
 }
 
+func (s *memorySiteFileStore) Move(ctx context.Context, fileID, newPath string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	file, ok := s.files[fileID]
+	if !ok {
+		return sql.ErrNoRows
+	}
+	delete(s.byDomainPath, file.DomainID+"::"+file.Path)
+	file.Path = newPath
+	file.UpdatedAt = time.Now().UTC()
+	s.files[fileID] = file
+	s.byDomainPath[file.DomainID+"::"+newPath] = fileID
+	return nil
+}
+
+func (s *memorySiteFileStore) SetLastEditedBy(ctx context.Context, fileID string, editedBy sql.NullString) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	file, ok := s.files[fileID]
+	if !ok {
+		return sql.ErrNoRows
+	}
+	file.LastEditedBy = editedBy
+	file.UpdatedAt = time.Now().UTC()
+	s.files[fileID] = file
+	return nil
+}
+
 type memoryFileEditStore struct {
-	mu    sync.Mutex
-	edits []sqlstore.FileEdit
+	mu        sync.Mutex
+	edits     []sqlstore.FileEdit
+	revisions map[string]sqlstore.FileRevision
 }
 
 func newMemoryFileEditStore() *memoryFileEditStore {
-	return &memoryFileEditStore{edits: make([]sqlstore.FileEdit, 0)}
+	return &memoryFileEditStore{
+		edits:     make([]sqlstore.FileEdit, 0),
+		revisions: make(map[string]sqlstore.FileRevision),
+	}
 }
 
 func (s *memoryFileEditStore) Create(ctx context.Context, edit sqlstore.FileEdit) error {
@@ -152,6 +194,48 @@ func (s *memoryFileEditStore) ListByFile(ctx context.Context, fileID string, lim
 	}
 	sort.Slice(items, func(i, j int) bool {
 		return items[i].CreatedAt.After(items[j].CreatedAt)
+	})
+	if len(items) > limit {
+		items = items[:limit]
+	}
+	return items, nil
+}
+
+func (s *memoryFileEditStore) CreateRevision(ctx context.Context, rev sqlstore.FileRevision) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.revisions[rev.ID] = rev
+	return nil
+}
+
+func (s *memoryFileEditStore) GetRevision(ctx context.Context, revisionID string) (*sqlstore.FileRevision, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rev, ok := s.revisions[revisionID]
+	if !ok {
+		return nil, sql.ErrNoRows
+	}
+	copy := rev
+	return &copy, nil
+}
+
+func (s *memoryFileEditStore) ListRevisionsByFile(ctx context.Context, fileID string, limit int) ([]sqlstore.FileRevision, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if limit <= 0 {
+		limit = 50
+	}
+	items := make([]sqlstore.FileRevision, 0)
+	for _, rev := range s.revisions {
+		if rev.FileID == fileID {
+			items = append(items, rev)
+		}
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Version == items[j].Version {
+			return items[i].CreatedAt.After(items[j].CreatedAt)
+		}
+		return items[i].Version > items[j].Version
 	})
 	if len(items) > limit {
 		items = items[:limit]
@@ -505,5 +589,105 @@ func TestFileAPI_EditorCanUpdate(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet sqlmock expectations: %v", err)
+	}
+}
+
+func TestFileAPI_CreateMoveHistoryRevertByPath(t *testing.T) {
+	s, _, domainID, domainDir, _ := setupFileAPIDomainFixture(t)
+	adminCtx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: "admin@example.com",
+		Role:  "admin",
+	})
+
+	createBody := `{"path":"pages/about.html","kind":"file","content":"<h1>About</h1>"}`
+	createReq := httptest.NewRequest(http.MethodPost, "/api/domains/"+domainID+"/files", strings.NewReader(createBody)).WithContext(adminCtx)
+	createReq.Header.Set("Content-Type", "application/json")
+	createRec := httptest.NewRecorder()
+	s.handleDomainActions(createRec, createReq)
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("create status: %d %s", createRec.Code, createRec.Body.String())
+	}
+
+	moveBody := `{"op":"move","new_path":"pages/about-us.html"}`
+	moveReq := httptest.NewRequest(http.MethodPatch, "/api/domains/"+domainID+"/files/pages/about.html", strings.NewReader(moveBody)).WithContext(adminCtx)
+	moveReq.Header.Set("Content-Type", "application/json")
+	moveRec := httptest.NewRecorder()
+	s.handleDomainActions(moveRec, moveReq)
+	if moveRec.Code != http.StatusOK {
+		t.Fatalf("move status: %d %s", moveRec.Code, moveRec.Body.String())
+	}
+
+	updateBody := `{"content":"<h1>About v2</h1>","expected_version":1}`
+	updateReq := httptest.NewRequest(http.MethodPut, "/api/domains/"+domainID+"/files/pages/about-us.html", strings.NewReader(updateBody)).WithContext(adminCtx)
+	updateReq.Header.Set("Content-Type", "application/json")
+	updateRec := httptest.NewRecorder()
+	s.handleDomainActions(updateRec, updateReq)
+	if updateRec.Code != http.StatusOK {
+		t.Fatalf("update status: %d %s", updateRec.Code, updateRec.Body.String())
+	}
+
+	historyReq := httptest.NewRequest(http.MethodGet, "/api/domains/"+domainID+"/files/pages/about-us.html/history", nil).WithContext(adminCtx)
+	historyRec := httptest.NewRecorder()
+	s.handleDomainActions(historyRec, historyReq)
+	if historyRec.Code != http.StatusOK {
+		t.Fatalf("history status: %d %s", historyRec.Code, historyRec.Body.String())
+	}
+	var revisions []fileRevisionDTO
+	if err := json.NewDecoder(historyRec.Body).Decode(&revisions); err != nil {
+		t.Fatalf("decode revisions: %v", err)
+	}
+	if len(revisions) == 0 {
+		t.Fatalf("expected revisions")
+	}
+	var revertID string
+	for _, rev := range revisions {
+		if rev.Version == 1 {
+			revertID = rev.ID
+			break
+		}
+	}
+	if revertID == "" {
+		t.Fatalf("could not find version 1 revision")
+	}
+
+	revertBody := fmt.Sprintf(`{"revision_id":"%s","description":"rollback to v1"}`, revertID)
+	revertReq := httptest.NewRequest(http.MethodPost, "/api/domains/"+domainID+"/files/pages/about-us.html/revert", strings.NewReader(revertBody)).WithContext(adminCtx)
+	revertReq.Header.Set("Content-Type", "application/json")
+	revertRec := httptest.NewRecorder()
+	s.handleDomainActions(revertRec, revertReq)
+	if revertRec.Code != http.StatusOK {
+		t.Fatalf("revert status: %d %s", revertRec.Code, revertRec.Body.String())
+	}
+
+	updatedBytes, err := os.ReadFile(filepath.Join(domainDir, "pages", "about-us.html"))
+	if err != nil {
+		t.Fatalf("read reverted file: %v", err)
+	}
+	if string(updatedBytes) != "<h1>About</h1>" {
+		t.Fatalf("unexpected reverted content: %s", string(updatedBytes))
+	}
+}
+
+func TestFileAPI_OptimisticConflict(t *testing.T) {
+	s, _, domainID, _, _ := setupFileAPIDomainFixture(t)
+	adminCtx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: "admin@example.com",
+		Role:  "admin",
+	})
+
+	updateBody := `{"content":"<h1>Conflict</h1>","expected_version":99}`
+	updateReq := httptest.NewRequest(http.MethodPut, "/api/domains/"+domainID+"/files/index.html", strings.NewReader(updateBody)).WithContext(adminCtx)
+	updateReq.Header.Set("Content-Type", "application/json")
+	updateRec := httptest.NewRecorder()
+	s.handleDomainActions(updateRec, updateReq)
+	if updateRec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", updateRec.Code, updateRec.Body.String())
+	}
+	var body map[string]any
+	if err := json.NewDecoder(updateRec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode conflict body: %v", err)
+	}
+	if body["current_version"] == nil {
+		t.Fatalf("expected current_version in conflict body")
 	}
 }

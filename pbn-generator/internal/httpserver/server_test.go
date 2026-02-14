@@ -3529,6 +3529,10 @@ func (s *stubSiteFileStore) Get(ctx context.Context, fileID string) (*sqlstore.S
 	return nil, sql.ErrNoRows
 }
 
+func (s *stubSiteFileStore) Create(ctx context.Context, file sqlstore.SiteFile) error {
+	return nil
+}
+
 func (s *stubSiteFileStore) List(ctx context.Context, domainID string) ([]sqlstore.SiteFile, error) {
 	return []sqlstore.SiteFile{}, nil
 }
@@ -3545,6 +3549,14 @@ func (s *stubSiteFileStore) Delete(ctx context.Context, fileID string) error {
 	return errors.New("not found")
 }
 
+func (s *stubSiteFileStore) Move(ctx context.Context, fileID, newPath string) error {
+	return nil
+}
+
+func (s *stubSiteFileStore) SetLastEditedBy(ctx context.Context, fileID string, editedBy sql.NullString) error {
+	return nil
+}
+
 type stubFileEditStore struct{}
 
 func newStubFileEditStore() *stubFileEditStore {
@@ -3557,4 +3569,16 @@ func (s *stubFileEditStore) Create(ctx context.Context, edit sqlstore.FileEdit) 
 
 func (s *stubFileEditStore) ListByFile(ctx context.Context, fileID string, limit int) ([]sqlstore.FileEdit, error) {
 	return []sqlstore.FileEdit{}, nil
+}
+
+func (s *stubFileEditStore) CreateRevision(ctx context.Context, rev sqlstore.FileRevision) error {
+	return nil
+}
+
+func (s *stubFileEditStore) GetRevision(ctx context.Context, revisionID string) (*sqlstore.FileRevision, error) {
+	return nil, sql.ErrNoRows
+}
+
+func (s *stubFileEditStore) ListRevisionsByFile(ctx context.Context, fileID string, limit int) ([]sqlstore.FileRevision, error) {
+	return []sqlstore.FileRevision{}, nil
 }
