@@ -1,4 +1,4 @@
-import { authFetch } from "./http";
+import { apiBase, authFetch, refreshTokens } from "./http";
 
 export type FileListItem = {
   id: string;
@@ -11,6 +11,9 @@ export type FileListItem = {
   width?: number;
   height?: number;
   lastEditedBy?: string;
+  deletedAt?: string;
+  deletedBy?: string;
+  deleteReason?: string;
   updatedAt: string;
 };
 
@@ -32,6 +35,26 @@ export type SaveFileResponse = {
   status: string;
   version?: number;
 };
+
+export type SaveConflictPayload = {
+  error?: string;
+  current_version?: number;
+  current_hash?: string;
+  updated_by?: string;
+  updated_at?: string;
+};
+
+export class SaveConflictError extends Error {
+  readonly status: number;
+  readonly conflict: SaveConflictPayload;
+
+  constructor(status: number, message: string, conflict: SaveConflictPayload) {
+    super(message);
+    this.name = "SaveConflictError";
+    this.status = status;
+    this.conflict = conflict;
+  }
+}
 
 export type FileMeta = FileListItem;
 
@@ -92,8 +115,9 @@ const encodeFilePath = (value: string) => {
 
 const buildFilesBase = (domainId: string) => `/api/domains/${encodeDomainId(domainId)}/files`;
 
-export async function listFiles(domainId: string): Promise<FileListItem[]> {
-  return authFetch<FileListItem[]>(buildFilesBase(domainId));
+export async function listFiles(domainId: string, opts?: { includeDeleted?: boolean }): Promise<FileListItem[]> {
+  const includeDeleted = opts?.includeDeleted ? "?include_deleted=1" : "";
+  return authFetch<FileListItem[]>(`${buildFilesBase(domainId)}${includeDeleted}`);
 }
 
 export async function getFile(domainId: string, path: string): Promise<FileContent> {
@@ -119,11 +143,38 @@ export async function saveFile(
   if (opts?.source) {
     payload.source = opts.source;
   }
-  return authFetch<SaveFileResponse>(`${buildFilesBase(domainId)}/${encodedPath}`, {
+  const url = `${apiBase()}${buildFilesBase(domainId)}/${encodedPath}`;
+  const init: RequestInit = {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
+    credentials: "include",
+    body: JSON.stringify(payload),
+  };
+
+  let res = await fetch(url, init);
+  if (res.status === 401) {
+    const refreshed = await refreshTokens();
+    if (refreshed) {
+      res = await fetch(url, init);
+    }
+  }
+
+  if (res.ok) {
+    return (await res.json()) as SaveFileResponse;
+  }
+
+  let data: SaveConflictPayload = {};
+  try {
+    data = (await res.json()) as SaveConflictPayload;
+  } catch {
+    data = {};
+  }
+
+  const message = data.error || `${res.status} ${res.statusText}`;
+  if (res.status === 409) {
+    throw new SaveConflictError(res.status, message, data);
+  }
+  throw new Error(message);
 }
 
 export async function getFileHistory(
@@ -163,6 +214,13 @@ export async function deleteFile(domainId: string, path: string) {
   const encodedPath = encodeFilePath(path);
   return authFetch<any>(`${buildFilesBase(domainId)}/${encodedPath}`, {
     method: "DELETE",
+  });
+}
+
+export async function restoreFile(domainId: string, path: string) {
+  const encodedPath = encodeFilePath(path);
+  return authFetch<{ status: string; version?: number }>(`${buildFilesBase(domainId)}/${encodedPath}/restore`, {
+    method: "POST",
   });
 }
 

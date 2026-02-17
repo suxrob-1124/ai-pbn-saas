@@ -19,9 +19,11 @@ import {
 import { EditorToolbar } from "../../../../components/EditorToolbar";
 import { FileHistory } from "../../../../components/FileHistory";
 import { FileTree } from "../../../../components/FileTree";
+import { ConflictResolutionModal } from "../../../../components/ConflictResolutionModal";
 import { MonacoEditor } from "../../../../components/MonacoEditor";
 import { apiBase, authFetch } from "../../../../lib/http";
 import {
+  SaveConflictError,
   aiCreatePage,
   aiSuggestFile,
   createFileOrDir,
@@ -29,6 +31,7 @@ import {
   getFile,
   listFiles,
   moveFile,
+  restoreFile,
   saveFile,
   uploadFile,
   type AIPageSuggestionFile,
@@ -129,6 +132,7 @@ export default function DomainEditorPage() {
 
   const [summary, setSummary] = useState<DomainSummaryResponse | null>(null);
   const [files, setFiles] = useState<EditorFileMeta[]>([]);
+  const [deletedFiles, setDeletedFiles] = useState<EditorFileMeta[]>([]);
   const [selection, setSelection] = useState<EditorSelectionState | null>(null);
   const [dirtyState, setDirtyState] = useState<EditorDirtyState>({
     isDirty: false,
@@ -155,12 +159,19 @@ export default function DomainEditorPage() {
   const [aiCreatePath, setAiCreatePath] = useState("new-page.html");
   const [aiCreateBusy, setAiCreateBusy] = useState(false);
   const [aiCreateFiles, setAiCreateFiles] = useState<AIPageSuggestionFile[]>([]);
+  const [conflictState, setConflictState] = useState<{
+    currentVersion: number;
+    currentHash?: string;
+    updatedBy?: string;
+    updatedAt?: string;
+  } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const currentFile = useMemo(
     () => files.find((item) => item.path === selection?.selectedPath),
     [files, selection?.selectedPath]
   );
+  const canPreviewCurrentFile = Boolean(selection?.selectedPath?.toLowerCase().endsWith(".html"));
   const readOnly = (summary?.my_role || "viewer") === "viewer";
   const binaryPreview = looksBinary(dirtyState.currentContent);
   const canSave =
@@ -188,9 +199,33 @@ export default function DomainEditorPage() {
     router.replace((`/domains/${domainId}/editor${qs ? `?${qs}` : ""}` as any), { scroll: false });
   };
 
+  const toEditorFileMeta = (item: FileListItem): EditorFileMeta => ({
+      id: item.id,
+      path: item.path,
+      size: item.size,
+      mimeType: item.mimeType,
+      version: item.version || 1,
+      isEditable: Boolean(item.isEditable),
+      isBinary: Boolean(item.isBinary),
+      width: item.width,
+      height: item.height,
+      lastEditedBy: item.lastEditedBy,
+      updatedAt: item.updatedAt,
+      editable: Boolean(item.isEditable),
+    });
+
   const loadFiles = async () => {
     const fileList = await listFiles(domainId);
-    const prepared: EditorFileMeta[] = (Array.isArray(fileList) ? fileList : []).map((item: FileListItem) => ({
+    const prepared: EditorFileMeta[] = (Array.isArray(fileList) ? fileList : []).map((item: FileListItem) => toEditorFileMeta(item));
+    setFiles(prepared);
+    return prepared;
+  };
+
+  const loadDeletedFiles = async () => {
+    const fileList = await listFiles(domainId, { includeDeleted: true });
+    const prepared: EditorFileMeta[] = (Array.isArray(fileList) ? fileList : [])
+      .filter((item: FileListItem) => Boolean(item.deletedAt))
+      .map((item: FileListItem) => ({
       id: item.id,
       path: item.path,
       size: item.size,
@@ -204,7 +239,7 @@ export default function DomainEditorPage() {
       updatedAt: item.updatedAt,
       editable: Boolean(item.isEditable),
     }));
-    setFiles(prepared);
+    setDeletedFiles(prepared);
     return prepared;
   };
 
@@ -257,6 +292,7 @@ export default function DomainEditorPage() {
         if (!alive) return;
         setSummary(summaryResp);
         const prepared = await loadFiles();
+        await loadDeletedFiles();
         if (!alive) return;
         if (prepared.length === 0) {
           setSelection(null);
@@ -312,6 +348,12 @@ export default function DomainEditorPage() {
     };
   }, [domainId, selection?.selectedPath, historyRefreshKey]);
 
+  useEffect(() => {
+    if (previewMode === "preview" && !canPreviewCurrentFile) {
+      setPreviewMode("code");
+    }
+  }, [previewMode, canPreviewCurrentFile]);
+
   const onSave = async () => {
     if (!selection || !currentFile) return;
     if (readOnly) {
@@ -342,16 +384,87 @@ export default function DomainEditorPage() {
       showToast({ type: "success", title: "Файл сохранен", message: selection.selectedPath });
     } catch (err: any) {
       const message = err?.message || "Не удалось сохранить файл";
-      if (String(message).includes("version conflict") || String(message).startsWith("409")) {
+      if (err instanceof SaveConflictError) {
+        setConflictState({
+          currentVersion:
+            typeof err.conflict.current_version === "number" ? err.conflict.current_version : selection.version,
+          currentHash: err.conflict.current_hash,
+          updatedBy: err.conflict.updated_by,
+          updatedAt: err.conflict.updated_at,
+        });
         showToast({
           type: "error",
           title: "Конфликт версий",
-          message: "Файл был изменен в другом сеансе. Обновите файл и повторите.",
+          message: "Файл был изменен в другом сеансе. Выберите действие в модальном окне.",
         });
-      } else {
-        showToast({ type: "error", title: "Ошибка сохранения", message });
+        setError(message);
+        return;
       }
+      showToast({ type: "error", title: "Ошибка сохранения", message });
       setError(message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const onConflictReload = async () => {
+    if (!selection?.selectedPath) {
+      setConflictState(null);
+      return;
+    }
+    const target = files.find((item) => item.path === selection.selectedPath);
+    if (target) {
+      await loadFile(target);
+    }
+    setConflictState(null);
+  };
+
+  const onConflictOverwrite = async () => {
+    if (!selection?.selectedPath || !conflictState) {
+      setConflictState(null);
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const result = await saveFile(
+        domainId,
+        selection.selectedPath,
+        dirtyState.currentContent,
+        description.trim() || "manual overwrite after conflict",
+        { expectedVersion: conflictState.currentVersion, source: "manual" }
+      );
+      const nextVersion =
+        typeof result.version === "number" ? result.version : Math.max(selection.version + 1, conflictState.currentVersion + 1);
+      setDirtyState((prev) => ({
+        ...prev,
+        isDirty: false,
+        originalContent: prev.currentContent,
+        lastSavedAt: new Date().toISOString(),
+      }));
+      setSelection((prev) => (prev ? { ...prev, version: nextVersion } : prev));
+      setDescription("");
+      setHistoryRefreshKey((value) => value + 1);
+      setConflictState(null);
+      await loadFiles();
+      showToast({ type: "success", title: "Файл перезаписан", message: selection.selectedPath });
+    } catch (err: any) {
+      if (err instanceof SaveConflictError) {
+        setConflictState({
+          currentVersion:
+            typeof err.conflict.current_version === "number" ? err.conflict.current_version : conflictState.currentVersion,
+          currentHash: err.conflict.current_hash,
+          updatedBy: err.conflict.updated_by,
+          updatedAt: err.conflict.updated_at,
+        });
+        showToast({
+          type: "error",
+          title: "Повторный конфликт",
+          message: "Файл снова обновился. Сначала выполните Reload.",
+        });
+        return;
+      }
+      showToast({ type: "error", title: "Ошибка сохранения", message: err?.message || "unknown error" });
     } finally {
       setSaving(false);
     }
@@ -375,6 +488,11 @@ export default function DomainEditorPage() {
     a.download = selection.selectedPath.split("/").pop() || "file.txt";
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const confirmLeaveWithDirty = () => {
+    if (!dirtyState.isDirty) return true;
+    return window.confirm("Есть несохраненные изменения. Выйти без сохранения?");
   };
 
   const onCreateFile = async () => {
@@ -409,16 +527,52 @@ export default function DomainEditorPage() {
 
   const onRename = async () => {
     if (readOnly || !selection?.selectedPath) return;
-    const nextPath = prompt("Новый путь", selection.selectedPath);
-    if (!nextPath || nextPath === selection.selectedPath) return;
+    const currentPath = selection.selectedPath;
+    const parts = currentPath.split("/").filter(Boolean);
+    const currentName = parts.pop() || currentPath;
+    const parent = parts.join("/");
+    const nextName = (prompt("Новое имя файла", currentName) || "").trim();
+    if (!nextName || nextName === currentName) return;
+    if (nextName.includes("/")) {
+      showToast({ type: "error", title: "Некорректное имя", message: "Имя файла не должно содержать /" });
+      return;
+    }
+    const nextPath = parent ? `${parent}/${nextName}` : nextName;
     try {
-      await moveFile(domainId, selection.selectedPath, nextPath);
+      await moveFile(domainId, currentPath, nextPath);
       const nextFiles = await loadFiles();
       const moved = nextFiles.find((item) => item.path === nextPath);
       if (moved) {
         await loadFile(moved);
       }
-      showToast({ type: "success", title: "Файл перемещен", message: `${selection.selectedPath} → ${nextPath}` });
+      showToast({ type: "success", title: "Файл переименован", message: `${currentName} → ${nextName}` });
+    } catch (err: any) {
+      showToast({ type: "error", title: "Не удалось переименовать файл", message: err?.message || "unknown error" });
+    }
+  };
+
+  const onMove = async () => {
+    if (readOnly || !selection?.selectedPath) return;
+    const currentPath = selection.selectedPath;
+    const parts = currentPath.split("/").filter(Boolean);
+    const currentName = parts.pop() || currentPath;
+    const currentDir = parts.join("/");
+    const destinationRaw = prompt(
+      "Папка назначения (например: pages/archive). Пусто = корень.",
+      currentDir
+    );
+    if (destinationRaw === null) return;
+    const destination = destinationRaw.trim().replace(/^\/+|\/+$/g, "");
+    const nextPath = destination ? `${destination}/${currentName}` : currentName;
+    if (nextPath === currentPath) return;
+    try {
+      await moveFile(domainId, currentPath, nextPath);
+      const nextFiles = await loadFiles();
+      const moved = nextFiles.find((item) => item.path === nextPath);
+      if (moved) {
+        await loadFile(moved);
+      }
+      showToast({ type: "success", title: "Файл перемещен", message: `${currentPath} → ${nextPath}` });
     } catch (err: any) {
       showToast({ type: "error", title: "Не удалось переместить файл", message: err?.message || "unknown error" });
     }
@@ -432,9 +586,25 @@ export default function DomainEditorPage() {
       setSelection(null);
       setDirtyState({ isDirty: false, originalContent: "", currentContent: "" });
       await loadFiles();
+      await loadDeletedFiles();
       showToast({ type: "success", title: "Файл удален", message: selection.selectedPath });
     } catch (err: any) {
       showToast({ type: "error", title: "Не удалось удалить файл", message: err?.message || "unknown error" });
+    }
+  };
+
+  const onRestoreDeleted = async (file: EditorFileMeta) => {
+    try {
+      await restoreFile(domainId, file.path);
+      const active = await loadFiles();
+      await loadDeletedFiles();
+      const restored = active.find((item) => item.path === file.path);
+      if (restored) {
+        await loadFile(restored);
+      }
+      showToast({ type: "success", title: "Файл восстановлен", message: file.path });
+    } catch (err: any) {
+      showToast({ type: "error", title: "Не удалось восстановить файл", message: err?.message || "unknown error" });
     }
   };
 
@@ -570,6 +740,11 @@ export default function DomainEditorPage() {
           <div className="flex flex-wrap items-center gap-2">
             <Link
               href={`/domains/${domainId}`}
+              onClick={(event) => {
+                if (!confirmLeaveWithDirty()) {
+                  event.preventDefault();
+                }
+              }}
               className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
             >
               <FiArrowLeft /> К домену
@@ -577,6 +752,11 @@ export default function DomainEditorPage() {
             {summary?.domain.project_id && (
               <Link
                 href={`/projects/${summary.domain.project_id}`}
+                onClick={(event) => {
+                  if (!confirmLeaveWithDirty()) {
+                    event.preventDefault();
+                  }
+                }}
                 className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
               >
                 <FiArrowLeft /> К проекту
@@ -617,6 +797,14 @@ export default function DomainEditorPage() {
               disabled={readOnly || !selection}
               className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
             >
+              <FiEdit3 /> Rename
+            </button>
+            <button
+              type="button"
+              onClick={onMove}
+              disabled={readOnly || !selection}
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            >
               <FiMove /> Move
             </button>
             <button
@@ -644,6 +832,31 @@ export default function DomainEditorPage() {
           </div>
           <h2 className="mb-1 text-sm font-semibold">Файлы сайта</h2>
           <FileTree files={files} selectedPath={selection?.selectedPath} loading={fileLoading} onSelect={onSelectFile} />
+          <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50/70 p-2 dark:border-slate-700 dark:bg-slate-800/40">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              Корзина
+            </div>
+            {deletedFiles.length === 0 && (
+              <div className="text-xs text-slate-500 dark:text-slate-400">Удаленных файлов нет</div>
+            )}
+            {deletedFiles.length > 0 && (
+              <div className="max-h-40 space-y-1 overflow-auto">
+                {deletedFiles.map((file) => (
+                  <div key={`trash-${file.id}`} className="rounded-md border border-slate-200 bg-white/80 px-2 py-1 dark:border-slate-700 dark:bg-slate-900/60">
+                    <div className="truncate text-xs text-slate-700 dark:text-slate-200">{file.path}</div>
+                    <button
+                      type="button"
+                      onClick={() => onRestoreDeleted(file)}
+                      disabled={readOnly}
+                      className="mt-1 inline-flex items-center gap-1 rounded-md border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 disabled:opacity-50 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300"
+                    >
+                      Восстановить
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </aside>
 
         <section className="space-y-3">
@@ -688,11 +901,12 @@ export default function DomainEditorPage() {
                 <button
                   type="button"
                   onClick={() => setPreviewMode("preview")}
+                  disabled={!canPreviewCurrentFile}
                   className={`rounded-lg border px-3 py-1 text-xs font-semibold ${previewMode === "preview" ? "bg-indigo-600 text-white border-indigo-600" : "border-slate-200 text-slate-700 dark:border-slate-700 dark:text-slate-100"}`}
                 >
                   <FiEye className="inline mr-1" /> Preview
                 </button>
-                {previewMode === "preview" && selection.selectedPath.toLowerCase().endsWith(".html") && (
+                {previewMode === "preview" && canPreviewCurrentFile && (
                   <div className="ml-auto inline-flex rounded-lg border border-slate-200 p-1 dark:border-slate-700">
                     <button
                       type="button"
@@ -729,20 +943,12 @@ export default function DomainEditorPage() {
               )}
 
               {previewMode === "preview" && (
-                <>
-                  {selection.selectedPath.toLowerCase().endsWith(".html") ? (
-                    <iframe
-                      title="editor-preview"
-                      sandbox="allow-same-origin allow-scripts"
-                      srcDoc={previewSrcDoc}
-                      className="h-[62vh] w-full rounded-lg border border-slate-200 dark:border-slate-700"
-                    />
-                  ) : (
-                    <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">
-                      Preview доступен в v2 для HTML-файлов. Для текущего типа показан режим Code.
-                    </div>
-                  )}
-                </>
+                <iframe
+                  title="editor-preview"
+                  sandbox="allow-same-origin allow-scripts"
+                  srcDoc={previewSrcDoc}
+                  className="h-[62vh] w-full rounded-lg border border-slate-200 dark:border-slate-700"
+                />
               )}
             </div>
           )}
@@ -869,6 +1075,16 @@ export default function DomainEditorPage() {
           )}
         </section>
       </div>
+      <ConflictResolutionModal
+        open={Boolean(conflictState)}
+        currentVersion={conflictState?.currentVersion || selection?.version || 1}
+        updatedBy={conflictState?.updatedBy}
+        updatedAt={conflictState?.updatedAt}
+        busy={saving}
+        onReload={() => void onConflictReload()}
+        onOverwrite={() => void onConflictOverwrite()}
+        onCancel={() => setConflictState(null)}
+      />
     </div>
   );
 }

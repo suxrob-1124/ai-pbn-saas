@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 
+import { MonacoDiffEditor } from "./MonacoDiffEditor";
 import {
   getFileHistory,
   getFileRevisionsByPath,
@@ -34,12 +35,14 @@ export function FileHistory({
   const [reverting, setReverting] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [selectedRev, setSelectedRev] = useState<string>("");
+  const [showDiff, setShowDiff] = useState(true);
 
   useEffect(() => {
     if (!domainId || (!fileId && !filePath)) {
       setItems([]);
       setRevisions([]);
       setError(null);
+      setSelectedRev("");
       return;
     }
     let alive = true;
@@ -73,7 +76,42 @@ export function FileHistory({
     };
   }, [domainId, fileId, filePath, refreshKey]);
 
+  useEffect(() => {
+    if (!filePath) return;
+    if (revisions.length === 0) {
+      setSelectedRev("");
+      return;
+    }
+    setSelectedRev((prev) => {
+      if (prev && revisions.some((item) => item.id === prev)) {
+        return prev;
+      }
+      return revisions[0].id;
+    });
+  }, [filePath, revisions]);
+
   const selected = revisions.find((item) => item.id === selectedRev) || null;
+  const selectedIndex = selected ? revisions.findIndex((item) => item.id === selected.id) : -1;
+  const previousRevision = selectedIndex >= 0 ? revisions[selectedIndex + 1] || null : null;
+
+  const detectLanguage = (pathValue?: string) => {
+    const path = (pathValue || "").toLowerCase();
+    if (path.endsWith(".html") || path.endsWith(".htm")) return "html";
+    if (path.endsWith(".css")) return "css";
+    if (path.endsWith(".js") || path.endsWith(".mjs") || path.endsWith(".cjs")) return "javascript";
+    if (path.endsWith(".ts") || path.endsWith(".tsx")) return "typescript";
+    if (path.endsWith(".json")) return "json";
+    if (path.endsWith(".xml") || path.endsWith(".svg")) return "xml";
+    if (path.endsWith(".md") || path.endsWith(".markdown")) return "markdown";
+    return "plaintext";
+  };
+
+  const isTextRevision = (rev: FileRevisionDTO | null) => {
+    if (!rev) return false;
+    if (typeof rev.content === "string" && rev.content.length > 0) return true;
+    const mime = (rev.mime_type || "").toLowerCase();
+    return mime.startsWith("text/") || mime === "application/json" || mime === "application/xml" || mime === "image/svg+xml";
+  };
 
   const onRevert = async (revisionId: string) => {
     if (!filePath || !canWrite || !revisionId) {
@@ -126,7 +164,10 @@ export function FileHistory({
               <button
                 key={item.id}
                 type="button"
-                onClick={() => setSelectedRev(item.id)}
+                onClick={() => {
+                  setSelectedRev(item.id);
+                  setShowDiff(true);
+                }}
                 className={`w-full rounded-lg border px-2 py-2 text-left text-xs ${
                   selectedRev === item.id
                     ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-950/20"
@@ -162,9 +203,34 @@ export function FileHistory({
                     </button>
                   )}
                 </div>
-                <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded bg-slate-100 p-2 text-xs dark:bg-slate-900/70">
-                  {selected.content || "(бинарная ревизия, diff недоступен)"}
-                </pre>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowDiff(true)}
+                    disabled={!previousRevision || !isTextRevision(selected)}
+                    className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  >
+                    View diff
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowDiff(false)}
+                    className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  >
+                    View content
+                  </button>
+                </div>
+                {showDiff && previousRevision && isTextRevision(selected) ? (
+                  <MonacoDiffEditor
+                    original={previousRevision.content || ""}
+                    modified={selected.content || ""}
+                    language={detectLanguage(filePath)}
+                  />
+                ) : (
+                  <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded bg-slate-100 p-2 text-xs dark:bg-slate-900/70">
+                    {selected.content || "(бинарная ревизия, diff недоступен)"}
+                  </pre>
+                )}
               </div>
             )}
           </div>
