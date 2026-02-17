@@ -14,6 +14,7 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
+	"io/fs"
 	"math"
 	"mime"
 	"net"
@@ -137,9 +138,13 @@ type SiteFileStore interface {
 	Create(ctx context.Context, file sqlstore.SiteFile) error
 	Get(ctx context.Context, fileID string) (*sqlstore.SiteFile, error)
 	List(ctx context.Context, domainID string) ([]sqlstore.SiteFile, error)
+	ListDeleted(ctx context.Context, domainID string) ([]sqlstore.SiteFile, error)
 	GetByPath(ctx context.Context, domainID, path string) (*sqlstore.SiteFile, error)
+	GetByPathAny(ctx context.Context, domainID, path string) (*sqlstore.SiteFile, error)
 	Update(ctx context.Context, fileID string, content []byte) error
 	Delete(ctx context.Context, fileID string) error
+	SoftDelete(ctx context.Context, fileID string, deletedBy sql.NullString, reason sql.NullString) error
+	Restore(ctx context.Context, fileID string) error
 	Move(ctx context.Context, fileID, newPath string) error
 	SetLastEditedBy(ctx context.Context, fileID string, editedBy sql.NullString) error
 }
@@ -2194,9 +2199,9 @@ func (s *Server) handleDomainGenerate(w http.ResponseWriter, r *http.Request, do
 	// Попытка скопировать артефакты из последней успешной генерации, если делаем force rerun
 	var baseArtifacts []byte
 	if forceStep != "" {
-		if last, err := s.generations.GetLastSuccessfulByDomain(r.Context(), domainID); err == nil && len(last.Artifacts) > 0 {
+		if last, err := s.generations.GetLastByDomain(r.Context(), domainID); err == nil && len(last.Artifacts) > 0 {
 			baseArtifacts = last.Artifacts
-		} else if last, err := s.generations.GetLastByDomain(r.Context(), domainID); err == nil && len(last.Artifacts) > 0 {
+		} else if last, err := s.generations.GetLastSuccessfulByDomain(r.Context(), domainID); err == nil && len(last.Artifacts) > 0 {
 			baseArtifacts = last.Artifacts
 		}
 	}
@@ -2311,15 +2316,54 @@ func (s *Server) handleDomainFiles(w http.ResponseWriter, r *http.Request, domai
 				writeError(w, http.StatusForbidden, "insufficient permissions: viewer role required")
 				return
 			}
+			includeDeleted := false
+			if raw := strings.TrimSpace(r.URL.Query().Get("include_deleted")); raw != "" {
+				includeDeleted = raw == "1" || strings.EqualFold(raw, "true")
+			}
 			files, err := s.siteFiles.List(r.Context(), domainID)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "could not list files")
 				return
 			}
-			resp := make([]fileDTO, 0, len(files))
+			resp := make([]fileDTO, 0, len(files)+16)
+			indexByPath := make(map[string]struct{}, len(files)+16)
 			for _, f := range files {
 				item := toFileDTO(domain, f)
+				indexByPath[item.Path] = struct{}{}
 				resp = append(resp, item)
+			}
+			if includeDeleted {
+				deletedFiles, err := s.siteFiles.ListDeleted(r.Context(), domainID)
+				if err != nil {
+					writeError(w, http.StatusInternalServerError, "could not list deleted files")
+					return
+				}
+				for _, f := range deletedFiles {
+					item := toFileDTO(domain, f)
+					indexByPath[item.Path] = struct{}{}
+					resp = append(resp, item)
+				}
+			}
+			if dirs, err := listDomainDirs(domain); err == nil {
+				now := time.Now().UTC()
+				for _, dirPath := range dirs {
+					if _, exists := indexByPath[dirPath]; exists {
+						continue
+					}
+					indexByPath[dirPath] = struct{}{}
+					resp = append(resp, fileDTO{
+						ID:         "dir:" + dirPath,
+						Path:       dirPath,
+						Size:       0,
+						MimeType:   "inode/directory",
+						Version:    1,
+						IsEditable: false,
+						IsBinary:   false,
+						UpdatedAt:  now,
+					})
+				}
+			} else if s.logger != nil {
+				s.logger.Warnf("could not list directories for domain %s: %v", domain.URL, err)
 			}
 			writeJSON(w, http.StatusOK, resp)
 		case http.MethodPost:
@@ -2389,6 +2433,27 @@ func (s *Server) handleDomainFiles(w http.ResponseWriter, r *http.Request, domai
 				return
 			}
 			s.handleRevertFile(w, r, domain, cleanPath, user.Email)
+			return
+		case "restore":
+			if r.Method != http.MethodPost {
+				writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+				return
+			}
+			if !hasProjectPermission(user.Role, memberRole, "editor") {
+				writeError(w, http.StatusForbidden, "insufficient permissions: editor role required")
+				return
+			}
+			rawPath, err := joinURLPath(parts[:len(parts)-1])
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid path")
+				return
+			}
+			cleanPath, err := sanitizeFilePath(rawPath)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid path")
+				return
+			}
+			s.handleRestoreFile(w, r, domain, cleanPath, user.Email)
 			return
 		case "history":
 			if !hasProjectPermission(user.Role, memberRole, "viewer") {
@@ -2485,7 +2550,15 @@ func (s *Server) handleDomainFiles(w http.ResponseWriter, r *http.Request, domai
 			writeError(w, http.StatusForbidden, "insufficient permissions: editor role required")
 			return
 		}
-		s.handleDeleteFile(w, r, domain, cleanPath)
+		hardDelete := false
+		if raw := strings.TrimSpace(r.URL.Query().Get("hard")); raw != "" {
+			hardDelete = raw == "1" || strings.EqualFold(raw, "true")
+		}
+		if hardDelete && !strings.EqualFold(user.Role, "admin") && !strings.EqualFold(memberRole, "owner") {
+			writeError(w, http.StatusForbidden, "hard delete requires owner or admin role")
+			return
+		}
+		s.handleDeleteFile(w, r, domain, cleanPath, user.Email, hardDelete)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
@@ -3329,6 +3402,10 @@ func (s *Server) handleCreateDomainFile(w http.ResponseWriter, r *http.Request, 
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := validateUploadPathPolicy(cleanPath); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	domainDir, err := domainFilesDir(domain.URL)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid domain")
@@ -3357,6 +3434,10 @@ func (s *Server) handleCreateDomainFile(w http.ResponseWriter, r *http.Request, 
 	newBytes := []byte(body.Content)
 	detected := detectMimeType(cleanPath, newBytes)
 	if err := validateMimeType(cleanPath, detected, strings.TrimSpace(body.MimeType)); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validateUploadSecurity(cleanPath, detected, newBytes); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -3423,6 +3504,10 @@ func (s *Server) handleUploadDomainFile(w http.ResponseWriter, r *http.Request, 
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := validateUploadPathPolicy(cleanPath); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	content, err := io.ReadAll(io.LimitReader(uploaded, maxUploadBytes+1))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not read upload")
@@ -3461,6 +3546,10 @@ func (s *Server) handleUploadDomainFile(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	detected := detectMimeType(cleanPath, content)
+	if err := validateUploadSecurity(cleanPath, detected, content); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if existing == nil {
 		hash := sha256.Sum256(content)
 		file := sqlstore.SiteFile{
@@ -3641,6 +3730,10 @@ func (s *Server) handleMoveFile(w http.ResponseWriter, r *http.Request, domain s
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := validateUploadPathPolicy(newPath); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if oldPath == newPath {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "moved"})
 		return
@@ -3702,7 +3795,7 @@ func (s *Server) handleMoveFile(w http.ResponseWriter, r *http.Request, domain s
 	writeJSON(w, http.StatusOK, map[string]any{"status": "moved", "path": newPath})
 }
 
-func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request, domain sqlstore.Domain, relPath string) {
+func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request, domain sqlstore.Domain, relPath, deletedBy string, hardDelete bool) {
 	domainDir, err := domainFilesDir(domain.URL)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid domain")
@@ -3713,43 +3806,175 @@ func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request, domain
 		writeError(w, http.StatusBadRequest, "invalid path")
 		return
 	}
+	softDeleteSingle := func(file sqlstore.SiteFile) error {
+		fileFull := filepath.Join(domainDir, filepath.FromSlash(file.Path))
+		if err := ensurePathWithin(domainDir, fileFull); err != nil {
+			return err
+		}
+		if content, err := os.ReadFile(fileFull); err == nil {
+			_ = s.fileEdits.CreateRevision(r.Context(), buildRevision(&file, content, "manual", deletedBy, "baseline before delete"))
+			beforeHash := sha256.Sum256(content)
+			_ = s.fileEdits.Create(r.Context(), sqlstore.FileEdit{
+				ID:                uuid.NewString(),
+				FileID:            file.ID,
+				EditedBy:          deletedBy,
+				EditType:          "delete",
+				EditDescription:   sql.NullString{String: "soft-delete", Valid: true},
+				ContentBeforeHash: sql.NullString{String: hex.EncodeToString(beforeHash[:]), Valid: true},
+			})
+		}
+		if err := os.Remove(fileFull); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return s.siteFiles.SoftDelete(r.Context(), file.ID, sqlstore.NullableString(deletedBy), sqlstore.NullableString("deleted from editor"))
+	}
+	hardDeleteSingle := func(file sqlstore.SiteFile) error {
+		fileFull := filepath.Join(domainDir, filepath.FromSlash(file.Path))
+		if err := ensurePathWithin(domainDir, fileFull); err != nil {
+			return err
+		}
+		if err := os.Remove(fileFull); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return s.siteFiles.Delete(r.Context(), file.ID)
+	}
+
 	if file, err := s.siteFiles.GetByPath(r.Context(), domain.ID, relPath); err == nil && file != nil {
-		if err := os.Remove(fullPath); err != nil && !os.IsNotExist(err) {
-			writeError(w, http.StatusInternalServerError, "could not delete file")
-			return
+		if hardDelete {
+			if err := hardDeleteSingle(*file); err != nil {
+				writeError(w, http.StatusInternalServerError, "could not hard-delete file")
+				return
+			}
+		} else {
+			if err := softDeleteSingle(*file); err != nil {
+				writeError(w, http.StatusInternalServerError, "could not delete file")
+				return
+			}
 		}
-		if err := s.siteFiles.Delete(r.Context(), file.ID); err != nil {
-			writeError(w, http.StatusInternalServerError, "could not delete file metadata")
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "deleted",
+			"mode":   map[bool]string{true: "hard", false: "soft"}[hardDelete],
+		})
 		return
 	}
-	info, err := os.Stat(fullPath)
+
+	files, err := s.siteFiles.List(r.Context(), domain.ID)
 	if err != nil {
-		if os.IsNotExist(err) {
-			writeError(w, http.StatusNotFound, "file not found")
-			return
-		}
+		writeError(w, http.StatusInternalServerError, "could not list files")
+		return
+	}
+	info, statErr := os.Stat(fullPath)
+	if statErr != nil && !os.IsNotExist(statErr) {
 		writeError(w, http.StatusInternalServerError, "could not inspect path")
 		return
 	}
-	if !info.IsDir() {
+	if statErr == nil && !info.IsDir() {
 		writeError(w, http.StatusNotFound, "file not found")
 		return
 	}
-	if err := os.RemoveAll(fullPath); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not delete directory")
-		return
-	}
-	files, _ := s.siteFiles.List(r.Context(), domain.ID)
 	prefix := relPath + "/"
+	matched := 0
 	for _, f := range files {
-		if strings.HasPrefix(f.Path, prefix) {
-			_ = s.siteFiles.Delete(r.Context(), f.ID)
+		if !strings.HasPrefix(f.Path, prefix) {
+			continue
+		}
+		matched++
+		if hardDelete {
+			if err := hardDeleteSingle(f); err != nil {
+				writeError(w, http.StatusInternalServerError, "could not hard-delete directory files")
+				return
+			}
+		} else {
+			if err := softDeleteSingle(f); err != nil {
+				writeError(w, http.StatusInternalServerError, "could not delete directory files")
+				return
+			}
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": "deleted", "kind": "dir"})
+	if matched == 0 {
+		writeError(w, http.StatusNotFound, "file not found")
+		return
+	}
+	_ = os.RemoveAll(fullPath)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "deleted",
+		"kind":   "dir",
+		"mode":   map[bool]string{true: "hard", false: "soft"}[hardDelete],
+		"count":  matched,
+	})
+}
+
+func (s *Server) handleRestoreFile(w http.ResponseWriter, r *http.Request, domain sqlstore.Domain, relPath, editedBy string) {
+	file, err := s.siteFiles.GetByPathAny(r.Context(), domain.ID, relPath)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "file not found in trash")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not load file")
+		return
+	}
+	if !file.DeletedAt.Valid {
+		writeError(w, http.StatusConflict, "file is already active")
+		return
+	}
+	if active, err := s.siteFiles.GetByPath(r.Context(), domain.ID, relPath); err == nil && active != nil && active.ID != file.ID {
+		writeError(w, http.StatusConflict, "active file with same path already exists")
+		return
+	}
+	revisions, err := s.fileEdits.ListRevisionsByFile(r.Context(), file.ID, 1)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not load file revisions")
+		return
+	}
+	if len(revisions) == 0 {
+		writeError(w, http.StatusConflict, "cannot restore file without snapshots")
+		return
+	}
+	latest := revisions[0]
+	domainDir, err := domainFilesDir(domain.URL)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid domain")
+		return
+	}
+	fullPath := filepath.Join(domainDir, filepath.FromSlash(relPath))
+	if err := ensurePathWithin(domainDir, fullPath); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid path")
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not create parent directory")
+		return
+	}
+	if err := os.WriteFile(fullPath, latest.Content, 0o644); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not restore file")
+		return
+	}
+	if err := s.siteFiles.Restore(r.Context(), file.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not restore file metadata")
+		return
+	}
+	if err := s.siteFiles.Update(r.Context(), file.ID, latest.Content); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not update restored file metadata")
+		return
+	}
+	_ = s.siteFiles.SetLastEditedBy(r.Context(), file.ID, sqlstore.NullableString(editedBy))
+	updated, _ := s.siteFiles.Get(r.Context(), file.ID)
+	if updated != nil {
+		_ = s.fileEdits.CreateRevision(r.Context(), buildRevision(updated, latest.Content, "revert", editedBy, "restored from trash"))
+	}
+	_ = s.fileEdits.Create(r.Context(), sqlstore.FileEdit{
+		ID:              uuid.NewString(),
+		FileID:          file.ID,
+		EditedBy:        editedBy,
+		EditType:        "restore",
+		EditDescription: sql.NullString{String: "restored from trash", Valid: true},
+	})
+	resp := map[string]any{"status": "restored"}
+	if updated != nil {
+		resp["version"] = updated.Version
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleFileMeta(w http.ResponseWriter, r *http.Request, domain sqlstore.Domain, relPath string) {
@@ -4250,6 +4475,10 @@ func (s *Server) handleGenerationAction(w http.ResponseWriter, r *http.Request, 
 			writeError(w, http.StatusBadRequest, "can only resume paused generation")
 			return
 		}
+		if s.tasks == nil {
+			writeError(w, http.StatusServiceUnavailable, "queue unavailable")
+			return
+		}
 		// Устанавливаем статус PENDING (чтобы worker мог подхватить задачу) и перезапускаем задачу
 		// Если чекпоинта нет, задача начнется сначала (это нормально)
 		if err := s.generations.UpdateStatus(r.Context(), id, "pending", gen.Progress, nil); err != nil {
@@ -4258,21 +4487,22 @@ func (s *Server) handleGenerationAction(w http.ResponseWriter, r *http.Request, 
 		}
 		// Обновляем статус домена обратно на processing
 		_ = s.domains.UpdateStatus(r.Context(), gen.DomainID, "processing")
-		// Перезапускаем задачу через очередь (если есть enqueuer)
-		if s.tasks != nil {
-			task := tasks.NewGenerateTask(id, gen.DomainID, "")
-			queue := "default"
-			if s.domains != nil {
-				if d, err := s.domains.Get(r.Context(), gen.DomainID); err == nil {
-					queue = s.genQueueForProject(d.ProjectID)
-				}
+		// Перезапускаем задачу через очередь
+		task := tasks.NewGenerateTask(id, gen.DomainID, "")
+		queue := "default"
+		if s.domains != nil {
+			if d, err := s.domains.Get(r.Context(), gen.DomainID); err == nil {
+				queue = s.genQueueForProject(d.ProjectID)
 			}
-			if _, err := s.tasks.Enqueue(r.Context(), task, asynq.Queue(queue)); err != nil {
-				if s.logger != nil {
-					s.logger.Warnf("failed to enqueue resumed generation: %v", err)
-				}
-				// Не возвращаем ошибку, так как статус уже обновлен
+		}
+		if _, err := s.tasks.Enqueue(r.Context(), task, asynq.Queue(queue)); err != nil {
+			if s.logger != nil {
+				s.logger.Warnf("failed to enqueue resumed generation: %v", err)
 			}
+			_ = s.generations.UpdateStatus(r.Context(), id, "paused", gen.Progress, nil)
+			_ = s.domains.UpdateStatus(r.Context(), gen.DomainID, stableDomainStatusFromDomain(d))
+			writeError(w, http.StatusServiceUnavailable, "could not enqueue resumed generation")
+			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "pending", "message": "generation resumed"})
 
@@ -6938,17 +7168,20 @@ type domainDTO struct {
 }
 
 type fileDTO struct {
-	ID           string    `json:"id"`
-	Path         string    `json:"path"`
-	Size         int64     `json:"size"`
-	MimeType     string    `json:"mimeType"`
-	Version      int       `json:"version"`
-	IsEditable   bool      `json:"isEditable"`
-	IsBinary     bool      `json:"isBinary"`
-	Width        *int      `json:"width,omitempty"`
-	Height       *int      `json:"height,omitempty"`
-	LastEditedBy *string   `json:"lastEditedBy,omitempty"`
-	UpdatedAt    time.Time `json:"updatedAt"`
+	ID           string     `json:"id"`
+	Path         string     `json:"path"`
+	Size         int64      `json:"size"`
+	MimeType     string     `json:"mimeType"`
+	Version      int        `json:"version"`
+	IsEditable   bool       `json:"isEditable"`
+	IsBinary     bool       `json:"isBinary"`
+	Width        *int       `json:"width,omitempty"`
+	Height       *int       `json:"height,omitempty"`
+	LastEditedBy *string    `json:"lastEditedBy,omitempty"`
+	DeletedAt    *time.Time `json:"deletedAt,omitempty"`
+	DeletedBy    *string    `json:"deletedBy,omitempty"`
+	DeleteReason *string    `json:"deleteReason,omitempty"`
+	UpdatedAt    time.Time  `json:"updatedAt"`
 }
 
 type fileEditDTO struct {
@@ -8731,6 +8964,109 @@ func validateEditorPath(relPath string) error {
 	return nil
 }
 
+var blockedUploadExtensions = map[string]struct{}{
+	".exe":   {},
+	".dll":   {},
+	".so":    {},
+	".dylib": {},
+	".msi":   {},
+	".bin":   {},
+	".com":   {},
+	".cmd":   {},
+	".bat":   {},
+	".ps1":   {},
+	".sh":    {},
+	".bash":  {},
+	".zsh":   {},
+	".py":    {},
+	".rb":    {},
+	".pl":    {},
+	".jar":   {},
+	".class": {},
+	".apk":   {},
+	".deb":   {},
+	".rpm":   {},
+	".php":   {},
+	".phtml": {},
+	".phar":  {},
+	".cgi":   {},
+}
+
+func validateUploadPathPolicy(relPath string) error {
+	ext := strings.ToLower(strings.TrimSpace(filepath.Ext(relPath)))
+	if ext == "" {
+		return nil
+	}
+	if _, blocked := blockedUploadExtensions[ext]; blocked {
+		return fmt.Errorf("file type %s is not allowed", ext)
+	}
+	return nil
+}
+
+func validateUploadSecurity(relPath, mimeType string, content []byte) error {
+	if err := validateUploadPathPolicy(relPath); err != nil {
+		return err
+	}
+	normalized := strings.ToLower(strings.TrimSpace(baseMimeType(mimeType)))
+	switch normalized {
+	case "application/x-dosexec",
+		"application/x-msdownload",
+		"application/x-msdos-program",
+		"application/x-executable",
+		"application/x-elf",
+		"application/x-mach-binary",
+		"application/x-sh":
+		return fmt.Errorf("mime type %s is not allowed", normalized)
+	}
+	if strings.HasPrefix(normalized, "application/x-ms") {
+		return fmt.Errorf("mime type %s is not allowed", normalized)
+	}
+	if strings.HasSuffix(strings.ToLower(relPath), ".svg") {
+		if strings.Contains(strings.ToLower(string(content)), "<script") {
+			return errors.New("inline scripts in svg are not allowed")
+		}
+	}
+	return nil
+}
+
+func listDomainDirs(domain sqlstore.Domain) ([]string, error) {
+	domainDir, err := domainFilesDir(domain.URL)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, 16)
+	err = filepath.WalkDir(domainDir, func(curr string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if curr == domainDir || !d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(domainDir, curr)
+		if err != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(strings.TrimSpace(rel))
+		if rel == "" || rel == "." {
+			return nil
+		}
+		clean, err := sanitizeFilePath(rel)
+		if err != nil {
+			return nil
+		}
+		if err := validateEditorPath(clean); err != nil {
+			return filepath.SkipDir
+		}
+		out = append(out, clean)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
 func isEditableMimeType(mimeType string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(baseMimeType(mimeType)))
 	if strings.HasPrefix(normalized, "text/") {
@@ -8832,6 +9168,22 @@ func toFileDTO(domain sqlstore.Domain, f sqlstore.SiteFile) fileDTO {
 		v := strings.TrimSpace(f.LastEditedBy.String)
 		if v != "" {
 			item.LastEditedBy = &v
+		}
+	}
+	if f.DeletedAt.Valid {
+		v := f.DeletedAt.Time
+		item.DeletedAt = &v
+	}
+	if f.DeletedBy.Valid {
+		v := strings.TrimSpace(f.DeletedBy.String)
+		if v != "" {
+			item.DeletedBy = &v
+		}
+	}
+	if f.DeleteReason.Valid {
+		v := strings.TrimSpace(f.DeleteReason.String)
+		if v != "" {
+			item.DeleteReason = &v
 		}
 	}
 	if strings.HasPrefix(strings.ToLower(baseMimeType(f.MimeType)), "image/") {

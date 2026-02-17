@@ -1243,6 +1243,161 @@ func TestGenerationAction_CancelPending(t *testing.T) {
 	}
 }
 
+func TestGenerationAction_ResumeRollbackOnEnqueueFail(t *testing.T) {
+	s := setupServer(t)
+
+	projectID := "project-resume"
+	domainID := "domain-resume"
+	genID := "gen-resume"
+	now := time.Now().UTC()
+	s.projects.(*stubProjectStore).projects[projectID] = sqlstore.Project{
+		ID:        projectID,
+		UserEmail: "owner@example.com",
+		Name:      "Project",
+		Status:    "active",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	s.domains.(*stubDomainStore).domains[domainID] = sqlstore.Domain{
+		ID:          domainID,
+		ProjectID:   projectID,
+		URL:         "example.com",
+		MainKeyword: "keyword",
+		Status:      "processing",
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	s.generations.(*stubGenerationStore).generations[genID] = sqlstore.Generation{
+		ID:        genID,
+		DomainID:  domainID,
+		Status:    "paused",
+		Progress:  73,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	enq := s.tasks.(*stubEnqueuer)
+	enq.failTypes[tasks.TaskGenerate] = errors.New("queue down")
+
+	adminCtx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: "admin@example.com",
+		Role:  "admin",
+	})
+	req := httptest.NewRequest(http.MethodPatch, "/api/generations/"+genID, strings.NewReader(`{"action":"resume"}`)).WithContext(adminCtx)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.handleGenerationAction(rec, req, genID)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("resume enqueue fail status: %d %s", rec.Code, rec.Body.String())
+	}
+	gen := s.generations.(*stubGenerationStore).generations[genID]
+	if gen.Status != "paused" {
+		t.Fatalf("expected paused after enqueue fail, got %s", gen.Status)
+	}
+	domain := s.domains.(*stubDomainStore).domains[domainID]
+	if domain.Status != "waiting" {
+		t.Fatalf("expected domain waiting after enqueue fail, got %s", domain.Status)
+	}
+}
+
+func TestDomainGenerateForceStepUsesLatestArtifacts(t *testing.T) {
+	s := setupServer(t)
+	cfg := s.cfg
+	cfg.APIKeySecret = "test-secret-key"
+	users := newStubUserStore()
+	s.svc = auth.NewService(auth.ServiceDeps{
+		Config:             cfg,
+		Users:              users,
+		Sessions:           newStubSessionStore(),
+		VerificationTokens: newStubVerificationStore(),
+		ResetTokens:        newStubResetStore(),
+		Captchas:           newStubCaptchaStore(),
+		Mailer:             stubMailer{},
+		Logger:             zap.NewNop().Sugar(),
+	})
+
+	const (
+		projectID = "project-force-step"
+		domainID  = "domain-force-step"
+		admin     = "admin@example.com"
+		owner     = "owner@example.com"
+	)
+	now := time.Now().UTC()
+	users.users[admin] = "pass"
+	users.verified[admin] = true
+	users.roles[admin] = "admin"
+	users.approved[admin] = true
+	_ = users.SetAPIKey(context.Background(), admin, []byte("enc-key"), now)
+	users.users[owner] = "pass"
+	users.verified[owner] = true
+	users.roles[owner] = "manager"
+	users.approved[owner] = true
+
+	s.projects.(*stubProjectStore).projects[projectID] = sqlstore.Project{
+		ID:        projectID,
+		UserEmail: owner,
+		Name:      "Project",
+		Status:    "active",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	s.domains.(*stubDomainStore).domains[domainID] = sqlstore.Domain{
+		ID:          domainID,
+		ProjectID:   projectID,
+		URL:         "example.com",
+		MainKeyword: "keyword",
+		Status:      "waiting",
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+
+	latestErrArtifacts := json.RawMessage(`{"from":"latest-error"}`)
+	olderSuccessArtifacts := json.RawMessage(`{"from":"older-success"}`)
+	s.generations.(*stubGenerationStore).generations["gen-success-old"] = sqlstore.Generation{
+		ID:        "gen-success-old",
+		DomainID:  domainID,
+		Status:    "success",
+		Artifacts: olderSuccessArtifacts,
+		CreatedAt: now.Add(-10 * time.Minute),
+		UpdatedAt: now.Add(-10 * time.Minute),
+	}
+	s.generations.(*stubGenerationStore).generations["gen-error-latest"] = sqlstore.Generation{
+		ID:        "gen-error-latest",
+		DomainID:  domainID,
+		Status:    "error",
+		Artifacts: latestErrArtifacts,
+		CreatedAt: now.Add(-1 * time.Minute),
+		UpdatedAt: now.Add(-1 * time.Minute),
+	}
+
+	adminCtx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: admin,
+		Role:  "admin",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/domains/"+domainID+"/generate", strings.NewReader(`{"force_step":"content_generation"}`)).WithContext(adminCtx)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.handleDomainGenerate(rec, req, domainID)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	newID := payload["id"]
+	if strings.TrimSpace(newID) == "" {
+		t.Fatalf("missing generation id in response")
+	}
+	newGen, ok := s.generations.(*stubGenerationStore).generations[newID]
+	if !ok {
+		t.Fatalf("new generation %s not found", newID)
+	}
+	if string(newGen.Artifacts) != string(latestErrArtifacts) {
+		t.Fatalf("expected latest artifacts to be reused, got %s", string(newGen.Artifacts))
+	}
+}
+
 func TestMe(t *testing.T) {
 	s := setupServer(t)
 
@@ -3537,7 +3692,15 @@ func (s *stubSiteFileStore) List(ctx context.Context, domainID string) ([]sqlsto
 	return []sqlstore.SiteFile{}, nil
 }
 
+func (s *stubSiteFileStore) ListDeleted(ctx context.Context, domainID string) ([]sqlstore.SiteFile, error) {
+	return []sqlstore.SiteFile{}, nil
+}
+
 func (s *stubSiteFileStore) GetByPath(ctx context.Context, domainID, path string) (*sqlstore.SiteFile, error) {
+	return nil, sql.ErrNoRows
+}
+
+func (s *stubSiteFileStore) GetByPathAny(ctx context.Context, domainID, path string) (*sqlstore.SiteFile, error) {
 	return nil, sql.ErrNoRows
 }
 
@@ -3547,6 +3710,14 @@ func (s *stubSiteFileStore) Update(ctx context.Context, fileID string, content [
 
 func (s *stubSiteFileStore) Delete(ctx context.Context, fileID string) error {
 	return errors.New("not found")
+}
+
+func (s *stubSiteFileStore) SoftDelete(ctx context.Context, fileID string, deletedBy sql.NullString, reason sql.NullString) error {
+	return nil
+}
+
+func (s *stubSiteFileStore) Restore(ctx context.Context, fileID string) error {
+	return nil
 }
 
 func (s *stubSiteFileStore) Move(ctx context.Context, fileID, newPath string) error {

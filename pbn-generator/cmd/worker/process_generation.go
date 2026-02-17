@@ -45,6 +45,32 @@ func processGeneration(
 		return fmt.Errorf("failed to get generation: %w", err)
 	}
 
+	domainForStatus, domainErr := domainStore.Get(ctx, payload.DomainID)
+	stableStatus := "waiting"
+	if domainErr == nil {
+		stableStatus = stableDomainStatus(domainForStatus)
+	}
+
+	// Нормализуем "переходные" статусы в терминальные, если задача пришла в воркер после запроса pause/cancel.
+	// Это предотвращает зависание в pause_requested/cancelling при ретраях/повторной доставке.
+	switch gen.Status {
+	case "pause_requested":
+		now := time.Now()
+		if err := genStore.UpdateFull(ctx, payload.GenerationID, "paused", gen.Progress, nil, gen.Logs, gen.Artifacts, &now, nil, nil); err != nil {
+			return fmt.Errorf("failed to finalize pause_requested: %w", err)
+		}
+		_ = domainStore.UpdateStatus(ctx, payload.DomainID, stableStatus)
+		return nil
+	case "cancelling":
+		now := time.Now()
+		if err := genStore.UpdateFull(ctx, payload.GenerationID, "cancelled", gen.Progress, nil, gen.Logs, gen.Artifacts, &now, pipeline.PtrTime(now), nil); err != nil {
+			return fmt.Errorf("failed to finalize cancelling: %w", err)
+		}
+		_ = genStore.ClearCheckpoint(ctx, payload.GenerationID)
+		_ = domainStore.UpdateStatus(ctx, payload.DomainID, stableStatus)
+		return nil
+	}
+
 	// Если задача уже не в состоянии processing, не обрабатываем
 	if gen.Status != "processing" && gen.Status != "pending" {
 		sugar.Warnf("generation %s is in status %s, skipping", payload.GenerationID, gen.Status)
@@ -53,7 +79,11 @@ func processGeneration(
 
 	now := time.Now()
 	if gen.Status == "pending" {
-		_ = genStore.UpdateFull(ctx, payload.GenerationID, "processing", 10, nil, nil, nil, &now, nil, nil)
+		startProgress := gen.Progress
+		if startProgress < 10 {
+			startProgress = 10
+		}
+		_ = genStore.UpdateFull(ctx, payload.GenerationID, "processing", startProgress, nil, nil, nil, &now, nil, nil)
 	}
 
 	// Debug: сырой artifacts из БД
