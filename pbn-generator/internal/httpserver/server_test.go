@@ -1000,6 +1000,85 @@ func TestDomainPatchLinkSettingsInvalidBody(t *testing.T) {
 	}
 }
 
+func TestPromptOverrideResolve_DomainPrecedence(t *testing.T) {
+	s := setupServer(t)
+	store := s.promptOverrides.(*stubPromptOverrideStore)
+	ctx := context.Background()
+
+	if err := store.Upsert(ctx, sqlstore.PromptOverride{
+		ID:        "project-override-1",
+		ScopeType: sqlstore.PromptScopeProject,
+		ScopeID:   "project-1",
+		Stage:     "editor_assistant",
+		Body:      "project prompt body",
+		UpdatedBy: "owner@example.com",
+	}); err != nil {
+		t.Fatalf("upsert project override: %v", err)
+	}
+	if err := store.Upsert(ctx, sqlstore.PromptOverride{
+		ID:        "domain-override-1",
+		ScopeType: sqlstore.PromptScopeDomain,
+		ScopeID:   "domain-1",
+		Stage:     "editor_assistant",
+		Body:      "domain prompt body",
+		UpdatedBy: "owner@example.com",
+	}); err != nil {
+		t.Fatalf("upsert domain override: %v", err)
+	}
+
+	resolved, err := store.ResolveForDomainStage(ctx, "domain-1", "project-1", "editor_assistant")
+	if err != nil {
+		t.Fatalf("resolve prompt: %v", err)
+	}
+	if resolved.Source != sqlstore.PromptScopeDomain {
+		t.Fatalf("expected domain source, got %s", resolved.Source)
+	}
+	if resolved.Body != "domain prompt body" {
+		t.Fatalf("expected domain body, got %q", resolved.Body)
+	}
+}
+
+func TestPromptOverrideResolve_ProjectFallback(t *testing.T) {
+	s := setupServer(t)
+	store := s.promptOverrides.(*stubPromptOverrideStore)
+	ctx := context.Background()
+
+	if err := store.Upsert(ctx, sqlstore.PromptOverride{
+		ID:        "project-override-2",
+		ScopeType: sqlstore.PromptScopeProject,
+		ScopeID:   "project-2",
+		Stage:     "editor_assistant",
+		Body:      "project fallback body",
+		UpdatedBy: "owner@example.com",
+	}); err != nil {
+		t.Fatalf("upsert project override: %v", err)
+	}
+
+	resolved, err := store.ResolveForDomainStage(ctx, "domain-without-override", "project-2", "editor_assistant")
+	if err != nil {
+		t.Fatalf("resolve prompt: %v", err)
+	}
+	if resolved.Source != sqlstore.PromptScopeProject {
+		t.Fatalf("expected project source, got %s", resolved.Source)
+	}
+	if resolved.Body != "project fallback body" {
+		t.Fatalf("expected project body, got %q", resolved.Body)
+	}
+}
+
+func TestPromptOverrideResolve_GlobalFallback(t *testing.T) {
+	s := setupServer(t)
+	store := s.promptOverrides.(*stubPromptOverrideStore)
+
+	resolved, err := store.ResolveForDomainStage(context.Background(), "domain-none", "project-none", "editor_assistant")
+	if err != nil {
+		t.Fatalf("resolve prompt: %v", err)
+	}
+	if resolved.Source != "global" {
+		t.Fatalf("expected global source, got %s", resolved.Source)
+	}
+}
+
 func TestDomainLinkRunCreatesTask(t *testing.T) {
 	s := setupServer(t)
 
