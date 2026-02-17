@@ -31,25 +31,35 @@ function buildTree(files: EditorFileMeta[]): EditorFileNode[] {
   const root: EditorFileNode = { name: "", path: "", isDir: true, children: [] };
 
   for (const file of files) {
-    const parts = file.path.split("/").filter(Boolean);
+    const normalizedPath = file.path.replace(/\/+$/, "");
+    const parts = normalizedPath.split("/").filter(Boolean);
+    if (parts.length === 0) {
+      continue;
+    }
+    const isDirEntry = (file.mimeType || "").toLowerCase() === "inode/directory";
     let cursor = root;
     for (let i = 0; i < parts.length; i += 1) {
       const part = parts[i];
       const isLast = i === parts.length - 1;
       const fullPath = parts.slice(0, i + 1).join("/");
+      const nodeIsDir = !isLast || (isLast && isDirEntry);
       cursor.children = cursor.children || [];
       let child = cursor.children.find((item) => item.name === part);
       if (!child) {
         child = {
           name: part,
           path: fullPath,
-          isDir: !isLast,
-          children: !isLast ? [] : undefined,
-          file: isLast ? file : undefined
+          isDir: nodeIsDir,
+          children: nodeIsDir ? [] : undefined,
+          file: isLast && !nodeIsDir ? file : undefined
         };
         cursor.children.push(child);
       }
-      if (isLast) {
+      if (nodeIsDir) {
+        child.isDir = true;
+        child.children = child.children || [];
+      }
+      if (isLast && !nodeIsDir) {
         child.file = file;
       }
       cursor = child;
