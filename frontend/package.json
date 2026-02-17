@@ -34,6 +34,8 @@
     "verify:csv-import": "node --import tsx scripts/verify_csv_import.ts",
     "verify:file-editor-route": "node --import tsx scripts/verify_file_editor_route.ts",
     "verify:file-diff-revert": "node --import tsx scripts/verify_file_diff_revert.ts",
+    "verify:ai-editor-panel": "node --import tsx scripts/verify_ai_editor_panel.ts",
+    "verify:ai-create-page-wizard": "node --import tsx scripts/verify_ai_create_page_wizard.ts",
     "verify:file-editor-permissions": "node --import tsx scripts/verify_file_editor_permissions.ts",
     "verify:file-editor-query-open": "node --import tsx scripts/verify_file_editor_query_open.ts",
     "verify:domain-editor-button": "node --import tsx scripts/verify_domain_editor_button.ts",

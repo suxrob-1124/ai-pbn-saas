@@ -24,6 +24,8 @@ import { MonacoEditor } from "../../../../components/MonacoEditor";
 import { apiBase, authFetch } from "../../../../lib/http";
 import {
   SaveConflictError,
+  type AIEditorSuggestionDTO,
+  type AIPageSuggestionDTO,
   aiCreatePage,
   aiSuggestFile,
   createFileOrDir,
@@ -155,10 +157,23 @@ export default function DomainEditorPage() {
   const [aiInstruction, setAiInstruction] = useState("");
   const [aiOutput, setAiOutput] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
+  const [aiModel, setAiModel] = useState("");
+  const [aiContextFiles, setAiContextFiles] = useState("");
+  const [aiSuggestMeta, setAiSuggestMeta] = useState<{
+    source?: string;
+    warnings: string[];
+    tokenUsage?: Record<string, any>;
+  } | null>(null);
   const [aiCreateInstruction, setAiCreateInstruction] = useState("");
   const [aiCreatePath, setAiCreatePath] = useState("new-page.html");
   const [aiCreateBusy, setAiCreateBusy] = useState(false);
+  const [aiCreateModel, setAiCreateModel] = useState("");
   const [aiCreateFiles, setAiCreateFiles] = useState<AIPageSuggestionFile[]>([]);
+  const [aiCreateMeta, setAiCreateMeta] = useState<{
+    source?: string;
+    warnings: string[];
+    tokenUsage?: Record<string, any>;
+  } | null>(null);
   const [conflictState, setConflictState] = useState<{
     currentVersion: number;
     currentHash?: string;
@@ -627,11 +642,26 @@ export default function DomainEditorPage() {
   const onAISuggest = async () => {
     if (!selection?.selectedPath || !aiInstruction.trim()) return;
     setAiBusy(true);
+    setAiSuggestMeta(null);
     try {
-      const result = await aiSuggestFile(domainId, selection.selectedPath, {
+      const contextFiles = aiContextFiles
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .slice(0, 10);
+      const result: AIEditorSuggestionDTO = await aiSuggestFile(domainId, selection.selectedPath, {
         instruction: aiInstruction.trim(),
+        model: aiModel.trim() || undefined,
+        context_files: contextFiles.length > 0 ? contextFiles : undefined,
       });
       setAiOutput(result.suggested_content || "");
+      const promptSource =
+        typeof result.prompt_trace?.resolved_source === "string" ? result.prompt_trace.resolved_source : undefined;
+      setAiSuggestMeta({
+        source: promptSource,
+        warnings: Array.isArray(result.warnings) ? result.warnings : [],
+        tokenUsage: result.token_usage,
+      });
       showToast({ type: "success", title: "AI-предложение готово", message: selection.selectedPath });
     } catch (err: any) {
       showToast({ type: "error", title: "AI suggest error", message: err?.message || "unknown error" });
@@ -652,13 +682,22 @@ export default function DomainEditorPage() {
   const onAICreatePage = async () => {
     if (!aiCreateInstruction.trim() || !aiCreatePath.trim()) return;
     setAiCreateBusy(true);
+    setAiCreateMeta(null);
     try {
-      const result = await aiCreatePage(domainId, {
+      const result: AIPageSuggestionDTO = await aiCreatePage(domainId, {
         instruction: aiCreateInstruction.trim(),
         target_path: aiCreatePath.trim(),
         with_assets: true,
+        model: aiCreateModel.trim() || undefined,
       });
       setAiCreateFiles(result.files || []);
+      const promptSource =
+        typeof result.prompt_trace?.resolved_source === "string" ? result.prompt_trace.resolved_source : undefined;
+      setAiCreateMeta({
+        source: promptSource,
+        warnings: Array.isArray(result.warnings) ? result.warnings : [],
+        tokenUsage: result.token_usage,
+      });
       showToast({ type: "success", title: "AI сгенерировал страницу", message: `${result.files?.length || 0} файлов` });
     } catch (err: any) {
       showToast({ type: "error", title: "AI create-page error", message: err?.message || "unknown error" });
@@ -669,6 +708,8 @@ export default function DomainEditorPage() {
 
   const onApplyCreatedFiles = async () => {
     if (aiCreateFiles.length === 0) return;
+    const confirmed = window.confirm(`Применить ${aiCreateFiles.length} AI-файлов в проект?`);
+    if (!confirmed) return;
     let saved = 0;
     for (const file of aiCreateFiles) {
       try {
@@ -964,6 +1005,18 @@ export default function DomainEditorPage() {
           <div className="grid gap-3 xl:grid-cols-2">
             <div className="rounded-xl border border-slate-200 bg-white/80 p-3 dark:border-slate-800 dark:bg-slate-900/60">
               <h3 className="mb-2 text-sm font-semibold">AI: редактирование файла</h3>
+              <input
+                value={aiModel}
+                onChange={(e) => setAiModel(e.target.value)}
+                placeholder="Модель (опционально), например: gemini-2.5-pro"
+                className="mb-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"
+              />
+              <input
+                value={aiContextFiles}
+                onChange={(e) => setAiContextFiles(e.target.value)}
+                placeholder="Контекст-файлы через запятую, например: style.css,script.js"
+                className="mb-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"
+              />
               <textarea
                 value={aiInstruction}
                 onChange={(e) => setAiInstruction(e.target.value)}
@@ -990,17 +1043,30 @@ export default function DomainEditorPage() {
                 </button>
               </div>
               {aiOutput && (
-                <textarea
-                  value={aiOutput}
-                  onChange={(e) => setAiOutput(e.target.value)}
-                  rows={8}
-                  className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"
-                />
+                <>
+                  <textarea
+                    value={aiOutput}
+                    onChange={(e) => setAiOutput(e.target.value)}
+                    rows={8}
+                    className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"
+                  />
+                  <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-[11px] text-slate-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
+                    <div>Prompt source: {aiSuggestMeta?.source || "unknown"}</div>
+                    <div>Warnings: {aiSuggestMeta?.warnings?.length || 0}</div>
+                    <div>Token usage: {aiSuggestMeta?.tokenUsage ? JSON.stringify(aiSuggestMeta.tokenUsage) : "n/a"}</div>
+                  </div>
+                </>
               )}
             </div>
 
             <div className="rounded-xl border border-slate-200 bg-white/80 p-3 dark:border-slate-800 dark:bg-slate-900/60">
               <h3 className="mb-2 text-sm font-semibold">AI: создать новую страницу</h3>
+              <input
+                value={aiCreateModel}
+                onChange={(e) => setAiCreateModel(e.target.value)}
+                className="mb-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"
+                placeholder="Модель (опционально), например: gemini-2.5-pro"
+              />
               <input
                 value={aiCreatePath}
                 onChange={(e) => setAiCreatePath(e.target.value)}
@@ -1039,6 +1105,13 @@ export default function DomainEditorPage() {
                       {file.path} · {file.mime_type}
                     </div>
                   ))}
+                </div>
+              )}
+              {aiCreateMeta && (
+                <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-[11px] text-slate-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
+                  <div>Prompt source: {aiCreateMeta.source || "unknown"}</div>
+                  <div>Warnings: {aiCreateMeta.warnings.length}</div>
+                  <div>Token usage: {aiCreateMeta.tokenUsage ? JSON.stringify(aiCreateMeta.tokenUsage) : "n/a"}</div>
                 </div>
               )}
             </div>
