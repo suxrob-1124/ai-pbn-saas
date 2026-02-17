@@ -55,6 +55,16 @@ type DomainSummaryResponse = {
   my_role: "admin" | "owner" | "editor" | "viewer";
 };
 
+const EDITOR_MODEL_OPTIONS = [
+  { value: "", label: `По умолчанию (${process.env.NEXT_PUBLIC_GEMINI_DEFAULT_MODEL || "gemini-2.5-pro"})` },
+  { value: "gemini-3-pro-preview", label: "gemini-3-pro-preview" },
+  { value: "gemini-2.5-pro", label: "gemini-2.5-pro" },
+  { value: "gemini-2.5-flash", label: "gemini-2.5-flash" },
+  { value: "gemini-2.5-flash-image", label: "gemini-2.5-flash-image" },
+  { value: "gemini-1.5-pro", label: "gemini-1.5-pro" },
+  { value: "gemini-1.5-flash", label: "gemini-1.5-flash" },
+];
+
 const detectLanguage = (pathValue: string) => {
   const path = pathValue.toLowerCase();
   if (path.endsWith(".html") || path.endsWith(".htm")) return "html";
@@ -1033,12 +1043,18 @@ export default function DomainEditorPage() {
           <div className="grid gap-3 xl:grid-cols-2">
             <div className="rounded-xl border border-slate-200 bg-white/80 p-3 dark:border-slate-800 dark:bg-slate-900/60">
               <h3 className="mb-2 text-sm font-semibold">AI: редактирование файла</h3>
-              <input
+              <label className="mb-1 block text-xs text-slate-500 dark:text-slate-400">Версия модели</label>
+              <select
                 value={aiModel}
                 onChange={(e) => setAiModel(e.target.value)}
-                placeholder="Модель (опционально), например: gemini-2.5-pro"
                 className="mb-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"
-              />
+              >
+                {EDITOR_MODEL_OPTIONS.map((item) => (
+                  <option key={`ai-suggest-model-${item.value || "default"}`} value={item.value}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
               <input
                 value={aiContextFiles}
                 onChange={(e) => setAiContextFiles(e.target.value)}
@@ -1121,12 +1137,18 @@ export default function DomainEditorPage() {
 
             <div className="rounded-xl border border-slate-200 bg-white/80 p-3 dark:border-slate-800 dark:bg-slate-900/60">
               <h3 className="mb-2 text-sm font-semibold">AI: создать новую страницу</h3>
-              <input
+              <label className="mb-1 block text-xs text-slate-500 dark:text-slate-400">Версия модели</label>
+              <select
                 value={aiCreateModel}
                 onChange={(e) => setAiCreateModel(e.target.value)}
                 className="mb-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"
-                placeholder="Модель (опционально), например: gemini-2.5-pro"
-              />
+              >
+                {EDITOR_MODEL_OPTIONS.map((item) => (
+                  <option key={`ai-create-model-${item.value || "default"}`} value={item.value}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
               <input
                 value={aiCreatePath}
                 onChange={(e) => setAiCreatePath(e.target.value)}

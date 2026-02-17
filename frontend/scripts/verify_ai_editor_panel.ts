@@ -10,7 +10,7 @@ const page = readFileSync(pagePath, "utf8");
 
 assert.ok(page.includes("AI: редактирование файла"), "missing AI file edit panel");
 assert.ok(page.includes("Контекст-файлы через запятую"), "missing context-files input");
-assert.ok(page.includes("Модель (опционально)"), "missing model input for AI suggest");
+assert.ok(page.includes("Версия модели"), "missing model select for AI suggest");
 assert.ok(page.includes("Prompt source:"), "missing prompt source output");
 assert.ok(page.includes("Token usage:"), "missing token usage output");
 assert.ok(page.includes("View diff"), "missing diff preview action");
