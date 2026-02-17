@@ -1036,6 +1036,36 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AIPageSuggestionResponse"
+        "422":
+          description: Невалидный формат ответа AI (strict JSON contract)
+  /api/domains/{domainId}/editor/context-pack:
+    get:
+      tags: [Files]
+      summary: Диагностика собранного context pack для AI-редактора
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+        - in: query
+          name: target_path
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: context_mode
+          schema:
+            type: string
+            enum: [auto, manual, hybrid]
+        - in: query
+          name: context_files
+          schema:
+            type: string
+            description: Файлы через запятую
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EditorContextPackResponse"
   /api/generations:
     get:
       tags: [Generations]
@@ -2834,6 +2864,9 @@ components:
           type: array
           items:
             type: string
+        context_mode:
+          type: string
+          enum: [auto, manual, hybrid]
       required: [instruction]
     FileAISuggestResponse:
       type: object
@@ -2855,6 +2888,8 @@ components:
           additionalProperties: true
         mime_type:
           type: string
+        context_pack_meta:
+          $ref: "#/components/schemas/ContextPackMeta"
       required: [suggested_content, diff_summary, warnings, prompt_trace, token_usage, mime_type]
     AIPageSuggestionRequest:
       type: object
@@ -2867,6 +2902,13 @@ components:
           type: boolean
         model:
           type: string
+        context_mode:
+          type: string
+          enum: [auto, manual, hybrid]
+        context_files:
+          type: array
+          items:
+            type: string
       required: [instruction, target_path]
     AIPageSuggestionFile:
       type: object
@@ -2895,7 +2937,38 @@ components:
         token_usage:
           type: object
           additionalProperties: true
+        context_pack_meta:
+          $ref: "#/components/schemas/ContextPackMeta"
       required: [files, warnings, prompt_trace, token_usage]
+    ContextPackMeta:
+      type: object
+      properties:
+        pack_hash:
+          type: string
+        files_used:
+          type: integer
+        bytes_used:
+          type: integer
+        truncated:
+          type: boolean
+        source_files:
+          type: array
+          items:
+            type: string
+      required: [pack_hash, files_used, bytes_used, truncated, source_files]
+    EditorContextPackResponse:
+      type: object
+      properties:
+        target_path:
+          type: string
+        context_mode:
+          type: string
+          enum: [auto, manual, hybrid]
+        context_pack_meta:
+          $ref: "#/components/schemas/ContextPackMeta"
+        site_context:
+          type: string
+      required: [target_path, context_mode, context_pack_meta, site_context]
     DomainSummary:
       type: object
       properties:
