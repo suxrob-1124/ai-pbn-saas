@@ -26,6 +26,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -220,6 +221,8 @@ type Server struct {
 	genStatus       *prometheus.GaugeVec
 	registry        *prometheus.Registry
 	logger          *zap.SugaredLogger
+	editorCtxMu     sync.Mutex
+	editorCtxCache  map[string]editorContextPackCacheEntry
 }
 
 func New(cfg config.Config, svc *auth.Service, logger *zap.SugaredLogger, projects ProjectStore, projectMembers *sqlstore.ProjectMemberStore, domains DomainStore, generations GenerationStore, prompts PromptStore, promptOverrides PromptOverrideStore, deployments DeploymentAttemptStore, schedules ScheduleStore, linkSchedules LinkScheduleStore, auditRules *sqlstore.AuditStore, siteFiles SiteFileStore, fileEdits FileEditStore, linkTasks LinkTaskStore, genQueue GenQueueStore, indexChecks IndexCheckStore, checkHistory CheckHistoryStore, tq tasks.Enqueuer) *Server {
@@ -270,6 +273,7 @@ func New(cfg config.Config, svc *auth.Service, logger *zap.SugaredLogger, projec
 		genStatus:       genStatus,
 		registry:        registry,
 		logger:          logger,
+		editorCtxCache:  make(map[string]editorContextPackCacheEntry),
 	}
 	s.startGenerationMetricsLoop()
 	return s
@@ -2564,6 +2568,160 @@ func (s *Server) handleDomainFiles(w http.ResponseWriter, r *http.Request, domai
 	}
 }
 
+const (
+	editorContextPackMaxTotalBytes   = 180 * 1024
+	editorContextPackMaxFileBytes    = 40 * 1024
+	editorContextPackMaxFiles        = 20
+	editorContextPackCacheTTL        = 10 * time.Minute
+	editorContextPackCacheMaxEntries = 200
+)
+
+type editorContextPackCacheEntry struct {
+	Prompt    string
+	Meta      editorContextPackMeta
+	ExpiresAt time.Time
+}
+
+type editorContextPackMeta struct {
+	PackHash    string   `json:"pack_hash"`
+	FilesUsed   int      `json:"files_used"`
+	BytesUsed   int      `json:"bytes_used"`
+	Truncated   bool     `json:"truncated"`
+	SourceFiles []string `json:"source_files"`
+}
+
+type editorGeneratedFile struct {
+	Path     string `json:"path"`
+	Content  string `json:"content"`
+	MimeType string `json:"mime_type"`
+}
+
+func normalizeEditorContextMode(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "manual":
+		return "manual"
+	case "hybrid":
+		return "hybrid"
+	default:
+		return "auto"
+	}
+}
+
+func stripMarkdownFences(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if strings.HasPrefix(trimmed, "```") {
+		lines := strings.Split(trimmed, "\n")
+		if len(lines) >= 2 {
+			lines = lines[1:]
+		}
+		if len(lines) > 0 && strings.HasPrefix(strings.TrimSpace(lines[len(lines)-1]), "```") {
+			lines = lines[:len(lines)-1]
+		}
+		return strings.TrimSpace(strings.Join(lines, "\n"))
+	}
+	return trimmed
+}
+
+func parseJSONGeneratedFiles(raw string) ([]editorGeneratedFile, []string, error) {
+	cleaned := stripMarkdownFences(raw)
+	var payload struct {
+		Files    []editorGeneratedFile `json:"files"`
+		Warnings []string              `json:"warnings"`
+	}
+	if err := json.Unmarshal([]byte(cleaned), &payload); err != nil {
+		return nil, nil, err
+	}
+	if len(payload.Files) == 0 {
+		return nil, payload.Warnings, errors.New("empty files array")
+	}
+	return payload.Files, payload.Warnings, nil
+}
+
+func sanitizeAISuggestContent(raw string, currentContent string) (string, []string) {
+	warnings := make([]string, 0)
+	cleaned := stripMarkdownFences(raw)
+	if cleaned == "" {
+		return currentContent, []string{"AI вернул пустой ответ, применен no-op"}
+	}
+
+	var wrapped struct {
+		Suggested string `json:"suggested_content"`
+		Content   string `json:"content"`
+		Files     []struct {
+			Content string `json:"content"`
+		} `json:"files"`
+	}
+	if json.Unmarshal([]byte(cleaned), &wrapped) == nil {
+		switch {
+		case strings.TrimSpace(wrapped.Suggested) != "":
+			cleaned = strings.TrimSpace(wrapped.Suggested)
+			warnings = append(warnings, "AI вернул JSON-wrapper, извлечено suggested_content")
+		case strings.TrimSpace(wrapped.Content) != "":
+			cleaned = strings.TrimSpace(wrapped.Content)
+			warnings = append(warnings, "AI вернул JSON-wrapper, извлечено content")
+		case len(wrapped.Files) > 0 && strings.TrimSpace(wrapped.Files[0].Content) != "":
+			cleaned = strings.TrimSpace(wrapped.Files[0].Content)
+			warnings = append(warnings, "AI вернул JSON-wrapper, извлечен первый files[].content")
+		}
+	}
+
+	lowered := strings.ToLower(cleaned)
+	if strings.Contains(lowered, "предоставьте содержимое файла") || strings.Contains(lowered, "provide file content") {
+		return currentContent, []string{"AI не смог выполнить изменение без контекста файла, применен no-op"}
+	}
+	return cleaned, warnings
+}
+
+func defaultEditorFilePrompt() string {
+	return `Ты — AI-редактор файлов сайта.
+Верни ТОЛЬКО финальный контент текущего файла, без markdown fence, без JSON, без пояснений.
+
+Контекст сайта:
+{{site_context}}
+
+Ограничения задачи:
+{{task_constraints}}
+
+Текущий файл:
+Путь: {{current_file_path}}
+Содержимое:
+{{current_file_content}}
+
+Инструкция пользователя:
+{{instruction}}`
+}
+
+func defaultEditorPagePrompt() string {
+	return `Ты — AI-ассистент по созданию страниц сайта.
+Верни СТРОГО валидный JSON (без markdown fence, без комментариев):
+{"files":[{"path":"...","content":"...","mime_type":"..."}],"warnings":[]}
+
+Правила:
+1) files должен содержать минимум 1 файл.
+2) Путь target страницы: {{target_path}}.
+3) Соблюдай язык сайта и стиль существующего проекта.
+4) Не добавляй посторонних ключей вне schema.
+
+Контекст сайта:
+{{site_context}}
+
+Ограничения задачи:
+{{task_constraints}}
+
+Инструкция пользователя:
+{{instruction}}`
+}
+
+func buildEditorRepairPrompt(raw string) string {
+	return fmt.Sprintf(`Исправь ответ в СТРОГО валидный JSON без markdown fence.
+Schema:
+{"files":[{"path":"...","content":"...","mime_type":"..."}],"warnings":[]}
+Верни только JSON.
+
+Исходный ответ:
+%s`, raw)
+}
+
 func (s *Server) handleDomainEditorActions(w http.ResponseWriter, r *http.Request, domainID string, parts []string) {
 	user, ok := currentUserFromContext(r.Context())
 	if !ok || user.Email == "" {
@@ -2592,120 +2750,222 @@ func (s *Server) handleDomainEditorActions(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
-	if parts[0] != "ai-create-page" || r.Method != http.MethodPost {
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	}
-	if !ensureJSON(w, r) {
-		return
-	}
-	defer r.Body.Close()
-	var body struct {
-		Instruction string `json:"instruction"`
-		TargetPath  string `json:"target_path"`
-		WithAssets  bool   `json:"with_assets"`
-		Model       string `json:"model"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid body")
-		return
-	}
-	instruction := strings.TrimSpace(body.Instruction)
-	targetPath := strings.TrimSpace(body.TargetPath)
-	if instruction == "" || targetPath == "" {
-		writeError(w, http.StatusBadRequest, "instruction and target_path are required")
-		return
-	}
-	if !strings.HasSuffix(strings.ToLower(targetPath), ".html") {
-		targetPath += ".html"
-	}
-	cleanTarget, err := sanitizeFilePath(targetPath)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid target_path")
-		return
-	}
-	if err := validateEditorPath(cleanTarget); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	systemPrompt := "Ты помощник редактора сайтов. Верни JSON объект вида {\"files\":[{\"path\":\"...\",\"content\":\"...\",\"mime_type\":\"...\"}],\"warnings\":[]}. Только JSON, без пояснений."
-	promptSource := "fallback"
-	if s.promptOverrides != nil {
-		if resolved, rerr := s.promptOverrides.ResolveForDomainStage(r.Context(), domain.ID, project.ID, "editor_assistant"); rerr == nil && strings.TrimSpace(resolved.Body) != "" {
-			systemPrompt = resolved.Body
-			promptSource = resolved.Source
+	switch parts[0] {
+	case "context-pack":
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
 		}
-	}
-	selectedModel := strings.TrimSpace(body.Model)
-	withAssets := "false"
-	if body.WithAssets {
-		withAssets = "true"
-	}
-	prompt := llm.BuildPrompt(systemPrompt, "", map[string]string{
-		"instruction": instruction,
-		"target_path": cleanTarget,
-		"domain_url":  domain.URL,
-		"language":    domain.TargetLanguage,
-		"keyword":     domain.MainKeyword,
-		"with_assets": withAssets,
-	})
-	response, tokenUsage, err := s.generateEditorSuggestion(r.Context(), user.Email, project.UserEmail, selectedModel, prompt)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	files := make([]map[string]any, 0)
-	warnings := make([]string, 0)
-	var parsed struct {
-		Files []struct {
-			Path    string `json:"path"`
-			Content string `json:"content"`
-			Mime    string `json:"mime_type"`
-		} `json:"files"`
-		Warnings []string `json:"warnings"`
-	}
-	if err := json.Unmarshal([]byte(response), &parsed); err != nil || len(parsed.Files) == 0 {
-		files = append(files, map[string]any{
-			"path":      cleanTarget,
-			"content":   response,
-			"mime_type": "text/html",
+		if !hasProjectPermission(user.Role, memberRole, "viewer") {
+			writeError(w, http.StatusForbidden, "insufficient permissions: viewer role required")
+			return
+		}
+		targetPath := strings.TrimSpace(r.URL.Query().Get("target_path"))
+		if targetPath == "" {
+			targetPath = "index.html"
+		}
+		if !strings.HasSuffix(strings.ToLower(targetPath), ".html") {
+			targetPath += ".html"
+		}
+		cleanTarget, err := sanitizeFilePath(targetPath)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid target_path")
+			return
+		}
+		if err := validateEditorPath(cleanTarget); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		contextMode := normalizeEditorContextMode(r.URL.Query().Get("context_mode"))
+		var contextFiles []string
+		for _, raw := range strings.Split(strings.TrimSpace(r.URL.Query().Get("context_files")), ",") {
+			raw = strings.TrimSpace(raw)
+			if raw != "" {
+				contextFiles = append(contextFiles, raw)
+			}
+		}
+		packPrompt, meta, err := s.buildEditorContextPack(r.Context(), domain, cleanTarget, "", contextFiles, contextMode)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not build context pack")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"target_path":       cleanTarget,
+			"context_mode":      contextMode,
+			"context_pack_meta": meta,
+			"site_context":      packPrompt,
 		})
-		warnings = append(warnings, "LLM вернул не-JSON, использован fallback в один HTML файл")
-	} else {
-		for _, file := range parsed.Files {
+		return
+	case "ai-create-page":
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		if !ensureJSON(w, r) {
+			return
+		}
+		defer r.Body.Close()
+		var body struct {
+			Instruction  string   `json:"instruction"`
+			TargetPath   string   `json:"target_path"`
+			WithAssets   bool     `json:"with_assets"`
+			Model        string   `json:"model"`
+			ContextMode  string   `json:"context_mode"`
+			ContextFiles []string `json:"context_files"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid body")
+			return
+		}
+		instruction := strings.TrimSpace(body.Instruction)
+		targetPath := strings.TrimSpace(body.TargetPath)
+		if instruction == "" || targetPath == "" {
+			writeError(w, http.StatusBadRequest, "instruction and target_path are required")
+			return
+		}
+		if !strings.HasSuffix(strings.ToLower(targetPath), ".html") {
+			targetPath += ".html"
+		}
+		cleanTarget, err := sanitizeFilePath(targetPath)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid target_path")
+			return
+		}
+		if err := validateEditorPath(cleanTarget); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		contextMode := normalizeEditorContextMode(body.ContextMode)
+		siteContext, contextMeta, err := s.buildEditorContextPack(r.Context(), domain, cleanTarget, "", body.ContextFiles, contextMode)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not build context pack")
+			return
+		}
+		systemPrompt, promptSource, modelFromPrompt := s.resolveEditorPrompt(r.Context(), domain.ID, project.ID, "editor_page_create", defaultEditorPagePrompt())
+		selectedModel := strings.TrimSpace(body.Model)
+		if selectedModel == "" {
+			selectedModel = modelFromPrompt
+		}
+		withAssets := "false"
+		if body.WithAssets {
+			withAssets = "true"
+		}
+		taskConstraints := fmt.Sprintf("operation=create_page\ncontext_mode=%s\ntarget_path=%s\nlanguage=%s\nkeyword=%s\nwith_assets=%s",
+			contextMode,
+			cleanTarget,
+			domain.TargetLanguage,
+			domain.MainKeyword,
+			withAssets,
+		)
+		prompt := llm.BuildPrompt(systemPrompt, "", map[string]string{
+			"instruction":      instruction,
+			"target_path":      cleanTarget,
+			"domain_url":       domain.URL,
+			"language":         domain.TargetLanguage,
+			"keyword":          domain.MainKeyword,
+			"with_assets":      withAssets,
+			"site_context":     siteContext,
+			"task_constraints": taskConstraints,
+		})
+		response, tokenUsage, err := s.generateEditorSuggestion(r.Context(), user.Email, project.UserEmail, "editor_page_create", selectedModel, prompt)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		repairCount := 0
+		var parsedFiles []editorGeneratedFile
+		var warnings []string
+		var parseErr error
+		currentResponse := response
+		for attempt := 0; attempt < 3; attempt++ {
+			parsedFiles, warnings, parseErr = parseJSONGeneratedFiles(currentResponse)
+			if parseErr == nil {
+				break
+			}
+			if attempt == 2 {
+				break
+			}
+			repairPrompt := buildEditorRepairPrompt(currentResponse)
+			currentResponse, tokenUsage, err = s.generateEditorSuggestion(r.Context(), user.Email, project.UserEmail, "editor_page_create", selectedModel, repairPrompt)
+			if err != nil {
+				writeError(w, http.StatusBadGateway, err.Error())
+				return
+			}
+			repairCount++
+		}
+		if parseErr != nil {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+				"error":             "ai_response_invalid_format",
+				"message":           "AI returned invalid JSON format after repair attempts",
+				"repair_attempts":   repairCount,
+				"context_pack_meta": contextMeta,
+			})
+			return
+		}
+		outFiles := make([]map[string]any, 0, len(parsedFiles))
+		for _, file := range parsedFiles {
 			cleanPath, err := sanitizeFilePath(file.Path)
 			if err != nil {
+				warnings = append(warnings, fmt.Sprintf("invalid path skipped: %s", file.Path))
 				continue
 			}
 			if err := validateEditorPath(cleanPath); err != nil {
+				warnings = append(warnings, fmt.Sprintf("protected path skipped: %s", cleanPath))
 				continue
 			}
-			mimeType := strings.TrimSpace(file.Mime)
-			if mimeType == "" {
-				mimeType = detectMimeType(cleanPath, []byte(file.Content))
+			if err := validateUploadPathPolicy(cleanPath); err != nil {
+				warnings = append(warnings, fmt.Sprintf("blocked file type skipped: %s", cleanPath))
+				continue
 			}
-			files = append(files, map[string]any{
+			content := file.Content
+			if strings.TrimSpace(content) == "" {
+				warnings = append(warnings, fmt.Sprintf("empty content skipped: %s", cleanPath))
+				continue
+			}
+			detected := detectMimeType(cleanPath, []byte(content))
+			mimeType := strings.TrimSpace(file.MimeType)
+			if mimeType == "" {
+				mimeType = detected
+			} else if err := validateMimeType(cleanPath, detected, mimeType); err != nil {
+				warnings = append(warnings, fmt.Sprintf("mime mismatch skipped: %s", cleanPath))
+				continue
+			}
+			if err := validateUploadSecurity(cleanPath, mimeType, []byte(content)); err != nil {
+				warnings = append(warnings, fmt.Sprintf("security validation skipped: %s", cleanPath))
+				continue
+			}
+			outFiles = append(outFiles, map[string]any{
 				"path":      cleanPath,
-				"content":   file.Content,
+				"content":   content,
 				"mime_type": mimeType,
 			})
 		}
-		warnings = append(warnings, parsed.Warnings...)
-	}
-	if len(files) == 0 {
-		writeError(w, http.StatusBadGateway, "could not build files from ai response")
+		if len(outFiles) == 0 {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+				"error":             "ai_response_invalid_format",
+				"message":           "no valid files after validation",
+				"warnings":          warnings,
+				"context_pack_meta": contextMeta,
+			})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"files":    outFiles,
+			"warnings": warnings,
+			"prompt_trace": map[string]any{
+				"resolved_source": promptSource,
+				"model":           selectedModel,
+				"stage":           "editor_page_create",
+				"repair_attempts": repairCount,
+			},
+			"token_usage":       tokenUsage,
+			"context_pack_meta": contextMeta,
+		})
+		return
+	default:
+		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"files":    files,
-		"warnings": warnings,
-		"prompt_trace": map[string]any{
-			"resolved_source": promptSource,
-			"model":           selectedModel,
-		},
-		"token_usage": tokenUsage,
-	})
 }
 
 func (s *Server) handleDomainLinks(w http.ResponseWriter, r *http.Request, domainID string, parts []string) {
@@ -4087,6 +4347,7 @@ func (s *Server) handleFileAISuggest(w http.ResponseWriter, r *http.Request, dom
 		Model        string   `json:"model"`
 		Selection    string   `json:"selection"`
 		ContextFiles []string `json:"context_files"`
+		ContextMode  string   `json:"context_mode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
@@ -4106,30 +4367,23 @@ func (s *Server) handleFileAISuggest(w http.ResponseWriter, r *http.Request, dom
 		writeError(w, http.StatusInternalServerError, "could not read file")
 		return
 	}
-	systemPrompt := "Ты редактор файлов сайта. Верни только финальную версию файла без пояснений."
-	promptSource := "fallback"
-	if s.promptOverrides != nil {
-		if resolved, rerr := s.promptOverrides.ResolveForDomainStage(r.Context(), domain.ID, project.ID, "editor_assistant"); rerr == nil && strings.TrimSpace(resolved.Body) != "" {
-			systemPrompt = resolved.Body
-			promptSource = resolved.Source
-		}
+	contextMode := normalizeEditorContextMode(body.ContextMode)
+	siteContext, contextMeta, err := s.buildEditorContextPack(r.Context(), domain, relPath, relPath, body.ContextFiles, contextMode)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not build context pack")
+		return
 	}
-	var ctxText strings.Builder
-	for _, item := range body.ContextFiles {
-		clean, err := sanitizeFilePath(item)
-		if err != nil || clean == relPath {
-			continue
-		}
-		ctxContent, _, err := s.readDomainFileContent(r.Context(), domain, clean)
-		if err != nil {
-			continue
-		}
-		if len(ctxContent) > 8000 {
-			ctxContent = ctxContent[:8000]
-		}
-		ctxText.WriteString("\n\n[CONTEXT FILE] " + clean + "\n" + ctxContent)
-	}
+	systemPrompt, promptSource, modelFromPrompt := s.resolveEditorPrompt(r.Context(), domain.ID, project.ID, "editor_file_edit", defaultEditorFilePrompt())
 	selectedModel := strings.TrimSpace(body.Model)
+	if selectedModel == "" {
+		selectedModel = modelFromPrompt
+	}
+	taskConstraints := fmt.Sprintf("operation=edit_file\ncontext_mode=%s\ncurrent_file=%s\nlanguage=%s\nkeyword=%s",
+		contextMode,
+		relPath,
+		domain.TargetLanguage,
+		domain.MainKeyword,
+	)
 	prompt := llm.BuildPrompt(systemPrompt, "", map[string]string{
 		"instruction":          instruction,
 		"current_file_path":    relPath,
@@ -4138,26 +4392,30 @@ func (s *Server) handleFileAISuggest(w http.ResponseWriter, r *http.Request, dom
 		"language":             domain.TargetLanguage,
 		"keyword":              domain.MainKeyword,
 		"selection":            strings.TrimSpace(body.Selection),
-		"context_files":        ctxText.String(),
+		"site_context":         siteContext,
+		"task_constraints":     taskConstraints,
 	})
-	suggested, tokenUsage, err := s.generateEditorSuggestion(r.Context(), requesterEmail, project.UserEmail, selectedModel, prompt)
+	suggestedRaw, tokenUsage, err := s.generateEditorSuggestion(r.Context(), requesterEmail, project.UserEmail, "editor_file_edit", selectedModel, prompt)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
+	suggested, warnings := sanitizeAISuggestContent(suggestedRaw, content)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"suggested_content": suggested,
 		"diff_summary": map[string]any{
 			"old_bytes": len(content),
 			"new_bytes": len(suggested),
 		},
-		"warnings": []string{},
+		"warnings": warnings,
 		"prompt_trace": map[string]any{
 			"resolved_source": promptSource,
 			"model":           selectedModel,
+			"stage":           "editor_file_edit",
 		},
-		"token_usage": tokenUsage,
-		"mime_type":   mimeType,
+		"token_usage":       tokenUsage,
+		"mime_type":         mimeType,
+		"context_pack_meta": contextMeta,
 	})
 }
 
@@ -9248,7 +9506,337 @@ func (s *Server) resolveEditorAPIKey(ctx context.Context, requesterEmail, ownerE
 	return "", "", errors.New("gemini api key not configured")
 }
 
-func (s *Server) generateEditorSuggestion(ctx context.Context, requesterEmail, ownerEmail, model, prompt string) (string, map[string]any, error) {
+func (s *Server) resolveEditorPrompt(ctx context.Context, domainID, projectID, stage, fallback string) (string, string, string) {
+	promptBody := fallback
+	promptSource := "fallback"
+	promptModel := ""
+	if s.promptOverrides != nil {
+		if resolved, err := s.promptOverrides.ResolveForDomainStage(ctx, domainID, projectID, stage); err == nil {
+			if strings.TrimSpace(resolved.Body) != "" {
+				promptBody = resolved.Body
+				promptSource = resolved.Source
+			}
+			if resolved.Model.Valid {
+				promptModel = strings.TrimSpace(resolved.Model.String)
+			}
+		}
+	}
+	return promptBody, promptSource, promptModel
+}
+
+func extractCSSVariables(styleContent string, limit int) []string {
+	if limit <= 0 {
+		limit = 20
+	}
+	out := make([]string, 0, limit)
+	for _, line := range strings.Split(styleContent, "\n") {
+		l := strings.TrimSpace(line)
+		if !strings.Contains(l, "--") || !strings.Contains(l, ":") {
+			continue
+		}
+		if strings.HasPrefix(l, "/*") || strings.HasPrefix(l, "*") {
+			continue
+		}
+		out = append(out, l)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func extractLocalHrefValues(html string, limit int) []string {
+	if limit <= 0 {
+		limit = 20
+	}
+	out := make([]string, 0, limit)
+	seen := map[string]struct{}{}
+	rest := html
+	for len(out) < limit {
+		idx := strings.Index(strings.ToLower(rest), "href=")
+		if idx < 0 {
+			break
+		}
+		rest = rest[idx+5:]
+		rest = strings.TrimLeft(rest, " \t\r\n")
+		if len(rest) == 0 {
+			break
+		}
+		quote := rest[0]
+		if quote != '"' && quote != '\'' {
+			continue
+		}
+		rest = rest[1:]
+		end := strings.IndexByte(rest, quote)
+		if end < 0 {
+			break
+		}
+		val := strings.TrimSpace(rest[:end])
+		rest = rest[end+1:]
+		if val == "" || strings.HasPrefix(val, "#") {
+			continue
+		}
+		lower := strings.ToLower(val)
+		if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") || strings.HasPrefix(lower, "mailto:") || strings.HasPrefix(lower, "tel:") || strings.HasPrefix(lower, "javascript:") || strings.HasPrefix(lower, "data:") {
+			continue
+		}
+		if _, ok := seen[val]; ok {
+			continue
+		}
+		seen[val] = struct{}{}
+		out = append(out, val)
+	}
+	return out
+}
+
+func (s *Server) readDomainFileBytes(domain sqlstore.Domain, relPath string) ([]byte, error) {
+	domainDir, err := domainFilesDir(domain.URL)
+	if err != nil {
+		return nil, err
+	}
+	fullPath := filepath.Join(domainDir, filepath.FromSlash(relPath))
+	if err := ensurePathWithin(domainDir, fullPath); err != nil {
+		return nil, err
+	}
+	content, err := os.ReadFile(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, sql.ErrNoRows
+		}
+		return nil, err
+	}
+	return content, nil
+}
+
+func (s *Server) pruneEditorContextCacheLocked(now time.Time) {
+	for key, item := range s.editorCtxCache {
+		if now.After(item.ExpiresAt) {
+			delete(s.editorCtxCache, key)
+		}
+	}
+	if len(s.editorCtxCache) <= editorContextPackCacheMaxEntries {
+		return
+	}
+	type pair struct {
+		Key string
+		Exp time.Time
+	}
+	all := make([]pair, 0, len(s.editorCtxCache))
+	for key, item := range s.editorCtxCache {
+		all = append(all, pair{Key: key, Exp: item.ExpiresAt})
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].Exp.Before(all[j].Exp) })
+	needDrop := len(s.editorCtxCache) - editorContextPackCacheMaxEntries
+	for i := 0; i < needDrop && i < len(all); i++ {
+		delete(s.editorCtxCache, all[i].Key)
+	}
+}
+
+func (s *Server) buildEditorContextPack(ctx context.Context, domain sqlstore.Domain, targetPath, currentPath string, userSelected []string, mode string) (string, editorContextPackMeta, error) {
+	meta := editorContextPackMeta{
+		SourceFiles: make([]string, 0, editorContextPackMaxFiles),
+	}
+	mode = normalizeEditorContextMode(mode)
+	files, err := s.siteFiles.List(ctx, domain.ID)
+	if err != nil {
+		return "", meta, err
+	}
+	byPath := make(map[string]sqlstore.SiteFile, len(files))
+	for _, f := range files {
+		byPath[f.Path] = f
+	}
+
+	baseCandidates := []string{
+		"index.html",
+		"style.css",
+		"script.js",
+		"404.html",
+		"robots.txt",
+		"sitemap.xml",
+	}
+	if strings.TrimSpace(currentPath) != "" {
+		baseCandidates = append([]string{currentPath}, baseCandidates...)
+	}
+	if strings.TrimSpace(targetPath) != "" {
+		baseCandidates = append([]string{targetPath}, baseCandidates...)
+	}
+	logoCandidates := make([]string, 0, 4)
+	for _, f := range files {
+		name := strings.ToLower(path.Base(f.Path))
+		if strings.Contains(name, "logo.") || strings.HasPrefix(name, "logo-") {
+			logoCandidates = append(logoCandidates, f.Path)
+		}
+	}
+	sort.Strings(logoCandidates)
+	if len(logoCandidates) > 4 {
+		logoCandidates = logoCandidates[:4]
+	}
+
+	sanitizeSelected := make([]string, 0, len(userSelected))
+	for _, raw := range userSelected {
+		clean, err := sanitizeFilePath(raw)
+		if err != nil {
+			continue
+		}
+		if err := validateEditorPath(clean); err != nil {
+			continue
+		}
+		if _, ok := byPath[clean]; ok {
+			sanitizeSelected = append(sanitizeSelected, clean)
+		}
+	}
+
+	candidates := make([]string, 0, editorContextPackMaxFiles+8)
+	switch mode {
+	case "manual":
+		candidates = append(candidates, sanitizeSelected...)
+	case "hybrid":
+		candidates = append(candidates, baseCandidates...)
+		candidates = append(candidates, logoCandidates...)
+		candidates = append(candidates, sanitizeSelected...)
+	default:
+		candidates = append(candidates, baseCandidates...)
+		candidates = append(candidates, logoCandidates...)
+	}
+	seen := map[string]struct{}{}
+	finalPaths := make([]string, 0, editorContextPackMaxFiles)
+	for _, p := range candidates {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if _, ok := byPath[p]; !ok {
+			continue
+		}
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		finalPaths = append(finalPaths, p)
+		if len(finalPaths) >= editorContextPackMaxFiles {
+			break
+		}
+	}
+
+	signatureParts := make([]string, 0, len(finalPaths)+8)
+	signatureParts = append(signatureParts, domain.ID, mode, targetPath, currentPath)
+	for _, p := range finalPaths {
+		f := byPath[p]
+		hash := ""
+		if f.ContentHash.Valid {
+			hash = strings.TrimSpace(f.ContentHash.String)
+		}
+		signatureParts = append(signatureParts, fmt.Sprintf("%s|%d|%s", p, f.Version, hash))
+	}
+	cacheKeyBytes := sha256.Sum256([]byte(strings.Join(signatureParts, "\n")))
+	cacheKey := hex.EncodeToString(cacheKeyBytes[:])
+	now := time.Now().UTC()
+	s.editorCtxMu.Lock()
+	if cached, ok := s.editorCtxCache[cacheKey]; ok && now.Before(cached.ExpiresAt) {
+		s.editorCtxMu.Unlock()
+		return cached.Prompt, cached.Meta, nil
+	}
+	s.editorCtxMu.Unlock()
+
+	var builder strings.Builder
+	builder.WriteString("SITE_CONTEXT\n")
+	builder.WriteString(fmt.Sprintf("identity.domain_url=%s\n", domain.URL))
+	builder.WriteString(fmt.Sprintf("identity.language=%s\n", strings.TrimSpace(domain.TargetLanguage)))
+	builder.WriteString(fmt.Sprintf("identity.country=%s\n", strings.TrimSpace(domain.TargetCountry)))
+	builder.WriteString(fmt.Sprintf("identity.keyword=%s\n", strings.TrimSpace(domain.MainKeyword)))
+	builder.WriteString(fmt.Sprintf("identity.context_mode=%s\n", mode))
+
+	totalBytes := 0
+	truncated := false
+	styleContent := ""
+	indexContent := ""
+	for _, p := range finalPaths {
+		file := byPath[p]
+		meta.SourceFiles = append(meta.SourceFiles, p)
+		raw, err := s.readDomainFileBytes(domain, p)
+		if err != nil {
+			continue
+		}
+		builder.WriteString("\n\n[FILE] ")
+		builder.WriteString(p)
+		builder.WriteString("\n")
+		builder.WriteString("mime=")
+		builder.WriteString(file.MimeType)
+		builder.WriteString("\n")
+		if isBinaryMimeType(file.MimeType) {
+			builder.WriteString(fmt.Sprintf("binary_meta.size_bytes=%d\n", len(raw)))
+			continue
+		}
+		content := string(raw)
+		if p == "style.css" {
+			styleContent = content
+		}
+		if p == "index.html" {
+			indexContent = content
+		}
+		if len(content) > editorContextPackMaxFileBytes {
+			content = content[:editorContextPackMaxFileBytes]
+			truncated = true
+		}
+		if totalBytes+len(content) > editorContextPackMaxTotalBytes {
+			left := editorContextPackMaxTotalBytes - totalBytes
+			if left <= 0 {
+				truncated = true
+				break
+			}
+			content = content[:left]
+			truncated = true
+		}
+		totalBytes += len(content)
+		builder.WriteString(content)
+		if totalBytes >= editorContextPackMaxTotalBytes {
+			break
+		}
+	}
+
+	builder.WriteString("\n\n[DERIVED]\n")
+	if strings.TrimSpace(styleContent) != "" {
+		vars := extractCSSVariables(styleContent, 20)
+		if len(vars) > 0 {
+			builder.WriteString("design_tokens:\n")
+			for _, item := range vars {
+				builder.WriteString("- ")
+				builder.WriteString(item)
+				builder.WriteByte('\n')
+			}
+		}
+	}
+	if strings.TrimSpace(indexContent) != "" {
+		links := extractLocalHrefValues(indexContent, 20)
+		if len(links) > 0 {
+			builder.WriteString("page_structure_links:\n")
+			for _, href := range links {
+				builder.WriteString("- ")
+				builder.WriteString(href)
+				builder.WriteByte('\n')
+			}
+		}
+	}
+
+	contextText := builder.String()
+	packHashBytes := sha256.Sum256([]byte(contextText))
+	meta.PackHash = hex.EncodeToString(packHashBytes[:])
+	meta.FilesUsed = len(meta.SourceFiles)
+	meta.BytesUsed = totalBytes
+	meta.Truncated = truncated
+
+	s.editorCtxMu.Lock()
+	s.editorCtxCache[cacheKey] = editorContextPackCacheEntry{
+		Prompt:    contextText,
+		Meta:      meta,
+		ExpiresAt: now.Add(editorContextPackCacheTTL),
+	}
+	s.pruneEditorContextCacheLocked(now)
+	s.editorCtxMu.Unlock()
+	return contextText, meta, nil
+}
+
+func (s *Server) generateEditorSuggestion(ctx context.Context, requesterEmail, ownerEmail, stage, model, prompt string) (string, map[string]any, error) {
 	apiKey, source, err := s.resolveEditorAPIKey(ctx, requesterEmail, ownerEmail)
 	if err != nil {
 		return "", nil, err
@@ -9262,13 +9850,14 @@ func (s *Server) generateEditorSuggestion(ctx context.Context, requesterEmail, o
 		RateLimitPerMin: s.cfg.GeminiRateLimitPerMin,
 	})
 	selectedModel := strings.TrimSpace(model)
-	result, err := client.Generate(ctx, "editor_assistant", prompt, selectedModel)
+	result, err := client.Generate(ctx, stage, prompt, selectedModel)
 	if err != nil {
 		return "", nil, llm.SanitizeError(err)
 	}
 	return strings.TrimSpace(result), map[string]any{
 		"source": source,
 		"model":  selectedModel,
+		"stage":  stage,
 	}, nil
 }
 
