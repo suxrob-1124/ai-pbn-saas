@@ -1,12 +1,14 @@
 package httpserver
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -75,7 +77,7 @@ func (s *memorySiteFileStore) List(ctx context.Context, domainID string) ([]sqls
 	defer s.mu.Unlock()
 	res := make([]sqlstore.SiteFile, 0)
 	for _, f := range s.files {
-		if f.DomainID == domainID {
+		if f.DomainID == domainID && !f.DeletedAt.Valid {
 			res = append(res, f)
 		}
 	}
@@ -86,6 +88,24 @@ func (s *memorySiteFileStore) List(ctx context.Context, domainID string) ([]sqls
 }
 
 func (s *memorySiteFileStore) GetByPath(ctx context.Context, domainID, path string) (*sqlstore.SiteFile, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id, ok := s.byDomainPath[domainID+"::"+path]
+	if !ok {
+		return nil, sql.ErrNoRows
+	}
+	file, ok := s.files[id]
+	if !ok {
+		return nil, sql.ErrNoRows
+	}
+	if file.DeletedAt.Valid {
+		return nil, sql.ErrNoRows
+	}
+	copy := file
+	return &copy, nil
+}
+
+func (s *memorySiteFileStore) GetByPathAny(ctx context.Context, domainID, path string) (*sqlstore.SiteFile, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	id, ok := s.byDomainPath[domainID+"::"+path]
@@ -127,6 +147,51 @@ func (s *memorySiteFileStore) Delete(ctx context.Context, fileID string) error {
 	delete(s.files, fileID)
 	delete(s.byDomainPath, file.DomainID+"::"+file.Path)
 	return nil
+}
+
+func (s *memorySiteFileStore) SoftDelete(ctx context.Context, fileID string, deletedBy sql.NullString, reason sql.NullString) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	file, ok := s.files[fileID]
+	if !ok {
+		return sql.ErrNoRows
+	}
+	file.DeletedAt = sql.NullTime{Time: time.Now().UTC(), Valid: true}
+	file.DeletedBy = deletedBy
+	file.DeleteReason = reason
+	file.UpdatedAt = time.Now().UTC()
+	s.files[fileID] = file
+	return nil
+}
+
+func (s *memorySiteFileStore) Restore(ctx context.Context, fileID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	file, ok := s.files[fileID]
+	if !ok {
+		return sql.ErrNoRows
+	}
+	file.DeletedAt = sql.NullTime{}
+	file.DeletedBy = sql.NullString{}
+	file.DeleteReason = sql.NullString{}
+	file.UpdatedAt = time.Now().UTC()
+	s.files[fileID] = file
+	return nil
+}
+
+func (s *memorySiteFileStore) ListDeleted(ctx context.Context, domainID string) ([]sqlstore.SiteFile, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	res := make([]sqlstore.SiteFile, 0)
+	for _, f := range s.files {
+		if f.DomainID == domainID && f.DeletedAt.Valid {
+			res = append(res, f)
+		}
+	}
+	sort.Slice(res, func(i, j int) bool {
+		return res[i].Path < res[j].Path
+	})
+	return res, nil
 }
 
 func (s *memorySiteFileStore) Move(ctx context.Context, fileID, newPath string) error {
@@ -689,5 +754,138 @@ func TestFileAPI_OptimisticConflict(t *testing.T) {
 	}
 	if body["current_version"] == nil {
 		t.Fatalf("expected current_version in conflict body")
+	}
+}
+
+func TestFileAPI_CreateFolderVisibleInTreeList(t *testing.T) {
+	s, _, domainID, _, _ := setupFileAPIDomainFixture(t)
+	adminCtx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: "admin@example.com",
+		Role:  "admin",
+	})
+
+	createBody := `{"path":"pages/blog","kind":"dir"}`
+	createReq := httptest.NewRequest(http.MethodPost, "/api/domains/"+domainID+"/files", strings.NewReader(createBody)).WithContext(adminCtx)
+	createReq.Header.Set("Content-Type", "application/json")
+	createRec := httptest.NewRecorder()
+	s.handleDomainActions(createRec, createReq)
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("create dir status: %d %s", createRec.Code, createRec.Body.String())
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/domains/"+domainID+"/files", nil).WithContext(adminCtx)
+	listRec := httptest.NewRecorder()
+	s.handleDomainActions(listRec, listReq)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("list status: %d %s", listRec.Code, listRec.Body.String())
+	}
+	var listResp []fileDTO
+	if err := json.NewDecoder(listRec.Body).Decode(&listResp); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	found := false
+	for _, item := range listResp {
+		if item.Path == "pages/blog" {
+			found = true
+			if item.MimeType != "inode/directory" {
+				t.Fatalf("expected directory mime type, got %s", item.MimeType)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected folder pages/blog in file list")
+	}
+}
+
+func TestFileAPI_UploadRejectsExecutable(t *testing.T) {
+	s, _, domainID, _, _ := setupFileAPIDomainFixture(t)
+	adminCtx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: "admin@example.com",
+		Role:  "admin",
+	})
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", "malware.exe")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := part.Write([]byte("MZ-this-is-not-allowed")); err != nil {
+		t.Fatalf("write form file: %v", err)
+	}
+	if err := writer.WriteField("path", "malware.exe"); err != nil {
+		t.Fatalf("write path field: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/domains/"+domainID+"/files/upload", &body).WithContext(adminCtx)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	rec := httptest.NewRecorder()
+	s.handleDomainActions(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(strings.ToLower(rec.Body.String()), "not allowed") {
+		t.Fatalf("expected not allowed error, got %s", rec.Body.String())
+	}
+}
+
+func TestFileAPI_SoftDeleteAndRestore(t *testing.T) {
+	s, _, domainID, _, _ := setupFileAPIDomainFixture(t)
+	adminCtx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: "admin@example.com",
+		Role:  "admin",
+	})
+
+	delReq := httptest.NewRequest(http.MethodDelete, "/api/domains/"+domainID+"/files/index.html", nil).WithContext(adminCtx)
+	delRec := httptest.NewRecorder()
+	s.handleDomainActions(delRec, delReq)
+	if delRec.Code != http.StatusOK {
+		t.Fatalf("delete status: %d %s", delRec.Code, delRec.Body.String())
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/domains/"+domainID+"/files/index.html", nil).WithContext(adminCtx)
+	getRec := httptest.NewRecorder()
+	s.handleDomainActions(getRec, getReq)
+	if getRec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 after soft-delete, got %d %s", getRec.Code, getRec.Body.String())
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/domains/"+domainID+"/files?include_deleted=1", nil).WithContext(adminCtx)
+	listRec := httptest.NewRecorder()
+	s.handleDomainActions(listRec, listReq)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("list status: %d %s", listRec.Code, listRec.Body.String())
+	}
+	var listResp []fileDTO
+	if err := json.NewDecoder(listRec.Body).Decode(&listResp); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	hasDeleted := false
+	for _, item := range listResp {
+		if item.Path == "index.html" && item.DeletedAt != nil {
+			hasDeleted = true
+			break
+		}
+	}
+	if !hasDeleted {
+		t.Fatalf("expected deleted file in include_deleted list")
+	}
+
+	restoreReq := httptest.NewRequest(http.MethodPost, "/api/domains/"+domainID+"/files/index.html/restore", nil).WithContext(adminCtx)
+	restoreRec := httptest.NewRecorder()
+	s.handleDomainActions(restoreRec, restoreReq)
+	if restoreRec.Code != http.StatusOK {
+		t.Fatalf("restore status: %d %s", restoreRec.Code, restoreRec.Body.String())
+	}
+
+	getReq2 := httptest.NewRequest(http.MethodGet, "/api/domains/"+domainID+"/files/index.html", nil).WithContext(adminCtx)
+	getRec2 := httptest.NewRecorder()
+	s.handleDomainActions(getRec2, getReq2)
+	if getRec2.Code != http.StatusOK {
+		t.Fatalf("expected 200 after restore, got %d %s", getRec2.Code, getRec2.Body.String())
 	}
 }
