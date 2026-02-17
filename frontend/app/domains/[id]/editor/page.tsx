@@ -171,6 +171,8 @@ export default function DomainEditorPage() {
   const [aiCreateBusy, setAiCreateBusy] = useState(false);
   const [aiCreateModel, setAiCreateModel] = useState("");
   const [aiCreateFiles, setAiCreateFiles] = useState<AIPageSuggestionFile[]>([]);
+  const [aiCreateSelectedPaths, setAiCreateSelectedPaths] = useState<string[]>([]);
+  const [aiCreatePreviewPath, setAiCreatePreviewPath] = useState("");
   const [aiCreateMeta, setAiCreateMeta] = useState<{
     source?: string;
     warnings: string[];
@@ -691,7 +693,10 @@ export default function DomainEditorPage() {
         with_assets: true,
         model: aiCreateModel.trim() || undefined,
       });
-      setAiCreateFiles(result.files || []);
+      const files = result.files || [];
+      setAiCreateFiles(files);
+      setAiCreateSelectedPaths(files.map((item) => item.path));
+      setAiCreatePreviewPath(files[0]?.path || "");
       const promptSource =
         typeof result.prompt_trace?.resolved_source === "string" ? result.prompt_trace.resolved_source : undefined;
       setAiCreateMeta({
@@ -709,10 +714,15 @@ export default function DomainEditorPage() {
 
   const onApplyCreatedFiles = async () => {
     if (aiCreateFiles.length === 0) return;
-    const confirmed = window.confirm(`Применить ${aiCreateFiles.length} AI-файлов в проект?`);
+    const selectedFiles = aiCreateFiles.filter((file) => aiCreateSelectedPaths.includes(file.path));
+    if (selectedFiles.length === 0) {
+      showToast({ type: "error", title: "Нет выбранных файлов", message: "Отметьте хотя бы один файл для применения." });
+      return;
+    }
+    const confirmed = window.confirm(`Применить ${selectedFiles.length} AI-файлов в проект?`);
     if (!confirmed) return;
     let saved = 0;
-    for (const file of aiCreateFiles) {
+    for (const file of selectedFiles) {
       try {
         await createFileOrDir(domainId, {
           kind: "file",
@@ -729,7 +739,17 @@ export default function DomainEditorPage() {
       }
     }
     await loadFiles();
-    showToast({ type: "success", title: "AI-файлы применены", message: `${saved}/${aiCreateFiles.length}` });
+    showToast({ type: "success", title: "AI-файлы применены", message: `${saved}/${selectedFiles.length}` });
+  };
+
+  const onToggleCreatedFile = (path: string, checked: boolean) => {
+    setAiCreateSelectedPaths((prev) => {
+      if (checked) {
+        if (prev.includes(path)) return prev;
+        return [...prev, path];
+      }
+      return prev.filter((item) => item !== path);
+    });
   };
 
   const onSelectFile = async (file: EditorFileMeta) => {
@@ -1161,13 +1181,59 @@ export default function DomainEditorPage() {
                 </button>
               </div>
               {aiCreateFiles.length > 0 && (
-                <div className="mt-2 max-h-44 space-y-1 overflow-auto rounded-lg border border-slate-200 p-2 text-xs dark:border-slate-700">
-                  {aiCreateFiles.map((file) => (
-                    <div key={file.path} className="rounded bg-slate-100 px-2 py-1 dark:bg-slate-800">
-                      {file.path} · {file.mime_type}
+                <>
+                  <div className="mt-2 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setAiCreateSelectedPaths(aiCreateFiles.map((item) => item.path))}
+                      className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    >
+                      Select all
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAiCreateSelectedPaths([])}
+                      className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    >
+                      Clear
+                    </button>
+                    <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Выбрано: {aiCreateSelectedPaths.length}/{aiCreateFiles.length}
+                    </span>
+                  </div>
+                  <div className="mt-2 max-h-44 space-y-1 overflow-auto rounded-lg border border-slate-200 p-2 text-xs dark:border-slate-700">
+                    {aiCreateFiles.map((file) => (
+                      <label key={file.path} className="flex cursor-pointer items-center gap-2 rounded bg-slate-100 px-2 py-1 dark:bg-slate-800">
+                        <input
+                          type="checkbox"
+                          checked={aiCreateSelectedPaths.includes(file.path)}
+                          onChange={(e) => onToggleCreatedFile(file.path, e.currentTarget.checked)}
+                          className="h-3.5 w-3.5 rounded border-slate-300"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setAiCreatePreviewPath(file.path)}
+                          className={`truncate text-left ${aiCreatePreviewPath === file.path ? "font-semibold text-indigo-600 dark:text-indigo-300" : ""}`}
+                        >
+                          {file.path} · {file.mime_type}
+                        </button>
+                      </label>
+                    ))}
+                  </div>
+                  {aiCreatePreviewPath && (
+                    <div className="mt-2 rounded-lg border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900/60">
+                      <div className="mb-1 truncate text-[11px] text-slate-500 dark:text-slate-400">
+                        Preview: {aiCreatePreviewPath}
+                      </div>
+                      <textarea
+                        value={aiCreateFiles.find((item) => item.path === aiCreatePreviewPath)?.content || ""}
+                        readOnly
+                        rows={8}
+                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 font-mono text-[11px] dark:border-slate-700 dark:bg-slate-800"
+                      />
                     </div>
-                  ))}
-                </div>
+                  )}
+                </>
               )}
               {aiCreateMeta && (
                 <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-[11px] text-slate-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">

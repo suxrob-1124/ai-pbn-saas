@@ -12,6 +12,9 @@ assert.ok(page.includes("AI: создать новую страницу"), "miss
 assert.ok(page.includes("Generate files"), "missing generate files action");
 assert.ok(page.includes("Apply all"), "missing apply-all action");
 assert.ok(page.includes("Применить"), "missing confirmation flow for apply-all");
+assert.ok(page.includes("Select all"), "missing select-all action");
+assert.ok(page.includes("Clear"), "missing clear action");
+assert.ok(page.includes("Preview:"), "missing preview section for generated files");
+assert.ok(page.includes("Выбрано:"), "missing selected-files counter");
 
 console.log("OK");
-
