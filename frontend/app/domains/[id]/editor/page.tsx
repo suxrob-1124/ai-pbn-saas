@@ -25,13 +25,16 @@ import { MonacoEditor } from "../../../../components/MonacoEditor";
 import { apiBase, authFetch } from "../../../../lib/http";
 import {
   SaveConflictError,
+  type AIPageApplyAction,
   type AIEditorSuggestionDTO,
   type AIPageSuggestionDTO,
   aiCreatePage,
   aiSuggestFile,
+  type ContextPackMetaDTO,
   createFileOrDir,
   deleteFile,
   getFile,
+  getEditorContextPack,
   listFiles,
   moveFile,
   restoreFile,
@@ -55,6 +58,8 @@ type DomainSummaryResponse = {
   my_role: "admin" | "owner" | "editor" | "viewer";
 };
 
+type AIContextMode = "auto" | "manual" | "hybrid";
+
 const EDITOR_MODEL_OPTIONS = [
   { value: "", label: `По умолчанию (${process.env.NEXT_PUBLIC_GEMINI_DEFAULT_MODEL || "gemini-2.5-pro"})` },
   { value: "gemini-3-pro-preview", label: "gemini-3-pro-preview" },
@@ -63,6 +68,12 @@ const EDITOR_MODEL_OPTIONS = [
   { value: "gemini-2.5-flash-image", label: "gemini-2.5-flash-image" },
   { value: "gemini-1.5-pro", label: "gemini-1.5-pro" },
   { value: "gemini-1.5-flash", label: "gemini-1.5-flash" },
+];
+
+const AI_CONTEXT_MODE_OPTIONS: Array<{ value: AIContextMode; label: string }> = [
+  { value: "auto", label: "Авто (рекомендуется)" },
+  { value: "hybrid", label: "Гибрид: авто + выбранные файлы" },
+  { value: "manual", label: "Только выбранные файлы" },
 ];
 
 const detectLanguage = (pathValue: string) => {
@@ -165,29 +176,43 @@ export default function DomainEditorPage() {
   const [previewSource, setPreviewSource] = useState<"buffer" | "published">("buffer");
   const [stylePreview, setStylePreview] = useState("");
   const [scriptPreview, setScriptPreview] = useState("");
+  const [aiStudioTab, setAiStudioTab] = useState<"edit" | "create">("edit");
   const [aiInstruction, setAiInstruction] = useState("");
   const [aiOutput, setAiOutput] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
   const [aiModel, setAiModel] = useState("");
-  const [aiContextFiles, setAiContextFiles] = useState("");
+  const [aiContextMode, setAiContextMode] = useState<AIContextMode>("auto");
+  const [aiContextSelectedFiles, setAiContextSelectedFiles] = useState<string[]>([]);
   const [aiSuggestView, setAiSuggestView] = useState<"diff" | "content">("diff");
   const [aiSuggestMeta, setAiSuggestMeta] = useState<{
     source?: string;
     warnings: string[];
     tokenUsage?: Record<string, any>;
+    contextPack?: ContextPackMetaDTO;
   } | null>(null);
+  const [aiSuggestDiagnosticsOpen, setAiSuggestDiagnosticsOpen] = useState(false);
+  const [aiSuggestContextBusy, setAiSuggestContextBusy] = useState(false);
+  const [aiSuggestContextDebug, setAiSuggestContextDebug] = useState("");
   const [aiCreateInstruction, setAiCreateInstruction] = useState("");
   const [aiCreatePath, setAiCreatePath] = useState("new-page.html");
   const [aiCreateBusy, setAiCreateBusy] = useState(false);
   const [aiCreateModel, setAiCreateModel] = useState("");
+  const [aiCreateContextMode, setAiCreateContextMode] = useState<AIContextMode>("auto");
+  const [aiCreateContextSelectedFiles, setAiCreateContextSelectedFiles] = useState<string[]>([]);
   const [aiCreateFiles, setAiCreateFiles] = useState<AIPageSuggestionFile[]>([]);
-  const [aiCreateSelectedPaths, setAiCreateSelectedPaths] = useState<string[]>([]);
+  const [aiCreateApplyPlan, setAiCreateApplyPlan] = useState<Record<string, AIPageApplyAction>>({});
+  const [aiCreateExistingContent, setAiCreateExistingContent] = useState<Record<string, string>>({});
   const [aiCreatePreviewPath, setAiCreatePreviewPath] = useState("");
+  const [aiCreateView, setAiCreateView] = useState<"diff" | "preview" | "code">("diff");
   const [aiCreateMeta, setAiCreateMeta] = useState<{
     source?: string;
     warnings: string[];
     tokenUsage?: Record<string, any>;
+    contextPack?: ContextPackMetaDTO;
   } | null>(null);
+  const [aiCreateDiagnosticsOpen, setAiCreateDiagnosticsOpen] = useState(false);
+  const [aiCreateContextBusy, setAiCreateContextBusy] = useState(false);
+  const [aiCreateContextDebug, setAiCreateContextDebug] = useState("");
   const [conflictState, setConflictState] = useState<{
     currentVersion: number;
     currentHash?: string;
@@ -209,6 +234,25 @@ export default function DomainEditorPage() {
     !binaryPreview &&
     dirtyState.isDirty &&
     !saving;
+  const selectableContextFiles = useMemo(
+    () =>
+      files
+        .filter((item) => item.isEditable && item.size <= 250_000)
+        .map((item) => item.path)
+        .slice(0, 120),
+    [files]
+  );
+  const existingFilesMap = useMemo(() => {
+    const map = new Map<string, EditorFileMeta>();
+    for (const file of files) {
+      map.set(file.path, file);
+    }
+    return map;
+  }, [files]);
+  const aiCreatePreviewFile = useMemo(
+    () => aiCreateFiles.find((item) => item.path === aiCreatePreviewPath) || null,
+    [aiCreateFiles, aiCreatePreviewPath]
+  );
 
   useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => {
@@ -653,20 +697,56 @@ export default function DomainEditorPage() {
     }
   };
 
+  const selectedContextFiles = (mode: AIContextMode, selected: string[]) => {
+    const trimmed = selected.map((item) => item.trim()).filter(Boolean);
+    if (mode === "auto") return undefined;
+    return trimmed.length > 0 ? trimmed.slice(0, 20) : undefined;
+  };
+
+  const onAISuggestContextPreview = async () => {
+    if (!selection?.selectedPath) return;
+    setAiSuggestContextBusy(true);
+    try {
+      const payload = {
+        target_path: selection.selectedPath,
+        context_mode: aiContextMode,
+        context_files: selectedContextFiles(aiContextMode, aiContextSelectedFiles),
+      } as const;
+      const debug = await getEditorContextPack(domainId, payload);
+      setAiSuggestContextDebug(debug.site_context || "");
+      setAiSuggestMeta((prev) => ({
+        source: prev?.source,
+        warnings: prev?.warnings || [],
+        tokenUsage: prev?.tokenUsage,
+        contextPack: debug.context_pack_meta,
+      }));
+      setAiSuggestDiagnosticsOpen(true);
+    } catch (err: any) {
+      showToast({ type: "error", title: "Не удалось собрать контекст", message: err?.message || "unknown error" });
+    } finally {
+      setAiSuggestContextBusy(false);
+    }
+  };
+
   const onAISuggest = async () => {
     if (!selection?.selectedPath || !aiInstruction.trim()) return;
+    if (aiContextMode === "manual" && aiContextSelectedFiles.length === 0) {
+      showToast({
+        type: "error",
+        title: "Нужны контекстные файлы",
+        message: "Для режима manual выберите хотя бы один файл контекста.",
+      });
+      return;
+    }
     setAiBusy(true);
     setAiSuggestMeta(null);
+    setAiSuggestContextDebug("");
     try {
-      const contextFiles = aiContextFiles
-        .split(",")
-        .map((item) => item.trim())
-        .filter((item) => item && item !== selection.selectedPath)
-        .slice(0, 10);
       const result: AIEditorSuggestionDTO = await aiSuggestFile(domainId, selection.selectedPath, {
         instruction: aiInstruction.trim(),
         model: aiModel.trim() || undefined,
-        context_files: contextFiles.length > 0 ? contextFiles : undefined,
+        context_mode: aiContextMode,
+        context_files: selectedContextFiles(aiContextMode, aiContextSelectedFiles),
       });
       setAiOutput(result.suggested_content || "");
       setAiSuggestView("diff");
@@ -676,10 +756,19 @@ export default function DomainEditorPage() {
         source: promptSource,
         warnings: Array.isArray(result.warnings) ? result.warnings : [],
         tokenUsage: result.token_usage,
+        contextPack: result.context_pack_meta,
       });
-      showToast({ type: "success", title: "AI-предложение готово", message: selection.selectedPath });
+      if ((result.suggested_content || "") === dirtyState.currentContent) {
+        showToast({
+          type: "success",
+          title: "Предложение без изменений",
+          message: "AI не предложил отличий для текущего файла.",
+        });
+      } else {
+        showToast({ type: "success", title: "AI-предложение готово", message: selection.selectedPath });
+      }
     } catch (err: any) {
-      showToast({ type: "error", title: "AI suggest error", message: err?.message || "unknown error" });
+      showToast({ type: "error", title: "Ошибка AI-редактирования", message: err?.message || "unknown error" });
     } finally {
       setAiBusy(false);
     }
@@ -694,74 +783,193 @@ export default function DomainEditorPage() {
     }));
   };
 
+  const onAICreateContextPreview = async () => {
+    if (!aiCreatePath.trim()) return;
+    setAiCreateContextBusy(true);
+    try {
+      const payload = {
+        target_path: aiCreatePath.trim(),
+        context_mode: aiCreateContextMode,
+        context_files: selectedContextFiles(aiCreateContextMode, aiCreateContextSelectedFiles),
+      } as const;
+      const debug = await getEditorContextPack(domainId, payload);
+      setAiCreateContextDebug(debug.site_context || "");
+      setAiCreateMeta((prev) => ({
+        source: prev?.source,
+        warnings: prev?.warnings || [],
+        tokenUsage: prev?.tokenUsage,
+        contextPack: debug.context_pack_meta,
+      }));
+      setAiCreateDiagnosticsOpen(true);
+    } catch (err: any) {
+      showToast({ type: "error", title: "Не удалось собрать контекст", message: err?.message || "unknown error" });
+    } finally {
+      setAiCreateContextBusy(false);
+    }
+  };
+
   const onAICreatePage = async () => {
     if (!aiCreateInstruction.trim() || !aiCreatePath.trim()) return;
+    if (aiCreateContextMode === "manual" && aiCreateContextSelectedFiles.length === 0) {
+      showToast({
+        type: "error",
+        title: "Нужны контекстные файлы",
+        message: "Для режима manual выберите хотя бы один файл контекста.",
+      });
+      return;
+    }
     setAiCreateBusy(true);
     setAiCreateMeta(null);
+    setAiCreateContextDebug("");
     try {
       const result: AIPageSuggestionDTO = await aiCreatePage(domainId, {
         instruction: aiCreateInstruction.trim(),
         target_path: aiCreatePath.trim(),
         with_assets: true,
         model: aiCreateModel.trim() || undefined,
+        context_mode: aiCreateContextMode,
+        context_files: selectedContextFiles(aiCreateContextMode, aiCreateContextSelectedFiles),
       });
-      const files = result.files || [];
-      setAiCreateFiles(files);
-      setAiCreateSelectedPaths(files.map((item) => item.path));
-      setAiCreatePreviewPath(files[0]?.path || "");
+      const generatedFiles = Array.isArray(result.files) ? result.files : [];
+      if (generatedFiles.length === 0) {
+        showToast({ type: "error", title: "AI не вернул файлов", message: "Повторите генерацию с другим запросом." });
+        return;
+      }
+      setAiCreateFiles(generatedFiles);
+      setAiCreatePreviewPath(generatedFiles[0]?.path || "");
+      setAiCreateView("diff");
+      const defaultPlan: Record<string, AIPageApplyAction> = {};
+      for (const file of generatedFiles) {
+        defaultPlan[file.path] = existingFilesMap.has(file.path) ? "skip" : "create";
+      }
+      setAiCreateApplyPlan(defaultPlan);
+      const existingMap: Record<string, string> = {};
+      const existingPaths = generatedFiles.filter((item) => existingFilesMap.has(item.path)).map((item) => item.path);
+      await Promise.all(
+        existingPaths.map(async (filePath) => {
+          try {
+            const payload = await getFile(domainId, filePath);
+            existingMap[filePath] = payload.content || "";
+          } catch {
+            existingMap[filePath] = "";
+          }
+        })
+      );
+      setAiCreateExistingContent(existingMap);
       const promptSource =
         typeof result.prompt_trace?.resolved_source === "string" ? result.prompt_trace.resolved_source : undefined;
       setAiCreateMeta({
         source: promptSource,
         warnings: Array.isArray(result.warnings) ? result.warnings : [],
         tokenUsage: result.token_usage,
+        contextPack: result.context_pack_meta,
       });
-      showToast({ type: "success", title: "AI сгенерировал страницу", message: `${result.files?.length || 0} файлов` });
+      const existingCount = generatedFiles.filter((item) => existingFilesMap.has(item.path)).length;
+      showToast({
+        type: "success",
+        title: "AI сгенерировал пакет файлов",
+        message: `${generatedFiles.length} файлов, конфликтов по пути: ${existingCount}`,
+      });
     } catch (err: any) {
-      showToast({ type: "error", title: "AI create-page error", message: err?.message || "unknown error" });
+      const status = Number(err?.status || err?.response?.status || 0);
+      if (status === 422 || String(err?.message || "").toLowerCase().includes("ai_response_invalid_format")) {
+        showToast({
+          type: "error",
+          title: "AI вернул невалидный формат",
+          message: "Модель не вернула корректный JSON-контракт. Уточните инструкцию и повторите.",
+        });
+      } else {
+        showToast({ type: "error", title: "Ошибка создания страницы", message: err?.message || "unknown error" });
+      }
     } finally {
       setAiCreateBusy(false);
     }
   };
 
-  const onApplyCreatedFiles = async () => {
-    if (aiCreateFiles.length === 0) return;
-    const selectedFiles = aiCreateFiles.filter((file) => aiCreateSelectedPaths.includes(file.path));
-    if (selectedFiles.length === 0) {
-      showToast({ type: "error", title: "Нет выбранных файлов", message: "Отметьте хотя бы один файл для применения." });
-      return;
-    }
-    const confirmed = window.confirm(`Применить ${selectedFiles.length} AI-файлов в проект?`);
-    if (!confirmed) return;
-    let saved = 0;
-    for (const file of selectedFiles) {
-      try {
-        await createFileOrDir(domainId, {
-          kind: "file",
-          path: file.path,
-          content: file.content,
-          mime_type: file.mime_type,
-        });
-        saved += 1;
-      } catch (err: any) {
-        if (String(err?.message || "").startsWith("409") || String(err?.message || "").includes("exists")) {
-          await saveFile(domainId, file.path, file.content, "ai create-page overwrite", { source: "ai" });
-          saved += 1;
-        }
-      }
-    }
-    await loadFiles();
-    showToast({ type: "success", title: "AI-файлы применены", message: `${saved}/${selectedFiles.length}` });
+  const onSetCreatePlan = (pathValue: string, action: AIPageApplyAction) => {
+    setAiCreateApplyPlan((prev) => ({ ...prev, [pathValue]: action }));
   };
 
-  const onToggleCreatedFile = (path: string, checked: boolean) => {
-    setAiCreateSelectedPaths((prev) => {
-      if (checked) {
-        if (prev.includes(path)) return prev;
-        return [...prev, path];
+  const onApplyCreatedFiles = async () => {
+    if (aiCreateFiles.length === 0) return;
+    const actionable = aiCreateFiles
+      .map((file) => ({
+        file,
+        action: aiCreateApplyPlan[file.path] || (existingFilesMap.has(file.path) ? "skip" : "create"),
+      }))
+      .filter((item) => item.action !== "skip");
+    if (actionable.length === 0) {
+      showToast({
+        type: "error",
+        title: "Нет действий для применения",
+        message: "Выберите create или overwrite хотя бы для одного файла.",
+      });
+      return;
+    }
+    const overwriteCount = actionable.filter((item) => item.action === "overwrite").length;
+    const createCount = actionable.length - overwriteCount;
+    const confirmed = window.confirm(
+      `Применить изменения?\nСоздать: ${createCount}\nПерезаписать: ${overwriteCount}\nПропустить: ${aiCreateFiles.length - actionable.length}`
+    );
+    if (!confirmed) return;
+    let applied = 0;
+    let skipped = 0;
+    const failed: string[] = [];
+    for (const item of actionable) {
+      const file = item.file;
+      try {
+        const exists = existingFilesMap.has(file.path);
+        if (item.action === "create") {
+          if (exists) {
+            skipped += 1;
+            continue;
+          }
+          await createFileOrDir(domainId, {
+            kind: "file",
+            path: file.path,
+            content: file.content,
+            mime_type: file.mime_type,
+          });
+          applied += 1;
+          continue;
+        }
+        if (item.action === "overwrite") {
+          if (exists) {
+            await saveFile(domainId, file.path, file.content, "ai create-page overwrite", { source: "ai" });
+          } else {
+            await createFileOrDir(domainId, {
+              kind: "file",
+              path: file.path,
+              content: file.content,
+              mime_type: file.mime_type,
+            });
+          }
+          applied += 1;
+        }
+      } catch (err: any) {
+        failed.push(`${file.path}: ${err?.message || "unknown error"}`);
       }
-      return prev.filter((item) => item !== path);
-    });
+    }
+    const nextFiles = await loadFiles();
+    if (aiCreatePreviewPath) {
+      const target = nextFiles.find((file) => file.path === aiCreatePreviewPath);
+      if (target) {
+        await loadFile(target);
+      }
+    }
+    if (failed.length > 0) {
+      showToast({
+        type: "error",
+        title: "Часть файлов не применена",
+        message: `Успешно: ${applied}, пропущено: ${skipped}, ошибок: ${failed.length}`,
+      });
+    } else {
+      showToast({
+        type: "success",
+        title: "AI-файлы применены",
+        message: `Успешно: ${applied}, пропущено: ${skipped}`,
+      });
+    }
   };
 
   const onSelectFile = async (file: EditorFileMeta) => {
@@ -791,6 +999,15 @@ export default function DomainEditorPage() {
     if (!selection || !currentFile || !currentFile.mimeType.toLowerCase().startsWith("image/")) return "";
     return `${apiBase()}/api/domains/${domainId}/files/${encodePath(selection.selectedPath)}?raw=1`;
   }, [selection, currentFile, domainId]);
+
+  const aiCreatePreviewSrcDoc = useMemo(() => {
+    if (!aiCreatePreviewFile) return "";
+    if (!aiCreatePreviewFile.path.toLowerCase().endsWith(".html")) return "";
+    return rewriteHtmlAssetRefs(
+      injectRuntimeAssets(aiCreatePreviewFile.content || "", stylePreview, scriptPreview),
+      domainId
+    );
+  }, [aiCreatePreviewFile, stylePreview, scriptPreview, domainId]);
 
   if (loading) {
     return <div className="text-sm text-slate-500 dark:text-slate-400">Загрузка редактора...</div>;
@@ -1040,209 +1257,470 @@ export default function DomainEditorPage() {
             </div>
           )}
 
-          <div className="grid gap-3 xl:grid-cols-2">
-            <div className="rounded-xl border border-slate-200 bg-white/80 p-3 dark:border-slate-800 dark:bg-slate-900/60">
-              <h3 className="mb-2 text-sm font-semibold">AI: редактирование файла</h3>
-              <label className="mb-1 block text-xs text-slate-500 dark:text-slate-400">Версия модели</label>
-              <select
-                value={aiModel}
-                onChange={(e) => setAiModel(e.target.value)}
-                className="mb-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"
+          <div className="rounded-xl border border-slate-200 bg-white/80 p-3 dark:border-slate-800 dark:bg-slate-900/60">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setAiStudioTab("edit")}
+                className={`rounded-lg border px-3 py-1.5 text-xs font-semibold ${
+                  aiStudioTab === "edit"
+                    ? "border-indigo-600 bg-indigo-600 text-white"
+                    : "border-slate-200 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                }`}
               >
-                {EDITOR_MODEL_OPTIONS.map((item) => (
-                  <option key={`ai-suggest-model-${item.value || "default"}`} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-              <input
-                value={aiContextFiles}
-                onChange={(e) => setAiContextFiles(e.target.value)}
-                placeholder="Контекст-файлы через запятую, например: style.css,script.js"
-                className="mb-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"
-              />
-              <textarea
-                value={aiInstruction}
-                onChange={(e) => setAiInstruction(e.target.value)}
-                placeholder="Что нужно изменить в файле?"
-                rows={3}
-                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"
-              />
-              <div className="mt-2 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={onAISuggest}
-                  disabled={aiBusy || !selection?.selectedPath || !aiInstruction.trim()}
-                  className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-1 text-xs font-semibold text-white disabled:opacity-50"
-                >
-                  <FiWind /> Suggest
-                </button>
-                <button
-                  type="button"
-                  onClick={onApplyAISuggest}
-                  disabled={!aiOutput}
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                >
-                  Apply to buffer
-                </button>
-              </div>
-              {aiOutput && (
-                <>
-                  <div className="mb-2 mt-2 flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setAiSuggestView("diff")}
-                      className={`rounded-lg border px-2 py-1 text-[11px] font-semibold ${
-                        aiSuggestView === "diff"
-                          ? "border-indigo-600 bg-indigo-600 text-white"
-                          : "border-slate-200 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                      }`}
-                    >
-                      View diff
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setAiSuggestView("content")}
-                      className={`rounded-lg border px-2 py-1 text-[11px] font-semibold ${
-                        aiSuggestView === "content"
-                          ? "border-indigo-600 bg-indigo-600 text-white"
-                          : "border-slate-200 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                      }`}
-                    >
-                      View content
-                    </button>
-                  </div>
-                  {aiSuggestView === "diff" ? (
-                    <MonacoDiffEditor
-                      original={dirtyState.currentContent}
-                      modified={aiOutput}
-                      language={selection?.language || "plaintext"}
-                    />
-                  ) : (
-                  <textarea
-                    value={aiOutput}
-                    onChange={(e) => setAiOutput(e.target.value)}
-                    rows={8}
-                    className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"
-                  />
-                  )}
-                  <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-[11px] text-slate-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
-                    <div>Prompt source: {aiSuggestMeta?.source || "unknown"}</div>
-                    <div>Warnings: {aiSuggestMeta?.warnings?.length || 0}</div>
-                    <div>Token usage: {aiSuggestMeta?.tokenUsage ? JSON.stringify(aiSuggestMeta.tokenUsage) : "n/a"}</div>
-                  </div>
-                </>
-              )}
+                AI Studio: изменить текущий файл
+              </button>
+              <button
+                type="button"
+                onClick={() => setAiStudioTab("create")}
+                className={`rounded-lg border px-3 py-1.5 text-xs font-semibold ${
+                  aiStudioTab === "create"
+                    ? "border-indigo-600 bg-indigo-600 text-white"
+                    : "border-slate-200 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                }`}
+              >
+                AI Studio: создать страницу
+              </button>
             </div>
 
-            <div className="rounded-xl border border-slate-200 bg-white/80 p-3 dark:border-slate-800 dark:bg-slate-900/60">
-              <h3 className="mb-2 text-sm font-semibold">AI: создать новую страницу</h3>
-              <label className="mb-1 block text-xs text-slate-500 dark:text-slate-400">Версия модели</label>
-              <select
-                value={aiCreateModel}
-                onChange={(e) => setAiCreateModel(e.target.value)}
-                className="mb-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"
-              >
-                {EDITOR_MODEL_OPTIONS.map((item) => (
-                  <option key={`ai-create-model-${item.value || "default"}`} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-              <input
-                value={aiCreatePath}
-                onChange={(e) => setAiCreatePath(e.target.value)}
-                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"
-                placeholder="new-page.html"
-              />
-              <textarea
-                value={aiCreateInstruction}
-                onChange={(e) => setAiCreateInstruction(e.target.value)}
-                placeholder="Опиши страницу, которую нужно создать"
-                rows={3}
-                className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"
-              />
-              <div className="mt-2 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={onAICreatePage}
-                  disabled={aiCreateBusy || !aiCreateInstruction.trim() || !aiCreatePath.trim()}
-                  className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-1 text-xs font-semibold text-white disabled:opacity-50"
-                >
-                  <FiWind /> Generate files
-                </button>
-                <button
-                  type="button"
-                  onClick={onApplyCreatedFiles}
-                  disabled={aiCreateFiles.length === 0}
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                >
-                  Apply all
-                </button>
-              </div>
-              {aiCreateFiles.length > 0 && (
-                <>
-                  <div className="mt-2 flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setAiCreateSelectedPaths(aiCreateFiles.map((item) => item.path))}
-                      className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            {aiStudioTab === "edit" && (
+              <div className="space-y-3">
+                <div className="grid gap-3 md:grid-cols-3">
+                  <label className="block text-xs text-slate-500 dark:text-slate-400">
+                    Модель
+                    <select
+                      value={aiModel}
+                      onChange={(e) => setAiModel(e.target.value)}
+                      className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"
                     >
-                      Select all
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setAiCreateSelectedPaths([])}
-                      className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                      {EDITOR_MODEL_OPTIONS.map((item) => (
+                        <option key={`ai-suggest-model-${item.value || "default"}`} value={item.value}>
+                          {item.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="block text-xs text-slate-500 dark:text-slate-400">
+                    Режим контекста
+                    <select
+                      value={aiContextMode}
+                      onChange={(e) => setAiContextMode(e.target.value as AIContextMode)}
+                      className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"
                     >
-                      Clear
-                    </button>
-                    <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                      Выбрано: {aiCreateSelectedPaths.length}/{aiCreateFiles.length}
-                    </span>
-                  </div>
-                  <div className="mt-2 max-h-44 space-y-1 overflow-auto rounded-lg border border-slate-200 p-2 text-xs dark:border-slate-700">
-                    {aiCreateFiles.map((file) => (
-                      <label key={file.path} className="flex cursor-pointer items-center gap-2 rounded bg-slate-100 px-2 py-1 dark:bg-slate-800">
-                        <input
-                          type="checkbox"
-                          checked={aiCreateSelectedPaths.includes(file.path)}
-                          onChange={(e) => onToggleCreatedFile(file.path, e.currentTarget.checked)}
-                          className="h-3.5 w-3.5 rounded border-slate-300"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setAiCreatePreviewPath(file.path)}
-                          className={`truncate text-left ${aiCreatePreviewPath === file.path ? "font-semibold text-indigo-600 dark:text-indigo-300" : ""}`}
-                        >
-                          {file.path} · {file.mime_type}
-                        </button>
-                      </label>
-                    ))}
-                  </div>
-                  {aiCreatePreviewPath && (
-                    <div className="mt-2 rounded-lg border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900/60">
-                      <div className="mb-1 truncate text-[11px] text-slate-500 dark:text-slate-400">
-                        Preview: {aiCreatePreviewPath}
-                      </div>
-                      <textarea
-                        value={aiCreateFiles.find((item) => item.path === aiCreatePreviewPath)?.content || ""}
-                        readOnly
-                        rows={8}
-                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 font-mono text-[11px] dark:border-slate-700 dark:bg-slate-800"
-                      />
-                    </div>
-                  )}
-                </>
-              )}
-              {aiCreateMeta && (
-                <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-[11px] text-slate-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
-                  <div>Prompt source: {aiCreateMeta.source || "unknown"}</div>
-                  <div>Warnings: {aiCreateMeta.warnings.length}</div>
-                  <div>Token usage: {aiCreateMeta.tokenUsage ? JSON.stringify(aiCreateMeta.tokenUsage) : "n/a"}</div>
+                      {AI_CONTEXT_MODE_OPTIONS.map((item) => (
+                        <option key={`ai-edit-context-mode-${item.value}`} value={item.value}>
+                          {item.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="block text-xs text-slate-500 dark:text-slate-400">
+                    Текущий файл
+                    <input
+                      value={selection?.selectedPath || ""}
+                      readOnly
+                      className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"
+                    />
+                  </label>
                 </div>
-              )}
-            </div>
+
+                {aiContextMode !== "auto" && (
+                  <label className="block text-xs text-slate-500 dark:text-slate-400">
+                    Контекстные файлы (Ctrl/Cmd для мультивыбора)
+                    <select
+                      multiple
+                      value={aiContextSelectedFiles}
+                      onChange={(e) =>
+                        setAiContextSelectedFiles(
+                          Array.from(e.currentTarget.selectedOptions)
+                            .map((item) => item.value)
+                            .slice(0, 20)
+                        )
+                      }
+                      className="mt-1 h-28 w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"
+                    >
+                      {selectableContextFiles.map((pathValue) => (
+                        <option key={`ctx-edit-${pathValue}`} value={pathValue}>
+                          {pathValue}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+
+                <label className="block text-xs text-slate-500 dark:text-slate-400">
+                  Что нужно изменить
+                  <textarea
+                    value={aiInstruction}
+                    onChange={(e) => setAiInstruction(e.target.value)}
+                    placeholder="Например: сделай эту страницу в стиле главной и сохрани шведский язык"
+                    rows={3}
+                    className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
+                  />
+                </label>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={onAISuggest}
+                    disabled={aiBusy || !selection?.selectedPath || !aiInstruction.trim()}
+                    className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                  >
+                    <FiWind /> Сгенерировать предложение
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onApplyAISuggest}
+                    disabled={!aiOutput}
+                    className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  >
+                    Применить в буфер
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onAISuggestContextPreview}
+                    disabled={aiSuggestContextBusy || !selection?.selectedPath}
+                    className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  >
+                    Контекст запроса
+                  </button>
+                </div>
+
+                {aiSuggestMeta?.contextPack && (
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
+                    Контекст: файлов {aiSuggestMeta.contextPack.files_used}, объем {aiSuggestMeta.contextPack.bytes_used} байт
+                    {aiSuggestMeta.contextPack.truncated ? ", контекст урезан по лимитам" : ""}
+                  </div>
+                )}
+
+                {aiOutput && (
+                  <>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setAiSuggestView("diff")}
+                        className={`rounded-lg border px-2 py-1 text-[11px] font-semibold ${
+                          aiSuggestView === "diff"
+                            ? "border-indigo-600 bg-indigo-600 text-white"
+                            : "border-slate-200 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                        }`}
+                      >
+                        Diff
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAiSuggestView("content")}
+                        className={`rounded-lg border px-2 py-1 text-[11px] font-semibold ${
+                          aiSuggestView === "content"
+                            ? "border-indigo-600 bg-indigo-600 text-white"
+                            : "border-slate-200 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                        }`}
+                      >
+                        Код
+                      </button>
+                    </div>
+                    {aiSuggestView === "diff" ? (
+                      <MonacoDiffEditor
+                        original={dirtyState.currentContent}
+                        modified={aiOutput}
+                        language={selection?.language || "plaintext"}
+                      />
+                    ) : (
+                      <textarea
+                        value={aiOutput}
+                        onChange={(e) => setAiOutput(e.target.value)}
+                        rows={10}
+                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"
+                      />
+                    )}
+                  </>
+                )}
+
+                <details
+                  open={aiSuggestDiagnosticsOpen}
+                  onToggle={(event) => setAiSuggestDiagnosticsOpen((event.currentTarget as HTMLDetailsElement).open)}
+                  className="rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800/50"
+                >
+                  <summary className="cursor-pointer font-semibold text-slate-700 dark:text-slate-200">Диагностика</summary>
+                  <div className="mt-2 space-y-1 text-slate-600 dark:text-slate-300">
+                    <div>Источник промпта: {aiSuggestMeta?.source || "unknown"}</div>
+                    <div>Предупреждений: {aiSuggestMeta?.warnings?.length || 0}</div>
+                    <div>Token usage: {aiSuggestMeta?.tokenUsage ? JSON.stringify(aiSuggestMeta.tokenUsage) : "n/a"}</div>
+                    {aiSuggestMeta?.warnings?.length ? <div>Warnings: {aiSuggestMeta.warnings.join(" | ")}</div> : null}
+                    {aiSuggestContextDebug ? (
+                      <textarea
+                        readOnly
+                        value={aiSuggestContextDebug}
+                        rows={8}
+                        className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-2 py-2 font-mono text-[11px] dark:border-slate-700 dark:bg-slate-900/60"
+                      />
+                    ) : null}
+                  </div>
+                </details>
+              </div>
+            )}
+
+            {aiStudioTab === "create" && (
+              <div className="space-y-3">
+                <div className="grid gap-3 md:grid-cols-3">
+                  <label className="block text-xs text-slate-500 dark:text-slate-400">
+                    Модель
+                    <select
+                      value={aiCreateModel}
+                      onChange={(e) => setAiCreateModel(e.target.value)}
+                      className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"
+                    >
+                      {EDITOR_MODEL_OPTIONS.map((item) => (
+                        <option key={`ai-create-model-${item.value || "default"}`} value={item.value}>
+                          {item.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="block text-xs text-slate-500 dark:text-slate-400">
+                    Режим контекста
+                    <select
+                      value={aiCreateContextMode}
+                      onChange={(e) => setAiCreateContextMode(e.target.value as AIContextMode)}
+                      className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"
+                    >
+                      {AI_CONTEXT_MODE_OPTIONS.map((item) => (
+                        <option key={`ai-create-context-mode-${item.value}`} value={item.value}>
+                          {item.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="block text-xs text-slate-500 dark:text-slate-400">
+                    Целевой путь
+                    <input
+                      value={aiCreatePath}
+                      onChange={(e) => setAiCreatePath(e.target.value)}
+                      className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"
+                      placeholder="about.html"
+                    />
+                  </label>
+                </div>
+
+                {aiCreateContextMode !== "auto" && (
+                  <label className="block text-xs text-slate-500 dark:text-slate-400">
+                    Контекстные файлы (Ctrl/Cmd для мультивыбора)
+                    <select
+                      multiple
+                      value={aiCreateContextSelectedFiles}
+                      onChange={(e) =>
+                        setAiCreateContextSelectedFiles(
+                          Array.from(e.currentTarget.selectedOptions)
+                            .map((item) => item.value)
+                            .slice(0, 20)
+                        )
+                      }
+                      className="mt-1 h-28 w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"
+                    >
+                      {selectableContextFiles.map((pathValue) => (
+                        <option key={`ctx-create-${pathValue}`} value={pathValue}>
+                          {pathValue}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+
+                <label className="block text-xs text-slate-500 dark:text-slate-400">
+                  Что нужно создать
+                  <textarea
+                    value={aiCreateInstruction}
+                    onChange={(e) => setAiCreateInstruction(e.target.value)}
+                    placeholder="Например: создай страницу about на языке сайта и в стиле главной"
+                    rows={3}
+                    className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
+                  />
+                </label>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={onAICreatePage}
+                    disabled={aiCreateBusy || !aiCreateInstruction.trim() || !aiCreatePath.trim()}
+                    className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                  >
+                    <FiWind /> Сгенерировать пакет файлов
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onApplyCreatedFiles}
+                    disabled={aiCreateFiles.length === 0}
+                    className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  >
+                    Применить план
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onAICreateContextPreview}
+                    disabled={aiCreateContextBusy || !aiCreatePath.trim()}
+                    className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  >
+                    Контекст запроса
+                  </button>
+                </div>
+
+                {aiCreateMeta?.contextPack && (
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
+                    Контекст: файлов {aiCreateMeta.contextPack.files_used}, объем {aiCreateMeta.contextPack.bytes_used} байт
+                    {aiCreateMeta.contextPack.truncated ? ", контекст урезан по лимитам" : ""}
+                  </div>
+                )}
+
+                {aiCreateFiles.length > 0 && (
+                  <>
+                    <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
+                      <table className="min-w-full text-left text-xs">
+                        <thead className="bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                          <tr>
+                            <th className="px-2 py-2">Файл</th>
+                            <th className="px-2 py-2">Статус</th>
+                            <th className="px-2 py-2">Действие</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {aiCreateFiles.map((file) => {
+                            const exists = existingFilesMap.has(file.path);
+                            return (
+                              <tr key={`plan-${file.path}`} className="border-t border-slate-200 dark:border-slate-700">
+                                <td className="px-2 py-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => setAiCreatePreviewPath(file.path)}
+                                    className={`truncate text-left ${
+                                      aiCreatePreviewPath === file.path ? "font-semibold text-indigo-600 dark:text-indigo-300" : ""
+                                    }`}
+                                  >
+                                    {file.path}
+                                  </button>
+                                  <div className="text-[11px] text-slate-500 dark:text-slate-400">{file.mime_type}</div>
+                                </td>
+                                <td className="px-2 py-2">
+                                  {exists ? (
+                                    <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+                                      уже существует
+                                    </span>
+                                  ) : (
+                                    <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[11px] text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">
+                                      новый
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="px-2 py-2">
+                                  <select
+                                    value={aiCreateApplyPlan[file.path] || (exists ? "skip" : "create")}
+                                    onChange={(e) => onSetCreatePlan(file.path, e.target.value as AIPageApplyAction)}
+                                    className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs dark:border-slate-700 dark:bg-slate-800"
+                                  >
+                                    <option value="create">create</option>
+                                    <option value="overwrite">overwrite</option>
+                                    <option value="skip">skip</option>
+                                  </select>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {aiCreatePreviewFile && (
+                      <>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setAiCreateView("diff")}
+                            className={`rounded-lg border px-2 py-1 text-[11px] font-semibold ${
+                              aiCreateView === "diff"
+                                ? "border-indigo-600 bg-indigo-600 text-white"
+                                : "border-slate-200 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                            }`}
+                          >
+                            Diff
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setAiCreateView("preview")}
+                            className={`rounded-lg border px-2 py-1 text-[11px] font-semibold ${
+                              aiCreateView === "preview"
+                                ? "border-indigo-600 bg-indigo-600 text-white"
+                                : "border-slate-200 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                            }`}
+                          >
+                            Preview
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setAiCreateView("code")}
+                            className={`rounded-lg border px-2 py-1 text-[11px] font-semibold ${
+                              aiCreateView === "code"
+                                ? "border-indigo-600 bg-indigo-600 text-white"
+                                : "border-slate-200 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                            }`}
+                          >
+                            Код
+                          </button>
+                        </div>
+                        {aiCreateView === "diff" && (
+                          <MonacoDiffEditor
+                            original={aiCreateExistingContent[aiCreatePreviewFile.path] || ""}
+                            modified={aiCreatePreviewFile.content || ""}
+                            language={detectLanguage(aiCreatePreviewFile.path)}
+                          />
+                        )}
+                        {aiCreateView === "preview" &&
+                          (aiCreatePreviewFile.path.toLowerCase().endsWith(".html") ? (
+                            <iframe
+                              title="ai-create-preview"
+                              sandbox="allow-same-origin allow-scripts"
+                              srcDoc={aiCreatePreviewSrcDoc}
+                              className="h-[56vh] w-full rounded-lg border border-slate-200 dark:border-slate-700"
+                            />
+                          ) : (
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-300">
+                              Preview доступен только для HTML-файлов.
+                            </div>
+                          ))}
+                        {aiCreateView === "code" && (
+                          <textarea
+                            readOnly
+                            value={aiCreatePreviewFile.content || ""}
+                            rows={12}
+                            className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 font-mono text-[11px] dark:border-slate-700 dark:bg-slate-800"
+                          />
+                        )}
+                      </>
+                    )}
+                  </>
+                )}
+
+                <details
+                  open={aiCreateDiagnosticsOpen}
+                  onToggle={(event) => setAiCreateDiagnosticsOpen((event.currentTarget as HTMLDetailsElement).open)}
+                  className="rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800/50"
+                >
+                  <summary className="cursor-pointer font-semibold text-slate-700 dark:text-slate-200">Диагностика</summary>
+                  <div className="mt-2 space-y-1 text-slate-600 dark:text-slate-300">
+                    <div>Источник промпта: {aiCreateMeta?.source || "unknown"}</div>
+                    <div>Предупреждений: {aiCreateMeta?.warnings?.length || 0}</div>
+                    <div>Token usage: {aiCreateMeta?.tokenUsage ? JSON.stringify(aiCreateMeta.tokenUsage) : "n/a"}</div>
+                    {aiCreateMeta?.warnings?.length ? <div>Warnings: {aiCreateMeta.warnings.join(" | ")}</div> : null}
+                    {aiCreateContextDebug ? (
+                      <textarea
+                        readOnly
+                        value={aiCreateContextDebug}
+                        rows={8}
+                        className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-2 py-2 font-mono text-[11px] dark:border-slate-700 dark:bg-slate-900/60"
+                      />
+                    ) : null}
+                  </div>
+                </details>
+              </div>
+            )}
           </div>
 
           <FileHistory

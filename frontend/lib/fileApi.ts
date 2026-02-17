@@ -77,6 +77,14 @@ export type AIDiffSummary = {
   new_bytes: number;
 };
 
+export type ContextPackMetaDTO = {
+  pack_hash: string;
+  files_used: number;
+  bytes_used: number;
+  truncated: boolean;
+  source_files: string[];
+};
+
 export type AIEditorSuggestionDTO = {
   suggested_content: string;
   diff_summary?: AIDiffSummary;
@@ -84,6 +92,7 @@ export type AIEditorSuggestionDTO = {
   prompt_trace?: Record<string, any>;
   token_usage?: Record<string, any>;
   mime_type?: string;
+  context_pack_meta?: ContextPackMetaDTO;
 };
 
 export type AIPageSuggestionFile = {
@@ -97,6 +106,18 @@ export type AIPageSuggestionDTO = {
   warnings?: string[];
   prompt_trace?: Record<string, any>;
   token_usage?: Record<string, any>;
+  context_pack_meta?: ContextPackMetaDTO;
+};
+
+export type AIPageApplyAction = "create" | "overwrite" | "skip";
+
+export type AIPageApplyPlan = Record<string, AIPageApplyAction>;
+
+export type EditorContextPackDTO = {
+  target_path: string;
+  context_mode: "auto" | "manual" | "hybrid";
+  context_pack_meta: ContextPackMetaDTO;
+  site_context: string;
 };
 
 const encodeDomainId = (domainId: string) => encodeURIComponent(domainId.trim());
@@ -272,6 +293,7 @@ export async function aiSuggestFile(
     model?: string;
     selection?: string;
     context_files?: string[];
+    context_mode?: "auto" | "manual" | "hybrid";
   }
 ) {
   const encodedPath = encodeFilePath(path);
@@ -289,6 +311,8 @@ export async function aiCreatePage(
     target_path: string;
     with_assets: boolean;
     model?: string;
+    context_mode?: "auto" | "manual" | "hybrid";
+    context_files?: string[];
   }
 ) {
   return authFetch<AIPageSuggestionDTO>(`/api/domains/${encodeDomainId(domainId)}/editor/ai-create-page`, {
@@ -296,4 +320,25 @@ export async function aiCreatePage(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
+}
+
+export async function getEditorContextPack(
+  domainId: string,
+  payload: {
+    target_path: string;
+    context_mode?: "auto" | "manual" | "hybrid";
+    context_files?: string[];
+  }
+) {
+  const params = new URLSearchParams();
+  params.set("target_path", payload.target_path);
+  if (payload.context_mode) {
+    params.set("context_mode", payload.context_mode);
+  }
+  if (payload.context_files && payload.context_files.length > 0) {
+    params.set("context_files", payload.context_files.join(","));
+  }
+  return authFetch<EditorContextPackDTO>(
+    `/api/domains/${encodeDomainId(domainId)}/editor/context-pack?${params.toString()}`
+  );
 }

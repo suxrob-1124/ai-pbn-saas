@@ -8,13 +8,12 @@ const pagePath = path.join(root, "app", "domains", "[id]", "editor", "page.tsx")
 assert.ok(existsSync(pagePath), "missing /domains/[id]/editor page");
 const page = readFileSync(pagePath, "utf8");
 
-assert.ok(page.includes("AI: редактирование файла"), "missing AI file edit panel");
-assert.ok(page.includes("Контекст-файлы через запятую"), "missing context-files input");
-assert.ok(page.includes("Версия модели"), "missing model select for AI suggest");
-assert.ok(page.includes("Prompt source:"), "missing prompt source output");
-assert.ok(page.includes("Token usage:"), "missing token usage output");
-assert.ok(page.includes("View diff"), "missing diff preview action");
-assert.ok(page.includes("Suggest"), "missing suggest action");
-assert.ok(page.includes("Apply to buffer"), "missing apply action");
+assert.ok(page.includes("AI Studio: изменить текущий файл"), "missing AI Studio edit tab");
+assert.ok(page.includes("Режим контекста"), "missing context mode selector");
+assert.ok(page.includes("Сгенерировать предложение"), "missing suggest action");
+assert.ok(page.includes("Применить в буфер"), "missing apply-to-buffer action");
+assert.ok(page.includes("Контекст запроса"), "missing context debug action");
+assert.ok(page.includes("Diff"), "missing diff preview action");
+assert.ok(page.includes("Диагностика"), "missing diagnostics collapsible");
 
 console.log("OK");
