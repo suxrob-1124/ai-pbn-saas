@@ -10,9 +10,6 @@ type FileTreeProps = {
   selectedPath?: string;
   loading?: boolean;
   onSelect: (file: EditorFileMeta) => void;
-  contextSelectedPaths?: string[];
-  onToggleContextPath?: (path: string, checked: boolean) => void;
-  contextDisabledPath?: string;
 };
 
 function fileLabelIcon(file: EditorFileMeta) {
@@ -100,13 +97,9 @@ export function FileTree({
   files,
   selectedPath,
   loading,
-  onSelect,
-  contextSelectedPaths = [],
-  onToggleContextPath,
-  contextDisabledPath
+  onSelect
 }: FileTreeProps) {
   const tree = useMemo(() => buildTree(files), [files]);
-  const selectedContextSet = useMemo(() => new Set(contextSelectedPaths), [contextSelectedPaths]);
   const [openPaths, setOpenPaths] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
@@ -168,19 +161,6 @@ export function FileTree({
         }`}
         style={{ paddingLeft: `${8 + depth * 14}px` }}
       >
-        {onToggleContextPath && (
-          <input
-            type="checkbox"
-            checked={selectedContextSet.has(file.path)}
-            disabled={contextDisabledPath === file.path}
-            onChange={(event) => {
-              onToggleContextPath(file.path, event.currentTarget.checked);
-            }}
-            onClick={(event) => event.stopPropagation()}
-            className="h-3.5 w-3.5 rounded border-slate-300"
-            title={contextDisabledPath === file.path ? "Текущий файл нельзя добавить в контекст" : "Использовать как AI-контекст"}
-          />
-        )}
         {fileLabelIcon(file)}
         <span className="truncate">{node.name}</span>
         {file.mimeType?.toLowerCase().startsWith("image/") && file.width && file.height && (

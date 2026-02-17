@@ -9,8 +9,7 @@ assert.ok(existsSync(pagePath), "missing /domains/[id]/editor page");
 const page = readFileSync(pagePath, "utf8");
 
 assert.ok(page.includes("AI: редактирование файла"), "missing AI file edit panel");
-assert.ok(page.includes("Отмечайте файлы чекбоксами в дереве слева"), "missing file-tree context hint");
-assert.ok(page.includes("onToggleContextPath"), "missing file-tree context toggle wiring");
+assert.ok(page.includes("Контекст-файлы через запятую"), "missing context-files input");
 assert.ok(page.includes("Модель (опционально)"), "missing model input for AI suggest");
 assert.ok(page.includes("Prompt source:"), "missing prompt source output");
 assert.ok(page.includes("Token usage:"), "missing token usage output");

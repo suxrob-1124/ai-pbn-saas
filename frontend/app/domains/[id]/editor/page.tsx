@@ -159,7 +159,7 @@ export default function DomainEditorPage() {
   const [aiOutput, setAiOutput] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
   const [aiModel, setAiModel] = useState("");
-  const [aiContextPaths, setAiContextPaths] = useState<string[]>([]);
+  const [aiContextFiles, setAiContextFiles] = useState("");
   const [aiSuggestView, setAiSuggestView] = useState<"diff" | "content">("diff");
   const [aiSuggestMeta, setAiSuggestMeta] = useState<{
     source?: string;
@@ -648,8 +648,10 @@ export default function DomainEditorPage() {
     setAiBusy(true);
     setAiSuggestMeta(null);
     try {
-      const contextFiles = aiContextPaths
-        .filter((item) => item !== selection.selectedPath)
+      const contextFiles = aiContextFiles
+        .split(",")
+        .map((item) => item.trim())
+        .filter((item) => item && item !== selection.selectedPath)
         .slice(0, 10);
       const result: AIEditorSuggestionDTO = await aiSuggestFile(domainId, selection.selectedPath, {
         instruction: aiInstruction.trim(),
@@ -755,21 +757,6 @@ export default function DomainEditorPage() {
   const onSelectFile = async (file: EditorFileMeta) => {
     await loadFile(file);
   };
-
-  const onToggleContextPath = (path: string, checked: boolean) => {
-    setAiContextPaths((prev) => {
-      if (checked) {
-        if (prev.includes(path)) return prev;
-        return [...prev, path];
-      }
-      return prev.filter((item) => item !== path);
-    });
-  };
-
-  useEffect(() => {
-    if (!selection?.selectedPath) return;
-    setAiContextPaths((prev) => prev.filter((item) => item !== selection.selectedPath));
-  }, [selection?.selectedPath]);
 
   const previewSrcDoc = useMemo(() => {
     if (!selection || !currentFile) return "";
@@ -913,9 +900,6 @@ export default function DomainEditorPage() {
             selectedPath={selection?.selectedPath}
             loading={fileLoading}
             onSelect={onSelectFile}
-            contextSelectedPaths={aiContextPaths}
-            onToggleContextPath={onToggleContextPath}
-            contextDisabledPath={selection?.selectedPath}
           />
           <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50/70 p-2 dark:border-slate-700 dark:bg-slate-800/40">
             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
@@ -1055,18 +1039,12 @@ export default function DomainEditorPage() {
                 placeholder="Модель (опционально), например: gemini-2.5-pro"
                 className="mb-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"
               />
-              <div className="mb-2 rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-[11px] text-slate-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
-                Отмечайте файлы чекбоксами в дереве слева для AI-контекста. Выбрано: {aiContextPaths.length}
-                {aiContextPaths.length > 0 && (
-                  <div className="mt-1 max-h-16 overflow-auto rounded bg-white/70 p-1 dark:bg-slate-900/50">
-                    {aiContextPaths.map((pathValue) => (
-                      <div key={pathValue} className="truncate">
-                        {pathValue}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+              <input
+                value={aiContextFiles}
+                onChange={(e) => setAiContextFiles(e.target.value)}
+                placeholder="Контекст-файлы через запятую, например: style.css,script.js"
+                className="mb-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"
+              />
               <textarea
                 value={aiInstruction}
                 onChange={(e) => setAiInstruction(e.target.value)}
