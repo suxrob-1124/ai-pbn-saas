@@ -117,6 +117,15 @@ export type AIPageSuggestionDTO = {
   context_pack_meta?: ContextPackMetaDTO;
 };
 
+export type AIRegeneratedAssetDTO = {
+  status: string;
+  file?: FileListItem;
+  warnings?: string[];
+  prompt_trace?: Record<string, any>;
+  token_usage?: Record<string, any>;
+  context_pack_meta?: ContextPackMetaDTO;
+};
+
 export type AIPageApplyAction = "create" | "overwrite" | "skip";
 
 export type AIPageApplyPlan = Record<string, AIPageApplyAction>;
@@ -159,15 +168,24 @@ export async function saveFile(
   path: string,
   content: string,
   description?: string,
-  opts?: { expectedVersion?: number; source?: "manual" | "ai" | "revert" }
+  opts?: { expectedVersion?: number; expectedPath?: string; source?: "manual" | "ai" | "revert" }
 ): Promise<SaveFileResponse> {
   const encodedPath = encodeFilePath(path);
-  const payload: { content: string; description?: string; expected_version?: number; source?: string } = { content };
+  const payload: {
+    content: string;
+    description?: string;
+    expected_version?: number;
+    expected_path?: string;
+    source?: string;
+  } = { content };
   if (description && description.trim()) {
     payload.description = description.trim();
   }
   if (typeof opts?.expectedVersion === "number" && opts.expectedVersion > 0) {
     payload.expected_version = opts.expectedVersion;
+  }
+  if (opts?.expectedPath && opts.expectedPath.trim()) {
+    payload.expected_path = opts.expectedPath.trim();
   }
   if (opts?.source) {
     payload.source = opts.source;
@@ -336,6 +354,25 @@ export async function aiCreatePage(
   }
 ) {
   return authFetch<AIPageSuggestionDTO>(`/api/domains/${encodeDomainId(domainId)}/editor/ai-create-page`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function aiRegenerateAsset(
+  domainId: string,
+  payload: {
+    path: string;
+    prompt?: string;
+    instruction?: string;
+    mime_type?: string;
+    model?: string;
+    context_mode?: "auto" | "manual" | "hybrid";
+    context_files?: string[];
+  }
+) {
+  return authFetch<AIRegeneratedAssetDTO>(`/api/domains/${encodeDomainId(domainId)}/editor/ai-regenerate-asset`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),

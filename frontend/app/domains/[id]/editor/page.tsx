@@ -27,6 +27,7 @@ import {
   SaveConflictError,
   type AIPageApplyAction,
   type AIEditorSuggestionDTO,
+  aiRegenerateAsset,
   type AIPageSuggestionDTO,
   aiCreatePage,
   aiSuggestFile,
@@ -232,6 +233,7 @@ export default function DomainEditorPage() {
   const [aiCreateInstruction, setAiCreateInstruction] = useState("");
   const [aiCreatePath, setAiCreatePath] = useState("new-page.html");
   const [aiCreateBusy, setAiCreateBusy] = useState(false);
+  const [aiCreateAssetBusyPath, setAiCreateAssetBusyPath] = useState("");
   const [aiCreateModel, setAiCreateModel] = useState("");
   const [aiCreateContextMode, setAiCreateContextMode] = useState<AIContextMode>("auto");
   const [aiCreateContextSelectedFiles, setAiCreateContextSelectedFiles] = useState<string[]>([]);
@@ -542,7 +544,7 @@ export default function DomainEditorPage() {
         selection.selectedPath,
         dirtyState.currentContent,
         description.trim() || undefined,
-        { expectedVersion: selection.version, source: "manual" }
+        { expectedVersion: selection.version, expectedPath: selection.selectedPath, source: "manual" }
       );
       const nextVersion = typeof result.version === "number" ? result.version : selection.version + 1;
       setDirtyState((prev) => ({
@@ -606,7 +608,7 @@ export default function DomainEditorPage() {
         selection.selectedPath,
         dirtyState.currentContent,
         description.trim() || "manual overwrite after conflict",
-        { expectedVersion: conflictState.currentVersion, source: "manual" }
+        { expectedVersion: conflictState.currentVersion, expectedPath: selection.selectedPath, source: "manual" }
       );
       const nextVersion =
         typeof result.version === "number" ? result.version : Math.max(selection.version + 1, conflictState.currentVersion + 1);
@@ -1125,6 +1127,75 @@ export default function DomainEditorPage() {
     }
   };
 
+  const onRegenerateAsset = async (pathValue: string) => {
+    const asset = aiCreateAssets.find((item) => item.path === pathValue);
+    if (!asset) {
+      showToast({
+        type: "error",
+        title: "Ассет не найден",
+        message: "Выберите ассет из манифеста и повторите действие.",
+      });
+      return;
+    }
+    const promptValue = asset.prompt?.trim();
+    if (!promptValue) {
+      showToast({
+        type: "error",
+        title: "Нет prompt для регенерации",
+        message: "Заполните prompt в манифесте ассетов или загрузите изображение вручную.",
+      });
+      return;
+    }
+    setAiCreateAssetBusyPath(pathValue);
+    try {
+      const result = await aiRegenerateAsset(domainId, {
+        path: asset.path,
+        prompt: promptValue,
+        mime_type: asset.mime_type || undefined,
+        model: aiCreateModel.trim() || undefined,
+        context_mode: aiCreateContextMode,
+        context_files: selectedContextFiles(aiCreateContextMode, aiCreateContextSelectedFiles),
+      });
+      setAiCreateSkippedAssets((prev) => prev.filter((item) => item !== pathValue));
+      const refreshed = await loadFiles();
+      if (selection?.selectedPath === pathValue) {
+        const selected = refreshed.find((file) => file.path === pathValue);
+        if (selected) {
+          await loadFile(selected);
+        }
+      }
+      showToast({
+        type: "success",
+        title: "Изображение сгенерировано",
+        message: pathValue,
+      });
+      if (result.warnings && result.warnings.length > 0) {
+        showToast({
+          type: "error",
+          title: "Предупреждения регенерации",
+          message: result.warnings.slice(0, 2).join(" | "),
+        });
+      }
+    } catch (err: any) {
+      const status = Number(err?.status || err?.response?.status || 0);
+      if (status === 422) {
+        showToast({
+          type: "error",
+          title: "Невалидное изображение от AI",
+          message: err?.message || "AI вернул неподходящий формат, попробуйте другую модель или prompt.",
+        });
+      } else {
+        showToast({
+          type: "error",
+          title: "Ошибка регенерации ассета",
+          message: err?.message || "unknown error",
+        });
+      }
+    } finally {
+      setAiCreateAssetBusyPath("");
+    }
+  };
+
   const onApplyCreatedFiles = async () => {
     if (aiCreateFiles.length === 0) return;
     const planned = aiCreateFiles
@@ -1196,7 +1267,10 @@ export default function DomainEditorPage() {
         }
         if (item.action === "overwrite") {
           if (exists) {
-            await saveFile(domainId, file.path, file.content, "ai create-page overwrite", { source: "ai" });
+            await saveFile(domainId, file.path, file.content, "ai create-page overwrite", {
+              expectedPath: file.path,
+              source: "ai",
+            });
           } else {
             await createFileOrDir(domainId, {
               kind: "file",
@@ -1930,6 +2004,14 @@ export default function DomainEditorPage() {
                                       className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
                                     >
                                       Upload
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => void onRegenerateAsset(asset.path)}
+                                      disabled={Boolean(aiCreateAssetBusyPath) || !asset.prompt}
+                                      className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                                    >
+                                      {aiCreateAssetBusyPath === asset.path ? "Генерация..." : "Регенерировать"}
                                     </button>
                                     <button
                                       type="button"
