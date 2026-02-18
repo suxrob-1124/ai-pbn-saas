@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import {
   FiArrowLeft,
   FiCode,
@@ -237,9 +237,9 @@ export default function DomainEditorPage() {
   const [aiCreateContextSelectedFiles, setAiCreateContextSelectedFiles] = useState<string[]>([]);
   const [aiCreateFiles, setAiCreateFiles] = useState<AIPageSuggestionFile[]>([]);
   const [aiCreateAssets, setAiCreateAssets] = useState<AIPageSuggestionAsset[]>([]);
+  const [aiCreateSkippedAssets, setAiCreateSkippedAssets] = useState<string[]>([]);
   const [aiCreateApplyPlan, setAiCreateApplyPlan] = useState<Record<string, AIPageApplyAction>>({});
   const [aiCreateExistingContent, setAiCreateExistingContent] = useState<Record<string, string>>({});
-  const [aiCreateMissingAssets, setAiCreateMissingAssets] = useState<string[]>([]);
   const [aiCreatePreviewPath, setAiCreatePreviewPath] = useState("");
   const [aiCreateView, setAiCreateView] = useState<"diff" | "preview" | "code">("diff");
   const [aiCreateMeta, setAiCreateMeta] = useState<{
@@ -258,6 +258,8 @@ export default function DomainEditorPage() {
     updatedAt?: string;
   } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const assetUploadInputRef = useRef<HTMLInputElement | null>(null);
+  const [assetUploadTargetPath, setAssetUploadTargetPath] = useState("");
 
   const currentFile = useMemo(
     () => files.find((item) => item.path === selection?.selectedPath),
@@ -297,6 +299,41 @@ export default function DomainEditorPage() {
     () => aiCreateFiles.find((item) => item.path === aiCreatePreviewPath) || null,
     [aiCreateFiles, aiCreatePreviewPath]
   );
+  const aiCreateAssetPathSet = useMemo(() => new Set(aiCreateAssets.map((item) => item.path)), [aiCreateAssets]);
+  const aiCreateFilePathSet = useMemo(() => new Set(aiCreateFiles.map((item) => item.path)), [aiCreateFiles]);
+  const aiCreateMissingAssets = useMemo(() => {
+    const knownPaths = new Set<string>([
+      ...Array.from(existingFilesMap.keys()),
+      ...Array.from(aiCreateFilePathSet.values()),
+      ...aiCreateAssets.map((item) => item.path),
+    ]);
+    const missing = new Set<string>();
+    for (const file of aiCreateFiles) {
+      if (!file.path.toLowerCase().endsWith(".html")) continue;
+      const refs = extractLocalAssetRefsFromHTML(file.content || "");
+      for (const ref of refs) {
+        const resolved = normalizeRelativeSitePath(file.path, ref);
+        if (!resolved) continue;
+        if (!knownPaths.has(resolved)) {
+          missing.add(resolved);
+        }
+      }
+    }
+    for (const asset of aiCreateAssets) {
+      if (!existingFilesMap.has(asset.path) && !aiCreateFilePathSet.has(asset.path)) {
+        missing.add(asset.path);
+      }
+    }
+    return Array.from(missing).sort();
+  }, [aiCreateAssets, aiCreateFiles, aiCreateFilePathSet, existingFilesMap]);
+  const unresolvedMissingAssets = useMemo(
+    () => aiCreateMissingAssets.filter((pathValue) => !aiCreateSkippedAssets.includes(pathValue)),
+    [aiCreateMissingAssets, aiCreateSkippedAssets]
+  );
+  const unresolvedNonManifestAssets = useMemo(
+    () => unresolvedMissingAssets.filter((pathValue) => !aiCreateAssetPathSet.has(pathValue)),
+    [aiCreateAssetPathSet, unresolvedMissingAssets]
+  );
 
   useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => {
@@ -307,6 +344,10 @@ export default function DomainEditorPage() {
     window.addEventListener("beforeunload", beforeUnload);
     return () => window.removeEventListener("beforeunload", beforeUnload);
   }, [dirtyState.isDirty]);
+
+  useEffect(() => {
+    setAiCreateSkippedAssets((prev) => prev.filter((pathValue) => aiCreateMissingAssets.includes(pathValue)));
+  }, [aiCreateMissingAssets]);
 
   const updatePathQuery = (pathValue: string) => {
     const query = new URLSearchParams(searchParams.toString());
@@ -925,7 +966,7 @@ export default function DomainEditorPage() {
     setAiCreateBusy(true);
     setAiCreateMeta(null);
     setAiCreateContextDebug("");
-    setAiCreateMissingAssets([]);
+    setAiCreateSkippedAssets([]);
     setAiCreateAssets([]);
     try {
       const result: AIPageSuggestionDTO = await aiCreatePage(domainId, {
@@ -964,25 +1005,6 @@ export default function DomainEditorPage() {
         })
       );
       setAiCreateExistingContent(existingMap);
-      const knownPaths = new Set<string>([
-        ...Array.from(existingFilesMap.keys()),
-        ...generatedFiles.map((item) => item.path),
-        ...generatedAssets.map((item) => item.path),
-      ]);
-      const missing = new Set<string>();
-      for (const file of generatedFiles) {
-        if (!file.path.toLowerCase().endsWith(".html")) continue;
-        const refs = extractLocalAssetRefsFromHTML(file.content || "");
-        for (const ref of refs) {
-          const resolved = normalizeRelativeSitePath(file.path, ref);
-          if (!resolved) continue;
-          if (!knownPaths.has(resolved)) {
-            missing.add(resolved);
-          }
-        }
-      }
-      const missingList = Array.from(missing).sort();
-      setAiCreateMissingAssets(missingList);
       const promptSource =
         typeof result.prompt_trace?.resolved_source === "string" ? result.prompt_trace.resolved_source : undefined;
       setAiCreateMeta({
@@ -997,13 +1019,6 @@ export default function DomainEditorPage() {
         title: "AI сгенерировал пакет файлов",
         message: `${generatedFiles.length} файлов, конфликтов по пути: ${existingCount}`,
       });
-      if (missingList.length > 0) {
-        showToast({
-          type: "error",
-          title: "Найдены отсутствующие ассеты",
-          message: `Проверьте ссылки на файлы: ${missingList.slice(0, 3).join(", ")}${missingList.length > 3 ? "..." : ""}`,
-        });
-      }
     } catch (err: any) {
       const status = Number(err?.status || err?.response?.status || 0);
       if (status === 422 || String(err?.message || "").toLowerCase().includes("ai_response_invalid_format")) {
@@ -1024,6 +1039,76 @@ export default function DomainEditorPage() {
     setAiCreateApplyPlan((prev) => ({ ...prev, [pathValue]: action }));
   };
 
+  const onToggleSkipAsset = (pathValue: string) => {
+    setAiCreateSkippedAssets((prev) =>
+      prev.includes(pathValue) ? prev.filter((item) => item !== pathValue) : [...prev, pathValue]
+    );
+  };
+
+  const onAssetUploadPick = (pathValue: string) => {
+    if (readOnly) {
+      showToast({
+        type: "error",
+        title: "Недостаточно прав",
+        message: "Для загрузки ассета нужны права owner/editor/admin.",
+      });
+      return;
+    }
+    setAssetUploadTargetPath(pathValue);
+    assetUploadInputRef.current?.click();
+  };
+
+  const onAssetUploadSelected = async (event: ChangeEvent<HTMLInputElement>) => {
+    const picked = event.target.files?.[0];
+    event.currentTarget.value = "";
+    if (!picked || !assetUploadTargetPath) return;
+    try {
+      await uploadFile(domainId, picked, assetUploadTargetPath);
+      setAiCreateSkippedAssets((prev) => prev.filter((item) => item !== assetUploadTargetPath));
+      await loadFiles();
+      showToast({
+        type: "success",
+        title: "Ассет загружен",
+        message: `Файл ${assetUploadTargetPath} успешно добавлен.`,
+      });
+    } catch (err: any) {
+      showToast({
+        type: "error",
+        title: "Не удалось загрузить ассет",
+        message: err?.message || "unknown error",
+      });
+    } finally {
+      setAssetUploadTargetPath("");
+    }
+  };
+
+  const onCopyAssetPrompt = async (pathValue: string) => {
+    const asset = aiCreateAssets.find((item) => item.path === pathValue);
+    if (!asset?.prompt?.trim()) {
+      showToast({
+        type: "error",
+        title: "Нет prompt для ассета",
+        message: "В манифесте не указан prompt для регенерации изображения.",
+      });
+      return;
+    }
+    const text = asset.prompt.trim();
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast({
+        type: "success",
+        title: "Промпт скопирован",
+        message: "Используйте prompt в image-generation пайплайне или внешнем инструменте.",
+      });
+    } catch {
+      showToast({
+        type: "error",
+        title: "Не удалось скопировать",
+        message: "Скопируйте prompt вручную из таблицы ассетов.",
+      });
+    }
+  };
+
   const onApplyCreatedFiles = async () => {
     if (aiCreateFiles.length === 0) return;
     const planned = aiCreateFiles
@@ -1040,9 +1125,9 @@ export default function DomainEditorPage() {
       });
       return;
     }
-    if (aiCreateMissingAssets.length > 0) {
+    if (unresolvedMissingAssets.length > 0) {
       const allowWithMissing = window.confirm(
-        `Обнаружены отсутствующие ассеты (${aiCreateMissingAssets.length}):\n${aiCreateMissingAssets.slice(0, 6).join("\n")}\n\nПрименить изменения всё равно?`
+        `Обнаружены нерешённые ассеты (${unresolvedMissingAssets.length}):\n${unresolvedMissingAssets.slice(0, 6).join("\n")}\n\nПрименить изменения всё равно?`
       );
       if (!allowWithMissing) return;
     }
@@ -1286,6 +1371,13 @@ export default function DomainEditorPage() {
               type="file"
               className="hidden"
               onChange={(e) => onUploadInput(e.target.files?.[0] || null)}
+            />
+            <input
+              ref={assetUploadInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+              className="hidden"
+              onChange={onAssetUploadSelected}
             />
           </div>
           <h2 className="mb-1 text-sm font-semibold">Файлы сайта</h2>
@@ -1754,10 +1846,10 @@ export default function DomainEditorPage() {
                   </div>
                 )}
 
-                {aiCreateMissingAssets.length > 0 && (
+                {unresolvedMissingAssets.length > 0 && (
                   <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
-                    Обнаружены отсутствующие ассеты: {aiCreateMissingAssets.slice(0, 8).join(", ")}
-                    {aiCreateMissingAssets.length > 8 ? ` (+${aiCreateMissingAssets.length - 8})` : ""}
+                    Нерешённые ассеты: {unresolvedMissingAssets.slice(0, 8).join(", ")}
+                    {unresolvedMissingAssets.length > 8 ? ` (+${unresolvedMissingAssets.length - 8})` : ""}
                   </div>
                 )}
 
@@ -1774,22 +1866,113 @@ export default function DomainEditorPage() {
                             <th className="px-2 py-1">Тип</th>
                             <th className="px-2 py-1">Alt</th>
                             <th className="px-2 py-1">Промпт</th>
+                            <th className="px-2 py-1">Статус</th>
+                            <th className="px-2 py-1">Действия</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {aiCreateAssets.map((asset) => (
-                            <tr key={`asset-${asset.path}`} className="border-t border-slate-200 dark:border-slate-700">
-                              <td className="px-2 py-1 font-mono">{asset.path}</td>
-                              <td className="px-2 py-1">{asset.mime_type}</td>
-                              <td className="px-2 py-1">{asset.alt || "—"}</td>
-                              <td className="px-2 py-1">{asset.prompt || "—"}</td>
-                            </tr>
-                          ))}
+                          {aiCreateAssets.map((asset) => {
+                            const unresolved = unresolvedMissingAssets.includes(asset.path);
+                            const skipped = aiCreateSkippedAssets.includes(asset.path);
+                            const status = skipped
+                              ? "пропущен"
+                              : unresolved
+                                ? "требует файл"
+                                : "готов";
+                            return (
+                              <tr key={`asset-${asset.path}`} className="border-t border-slate-200 dark:border-slate-700">
+                                <td className="px-2 py-1 font-mono">{asset.path}</td>
+                                <td className="px-2 py-1">{asset.mime_type}</td>
+                                <td className="px-2 py-1">{asset.alt || "—"}</td>
+                                <td className="px-2 py-1">
+                                  <div className="line-clamp-2">{asset.prompt || "—"}</div>
+                                </td>
+                                <td className="px-2 py-1">
+                                  <span
+                                    className={`rounded px-1.5 py-0.5 text-[11px] ${
+                                      skipped
+                                        ? "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
+                                        : unresolved
+                                          ? "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300"
+                                          : "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"
+                                    }`}
+                                  >
+                                    {status}
+                                  </span>
+                                </td>
+                                <td className="px-2 py-1">
+                                  <div className="flex flex-wrap gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => onAssetUploadPick(asset.path)}
+                                      disabled={readOnly}
+                                      className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                                    >
+                                      Upload
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => onToggleSkipAsset(asset.path)}
+                                      className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                                    >
+                                      {skipped ? "Вернуть" : "Skip"}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => void onCopyAssetPrompt(asset.path)}
+                                      disabled={!asset.prompt}
+                                      className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                                    >
+                                      Copy prompt
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
                     <div className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
-                      Изображения из манифеста не применяются автоматически как бинарные файлы. Для них нужен upload/regenerate.
+                      Изображения из манифеста не применяются автоматически как бинарные файлы. Добавьте их через Upload или пометьте Skip.
+                    </div>
+                  </div>
+                )}
+
+                {unresolvedNonManifestAssets.length > 0 && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-2 text-xs dark:border-amber-900 dark:bg-amber-950/20">
+                    <div className="mb-1 font-semibold text-amber-800 dark:text-amber-300">
+                      Ссылки на файлы без манифеста ассетов
+                    </div>
+                    <div className="space-y-1">
+                      {unresolvedNonManifestAssets.map((pathValue) => {
+                        const skipped = aiCreateSkippedAssets.includes(pathValue);
+                        return (
+                          <div
+                            key={`missing-ref-${pathValue}`}
+                            className="flex flex-wrap items-center justify-between gap-2 rounded border border-amber-200 bg-white/70 px-2 py-1 dark:border-amber-900 dark:bg-slate-900/40"
+                          >
+                            <span className="font-mono text-[11px]">{pathValue}</span>
+                            <div className="flex flex-wrap gap-1">
+                              <button
+                                type="button"
+                                onClick={() => onAssetUploadPick(pathValue)}
+                                disabled={readOnly}
+                                className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                              >
+                                Upload
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => onToggleSkipAsset(pathValue)}
+                                className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                              >
+                                {skipped ? "Вернуть" : "Skip"}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
