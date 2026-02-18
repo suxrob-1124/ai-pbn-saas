@@ -918,6 +918,44 @@ func TestFileAPI_UploadRejectsExecutable(t *testing.T) {
 	}
 }
 
+func TestFileAPI_UploadRejectsBrokenImagePayload(t *testing.T) {
+	s, _, domainID, _, _ := setupFileAPIDomainFixture(t)
+	adminCtx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: "admin@example.com",
+		Role:  "admin",
+	})
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", "hero.webp")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	// RIFF/WEBP header-like payload with invalid body.
+	broken := []byte{'R', 'I', 'F', 'F', 0x10, 0x00, 0x00, 0x00, 'W', 'E', 'B', 'P', 'V', 'P', '8', ' ', 0x00, 0x00, 0x00, 0x00}
+	if _, err := part.Write(broken); err != nil {
+		t.Fatalf("write form file: %v", err)
+	}
+	if err := writer.WriteField("path", "assets/hero.webp"); err != nil {
+		t.Fatalf("write path field: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/domains/"+domainID+"/files/upload", &body).WithContext(adminCtx)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	rec := httptest.NewRecorder()
+	s.handleDomainActions(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	lowerBody := strings.ToLower(rec.Body.String())
+	if !strings.Contains(lowerBody, "invalid image") && !strings.Contains(lowerBody, "invalid webp") {
+		t.Fatalf("expected invalid image error, got %s", rec.Body.String())
+	}
+}
+
 func TestFileAPI_SoftDeleteAndRestore(t *testing.T) {
 	s, _, domainID, _, _ := setupFileAPIDomainFixture(t)
 	adminCtx := context.WithValue(context.Background(), currentUserContextKey, auth.User{

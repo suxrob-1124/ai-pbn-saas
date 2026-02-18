@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"encoding/base64"
+	"strings"
 	"testing"
 )
 
@@ -87,5 +88,52 @@ func TestValidateImagePayloadAcceptsValidPNG(t *testing.T) {
 	}
 	if err := validateImagePayload("about/pixel.png", "image/png", raw); err != nil {
 		t.Fatalf("expected valid png payload, got %v", err)
+	}
+}
+
+func TestNormalizeEditorPageSuggestionPayloadFiltersInvalidEntries(t *testing.T) {
+	payload := editorPageSuggestionPayload{
+		Files: []editorGeneratedFile{
+			{Path: "about.html", Content: "<h1>About</h1>", MimeType: "text/html"},
+			{Path: "assets/hero.webp", Content: "RIFFxxxxWEBP", MimeType: "image/webp"},
+			{Path: "about.php", Content: "<?php echo 1;", MimeType: "text/plain"},
+			{Path: "../escape.html", Content: "<h1>Bad</h1>", MimeType: "text/html"},
+			{Path: "empty.html", Content: "   ", MimeType: "text/html"},
+		},
+		Assets: []editorGeneratedAsset{
+			{Path: "assets/hero.webp", Alt: "hero", Prompt: "hero image", MimeType: "image/webp"},
+			{Path: "docs/readme.txt", Alt: "doc", Prompt: "not image", MimeType: "text/plain"},
+			{Path: "../escape.webp", Alt: "bad", Prompt: "bad", MimeType: "image/webp"},
+		},
+		Warnings: []string{"from-model"},
+	}
+
+	files, assets, warnings := normalizeEditorPageSuggestionPayload(payload)
+	if len(files) != 1 {
+		t.Fatalf("expected only 1 valid file, got %d (%#v)", len(files), files)
+	}
+	if files[0]["path"] != "about.html" {
+		t.Fatalf("unexpected output file path: %#v", files[0])
+	}
+	if len(assets) != 1 {
+		t.Fatalf("expected only 1 valid asset, got %d (%#v)", len(assets), assets)
+	}
+	if assets[0]["path"] != "assets/hero.webp" {
+		t.Fatalf("unexpected output asset path: %#v", assets[0])
+	}
+
+	joined := strings.Join(warnings, " | ")
+	for _, needle := range []string{
+		"from-model",
+		"binary asset skipped from files",
+		"blocked file type skipped: about.php",
+		"invalid path skipped: ../escape.html",
+		"empty content skipped: empty.html",
+		"asset skipped (not an image): docs/readme.txt",
+		"invalid asset path skipped: ../escape.webp",
+	} {
+		if !strings.Contains(joined, needle) {
+			t.Fatalf("expected warning %q in %q", needle, joined)
+		}
 	}
 }

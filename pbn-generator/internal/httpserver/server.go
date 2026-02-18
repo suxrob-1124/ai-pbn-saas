@@ -2737,6 +2737,83 @@ Schema:
 %s`, raw)
 }
 
+func normalizeEditorPageSuggestionPayload(parsed editorPageSuggestionPayload) ([]map[string]any, []map[string]any, []string) {
+	warnings := append([]string(nil), parsed.Warnings...)
+	outFiles := make([]map[string]any, 0, len(parsed.Files))
+	for _, file := range parsed.Files {
+		cleanPath, err := sanitizeFilePath(file.Path)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("invalid path skipped: %s", file.Path))
+			continue
+		}
+		if err := validateEditorPath(cleanPath); err != nil {
+			warnings = append(warnings, fmt.Sprintf("protected path skipped: %s", cleanPath))
+			continue
+		}
+		if err := validateUploadPathPolicy(cleanPath); err != nil {
+			warnings = append(warnings, fmt.Sprintf("blocked file type skipped: %s", cleanPath))
+			continue
+		}
+		content := file.Content
+		if strings.TrimSpace(content) == "" {
+			warnings = append(warnings, fmt.Sprintf("empty content skipped: %s", cleanPath))
+			continue
+		}
+		if isImagePath(cleanPath) || isImageMime(file.MimeType) {
+			warnings = append(warnings, fmt.Sprintf("binary asset skipped from files, use assets manifest: %s", cleanPath))
+			continue
+		}
+		detected := detectMimeType(cleanPath, []byte(content))
+		mimeType := strings.TrimSpace(file.MimeType)
+		if mimeType == "" {
+			mimeType = detected
+		} else if err := validateMimeType(cleanPath, detected, mimeType); err != nil {
+			warnings = append(warnings, fmt.Sprintf("mime mismatch skipped: %s", cleanPath))
+			continue
+		}
+		if err := validateUploadSecurity(cleanPath, mimeType, []byte(content)); err != nil {
+			warnings = append(warnings, fmt.Sprintf("security validation skipped: %s", cleanPath))
+			continue
+		}
+		outFiles = append(outFiles, map[string]any{
+			"path":      cleanPath,
+			"content":   content,
+			"mime_type": mimeType,
+		})
+	}
+	outAssets := make([]map[string]any, 0, len(parsed.Assets))
+	for _, asset := range parsed.Assets {
+		cleanPath, err := sanitizeFilePath(asset.Path)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("invalid asset path skipped: %s", asset.Path))
+			continue
+		}
+		if err := validateEditorPath(cleanPath); err != nil {
+			warnings = append(warnings, fmt.Sprintf("protected asset path skipped: %s", cleanPath))
+			continue
+		}
+		if err := validateUploadPathPolicy(cleanPath); err != nil {
+			warnings = append(warnings, fmt.Sprintf("blocked asset type skipped: %s", cleanPath))
+			continue
+		}
+		mimeType := strings.TrimSpace(asset.MimeType)
+		if mimeType == "" {
+			mimeType = detectMimeType(cleanPath, nil)
+		}
+		if !isImageMime(mimeType) && !isImagePath(cleanPath) {
+			warnings = append(warnings, fmt.Sprintf("asset skipped (not an image): %s", cleanPath))
+			continue
+		}
+		outAssets = append(outAssets, map[string]any{
+			"path":      cleanPath,
+			"alt":       strings.TrimSpace(asset.Alt),
+			"prompt":    strings.TrimSpace(asset.Prompt),
+			"mime_type": mimeType,
+		})
+	}
+	return outFiles, outAssets, warnings
+}
+
 func (s *Server) handleDomainEditorActions(w http.ResponseWriter, r *http.Request, domainID string, parts []string) {
 	user, ok := currentUserFromContext(r.Context())
 	if !ok || user.Email == "" {
@@ -2916,79 +2993,7 @@ func (s *Server) handleDomainEditorActions(w http.ResponseWriter, r *http.Reques
 			})
 			return
 		}
-		warnings := append([]string(nil), parsed.Warnings...)
-		outFiles := make([]map[string]any, 0, len(parsed.Files))
-		for _, file := range parsed.Files {
-			cleanPath, err := sanitizeFilePath(file.Path)
-			if err != nil {
-				warnings = append(warnings, fmt.Sprintf("invalid path skipped: %s", file.Path))
-				continue
-			}
-			if err := validateEditorPath(cleanPath); err != nil {
-				warnings = append(warnings, fmt.Sprintf("protected path skipped: %s", cleanPath))
-				continue
-			}
-			if err := validateUploadPathPolicy(cleanPath); err != nil {
-				warnings = append(warnings, fmt.Sprintf("blocked file type skipped: %s", cleanPath))
-				continue
-			}
-			content := file.Content
-			if strings.TrimSpace(content) == "" {
-				warnings = append(warnings, fmt.Sprintf("empty content skipped: %s", cleanPath))
-				continue
-			}
-			if isImagePath(cleanPath) || isImageMime(file.MimeType) {
-				warnings = append(warnings, fmt.Sprintf("binary asset skipped from files, use assets manifest: %s", cleanPath))
-				continue
-			}
-			detected := detectMimeType(cleanPath, []byte(content))
-			mimeType := strings.TrimSpace(file.MimeType)
-			if mimeType == "" {
-				mimeType = detected
-			} else if err := validateMimeType(cleanPath, detected, mimeType); err != nil {
-				warnings = append(warnings, fmt.Sprintf("mime mismatch skipped: %s", cleanPath))
-				continue
-			}
-			if err := validateUploadSecurity(cleanPath, mimeType, []byte(content)); err != nil {
-				warnings = append(warnings, fmt.Sprintf("security validation skipped: %s", cleanPath))
-				continue
-			}
-			outFiles = append(outFiles, map[string]any{
-				"path":      cleanPath,
-				"content":   content,
-				"mime_type": mimeType,
-			})
-		}
-		outAssets := make([]map[string]any, 0, len(parsed.Assets))
-		for _, asset := range parsed.Assets {
-			cleanPath, err := sanitizeFilePath(asset.Path)
-			if err != nil {
-				warnings = append(warnings, fmt.Sprintf("invalid asset path skipped: %s", asset.Path))
-				continue
-			}
-			if err := validateEditorPath(cleanPath); err != nil {
-				warnings = append(warnings, fmt.Sprintf("protected asset path skipped: %s", cleanPath))
-				continue
-			}
-			if err := validateUploadPathPolicy(cleanPath); err != nil {
-				warnings = append(warnings, fmt.Sprintf("blocked asset type skipped: %s", cleanPath))
-				continue
-			}
-			mimeType := strings.TrimSpace(asset.MimeType)
-			if mimeType == "" {
-				mimeType = detectMimeType(cleanPath, nil)
-			}
-			if !isImageMime(mimeType) && !isImagePath(cleanPath) {
-				warnings = append(warnings, fmt.Sprintf("asset skipped (not an image): %s", cleanPath))
-				continue
-			}
-			outAssets = append(outAssets, map[string]any{
-				"path":      cleanPath,
-				"alt":       strings.TrimSpace(asset.Alt),
-				"prompt":    strings.TrimSpace(asset.Prompt),
-				"mime_type": mimeType,
-			})
-		}
+		outFiles, outAssets, warnings := normalizeEditorPageSuggestionPayload(parsed)
 		if len(outFiles) == 0 {
 			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
 				"error":             "ai_response_invalid_format",
