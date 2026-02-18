@@ -231,9 +231,21 @@ export async function moveFile(domainId: string, path: string, newPath: string) 
   });
 }
 
-export async function deleteFile(domainId: string, path: string) {
+export async function deleteFile(
+  domainId: string,
+  path: string,
+  opts?: { hard?: boolean; recursive?: boolean }
+) {
   const encodedPath = encodeFilePath(path);
-  return authFetch<any>(`${buildFilesBase(domainId)}/${encodedPath}`, {
+  const params = new URLSearchParams();
+  if (opts?.hard) {
+    params.set("hard", "1");
+  }
+  if (opts?.recursive) {
+    params.set("recursive", "1");
+  }
+  const query = params.toString();
+  return authFetch<any>(`${buildFilesBase(domainId)}/${encodedPath}${query ? `?${query}` : ""}`, {
     method: "DELETE",
   });
 }

@@ -91,6 +91,40 @@ const detectLanguage = (pathValue: string) => {
 
 const looksBinary = (value: string) => value.includes("\u0000");
 
+const normalizeRelativeSitePath = (baseFilePath: string, refValue: string) => {
+  const trimmed = refValue.trim();
+  if (!trimmed || trimmed.startsWith("#")) return "";
+  if (/^(data:|mailto:|tel:|javascript:|https?:)/i.test(trimmed)) return "";
+  const pathPart = trimmed.split("#")[0].split("?")[0].trim();
+  if (!pathPart) return "";
+  const rawSegments = (pathPart.startsWith("/")
+    ? pathPart.replace(/^\/+/, "").split("/")
+    : [...baseFilePath.split("/").filter(Boolean).slice(0, -1), ...pathPart.split("/")]).filter(Boolean);
+  const normalized: string[] = [];
+  for (const segment of rawSegments) {
+    if (segment === ".") continue;
+    if (segment === "..") {
+      normalized.pop();
+      continue;
+    }
+    normalized.push(segment);
+  }
+  return normalized.join("/");
+};
+
+const extractLocalAssetRefsFromHTML = (html: string) => {
+  const refs = new Set<string>();
+  const re = /\b(?:src|href)\s*=\s*["']([^"']+)["']/gi;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(html)) !== null) {
+    const value = (match[1] || "").trim();
+    if (!value) continue;
+    if (/^(data:|mailto:|tel:|javascript:|https?:|#)/i.test(value)) continue;
+    refs.add(value);
+  }
+  return Array.from(refs);
+};
+
 const encodePath = (value: string) =>
   value
     .split("/")
@@ -179,6 +213,7 @@ export default function DomainEditorPage() {
   const [aiStudioTab, setAiStudioTab] = useState<"edit" | "create">("edit");
   const [aiInstruction, setAiInstruction] = useState("");
   const [aiOutput, setAiOutput] = useState("");
+  const [aiOutputSourcePath, setAiOutputSourcePath] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
   const [aiModel, setAiModel] = useState("");
   const [aiContextMode, setAiContextMode] = useState<AIContextMode>("auto");
@@ -202,6 +237,7 @@ export default function DomainEditorPage() {
   const [aiCreateFiles, setAiCreateFiles] = useState<AIPageSuggestionFile[]>([]);
   const [aiCreateApplyPlan, setAiCreateApplyPlan] = useState<Record<string, AIPageApplyAction>>({});
   const [aiCreateExistingContent, setAiCreateExistingContent] = useState<Record<string, string>>({});
+  const [aiCreateMissingAssets, setAiCreateMissingAssets] = useState<string[]>([]);
   const [aiCreatePreviewPath, setAiCreatePreviewPath] = useState("");
   const [aiCreateView, setAiCreateView] = useState<"diff" | "preview" | "code">("diff");
   const [aiCreateMeta, setAiCreateMeta] = useState<{
@@ -234,6 +270,12 @@ export default function DomainEditorPage() {
     !binaryPreview &&
     dirtyState.isDirty &&
     !saving;
+  const aiApplyPathMismatch = Boolean(
+    aiOutput &&
+      aiOutputSourcePath &&
+      selection?.selectedPath &&
+      selection.selectedPath !== aiOutputSourcePath
+  );
   const selectableContextFiles = useMemo(
     () =>
       files
@@ -666,6 +708,43 @@ export default function DomainEditorPage() {
     }
   };
 
+  const onDeleteFolder = async (folderPath: string) => {
+    if (readOnly) return;
+    const normalized = folderPath.trim().replace(/^\/+|\/+$/g, "");
+    if (!normalized) return;
+    const hasChildren = files.some((item) => item.path.startsWith(`${normalized}/`));
+    const confirmed = hasChildren
+      ? confirm(`Папка "${normalized}" содержит файлы. Удалить папку рекурсивно?`)
+      : confirm(`Удалить пустую папку "${normalized}"?`);
+    if (!confirmed) return;
+    try {
+      await deleteFile(domainId, normalized, { recursive: hasChildren });
+      if (selection?.selectedPath === normalized || selection?.selectedPath?.startsWith(`${normalized}/`)) {
+        setSelection(null);
+        setDirtyState({ isDirty: false, originalContent: "", currentContent: "" });
+      }
+      await loadFiles();
+      await loadDeletedFiles();
+      showToast({ type: "success", title: "Папка удалена", message: normalized });
+    } catch (err: any) {
+      if (String(err?.message || "").includes("recursive")) {
+        const retry = confirm(`Папка "${normalized}" не пустая. Выполнить рекурсивное удаление?`);
+        if (!retry) return;
+        try {
+          await deleteFile(domainId, normalized, { recursive: true });
+          await loadFiles();
+          await loadDeletedFiles();
+          showToast({ type: "success", title: "Папка удалена", message: `${normalized} (recursive)` });
+          return;
+        } catch (retryErr: any) {
+          showToast({ type: "error", title: "Не удалось удалить папку", message: retryErr?.message || "unknown error" });
+          return;
+        }
+      }
+      showToast({ type: "error", title: "Не удалось удалить папку", message: err?.message || "unknown error" });
+    }
+  };
+
   const onRestoreDeleted = async (file: EditorFileMeta) => {
     try {
       await restoreFile(domainId, file.path);
@@ -741,6 +820,7 @@ export default function DomainEditorPage() {
     setAiBusy(true);
     setAiSuggestMeta(null);
     setAiSuggestContextDebug("");
+    setAiOutputSourcePath(selection.selectedPath);
     try {
       const result: AIEditorSuggestionDTO = await aiSuggestFile(domainId, selection.selectedPath, {
         instruction: aiInstruction.trim(),
@@ -774,8 +854,30 @@ export default function DomainEditorPage() {
     }
   };
 
+  const onOpenAISourceFile = async () => {
+    if (!aiOutputSourcePath) return;
+    const sourceFile = files.find((item) => item.path === aiOutputSourcePath);
+    if (!sourceFile) {
+      showToast({
+        type: "error",
+        title: "Исходный файл не найден",
+        message: "Файл для AI-предложения был удален или перемещен.",
+      });
+      return;
+    }
+    await loadFile(sourceFile);
+  };
+
   const onApplyAISuggest = () => {
     if (!aiOutput) return;
+    if (!selection?.selectedPath || !aiOutputSourcePath || selection.selectedPath !== aiOutputSourcePath) {
+      showToast({
+        type: "error",
+        title: "Неверный файл для применения",
+        message: `Предложение относится к "${aiOutputSourcePath}", откройте этот файл перед применением.`,
+      });
+      return;
+    }
     setDirtyState((prev) => ({
       ...prev,
       currentContent: aiOutput,
@@ -821,6 +923,7 @@ export default function DomainEditorPage() {
     setAiCreateBusy(true);
     setAiCreateMeta(null);
     setAiCreateContextDebug("");
+    setAiCreateMissingAssets([]);
     try {
       const result: AIPageSuggestionDTO = await aiCreatePage(domainId, {
         instruction: aiCreateInstruction.trim(),
@@ -856,6 +959,24 @@ export default function DomainEditorPage() {
         })
       );
       setAiCreateExistingContent(existingMap);
+      const knownPaths = new Set<string>([
+        ...Array.from(existingFilesMap.keys()),
+        ...generatedFiles.map((item) => item.path),
+      ]);
+      const missing = new Set<string>();
+      for (const file of generatedFiles) {
+        if (!file.path.toLowerCase().endsWith(".html")) continue;
+        const refs = extractLocalAssetRefsFromHTML(file.content || "");
+        for (const ref of refs) {
+          const resolved = normalizeRelativeSitePath(file.path, ref);
+          if (!resolved) continue;
+          if (!knownPaths.has(resolved)) {
+            missing.add(resolved);
+          }
+        }
+      }
+      const missingList = Array.from(missing).sort();
+      setAiCreateMissingAssets(missingList);
       const promptSource =
         typeof result.prompt_trace?.resolved_source === "string" ? result.prompt_trace.resolved_source : undefined;
       setAiCreateMeta({
@@ -870,6 +991,13 @@ export default function DomainEditorPage() {
         title: "AI сгенерировал пакет файлов",
         message: `${generatedFiles.length} файлов, конфликтов по пути: ${existingCount}`,
       });
+      if (missingList.length > 0) {
+        showToast({
+          type: "error",
+          title: "Найдены отсутствующие ассеты",
+          message: `Проверьте ссылки на файлы: ${missingList.slice(0, 3).join(", ")}${missingList.length > 3 ? "..." : ""}`,
+        });
+      }
     } catch (err: any) {
       const status = Number(err?.status || err?.response?.status || 0);
       if (status === 422 || String(err?.message || "").toLowerCase().includes("ai_response_invalid_format")) {
@@ -905,6 +1033,12 @@ export default function DomainEditorPage() {
         message: "Выберите create или overwrite хотя бы для одного файла.",
       });
       return;
+    }
+    if (aiCreateMissingAssets.length > 0) {
+      const allowWithMissing = window.confirm(
+        `Обнаружены отсутствующие ассеты (${aiCreateMissingAssets.length}):\n${aiCreateMissingAssets.slice(0, 6).join("\n")}\n\nПрименить изменения всё равно?`
+      );
+      if (!allowWithMissing) return;
     }
     const overwriteCount = actionable.filter((item) => item.action === "overwrite").length;
     const createCount = actionable.length - overwriteCount;
@@ -1127,6 +1261,8 @@ export default function DomainEditorPage() {
             selectedPath={selection?.selectedPath}
             loading={fileLoading}
             onSelect={onSelectFile}
+            canManageFolders={!readOnly}
+            onDeleteFolder={onDeleteFolder}
           />
           <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50/70 p-2 dark:border-slate-700 dark:bg-slate-800/40">
             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
@@ -1371,7 +1507,7 @@ export default function DomainEditorPage() {
                   <button
                     type="button"
                     onClick={onApplyAISuggest}
-                    disabled={!aiOutput}
+                    disabled={!aiOutput || aiApplyPathMismatch}
                     className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   >
                     Применить в буфер
@@ -1385,6 +1521,20 @@ export default function DomainEditorPage() {
                     Контекст запроса
                   </button>
                 </div>
+
+                {aiApplyPathMismatch && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">
+                    Предложение относится к файлу <span className="font-semibold">{aiOutputSourcePath}</span>, сейчас открыт{" "}
+                    <span className="font-semibold">{selection?.selectedPath}</span>.
+                    <button
+                      type="button"
+                      onClick={() => void onOpenAISourceFile()}
+                      className="ml-2 inline-flex rounded border border-amber-300 bg-white px-2 py-0.5 font-semibold text-amber-800 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-200"
+                    >
+                      Открыть исходный файл
+                    </button>
+                  </div>
+                )}
 
                 {aiSuggestMeta?.contextPack && (
                   <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
@@ -1568,6 +1718,13 @@ export default function DomainEditorPage() {
                   <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
                     Контекст: файлов {aiCreateMeta.contextPack.files_used}, объем {aiCreateMeta.contextPack.bytes_used} байт
                     {aiCreateMeta.contextPack.truncated ? ", контекст урезан по лимитам" : ""}
+                  </div>
+                )}
+
+                {aiCreateMissingAssets.length > 0 && (
+                  <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
+                    Обнаружены отсутствующие ассеты: {aiCreateMissingAssets.slice(0, 8).join(", ")}
+                    {aiCreateMissingAssets.length > 8 ? ` (+${aiCreateMissingAssets.length - 8})` : ""}
                   </div>
                 )}
 

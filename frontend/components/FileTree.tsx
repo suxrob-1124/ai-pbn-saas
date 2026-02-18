@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { FiCode, FiFile, FiFileText, FiFolder, FiImage } from "react-icons/fi";
+import { FiCode, FiFile, FiFileText, FiFolder, FiImage, FiTrash2 } from "react-icons/fi";
 
 import type { EditorFileMeta, EditorFileNode } from "../types/editor";
 
@@ -10,6 +10,8 @@ type FileTreeProps = {
   selectedPath?: string;
   loading?: boolean;
   onSelect: (file: EditorFileMeta) => void;
+  onDeleteFolder?: (path: string) => void;
+  canManageFolders?: boolean;
 };
 
 function fileLabelIcon(file: EditorFileMeta) {
@@ -97,7 +99,9 @@ export function FileTree({
   files,
   selectedPath,
   loading,
-  onSelect
+  onSelect,
+  onDeleteFolder,
+  canManageFolders
 }: FileTreeProps) {
   const tree = useMemo(() => buildTree(files), [files]);
   const [openPaths, setOpenPaths] = useState<Record<string, boolean>>({});
@@ -128,15 +132,30 @@ export function FileTree({
       const isOpen = openPaths[node.path] ?? depth < 1;
       return (
         <div key={node.path}>
-          <button
-            type="button"
-            onClick={() => toggleFolder(node.path)}
-            className="w-full flex items-center gap-2 rounded-md px-2 py-1 text-left text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
-            style={{ paddingLeft: `${8 + depth * 14}px` }}
-          >
-            <FiFolder className="h-4 w-4" />
-            <span>{node.name}</span>
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => toggleFolder(node.path)}
+              className="w-full flex items-center gap-2 rounded-md px-2 py-1 text-left text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+              style={{ paddingLeft: `${8 + depth * 14}px` }}
+            >
+              <FiFolder className="h-4 w-4" />
+              <span className="truncate">{node.name}</span>
+            </button>
+            {canManageFolders && onDeleteFolder && node.path ? (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onDeleteFolder(node.path);
+                }}
+                title={`Удалить папку ${node.path}`}
+                className="shrink-0 rounded-md border border-red-200 bg-red-50 px-1.5 py-1 text-red-700 hover:bg-red-100 dark:border-red-900 dark:bg-red-900/20 dark:text-red-200"
+              >
+                <FiTrash2 className="h-3.5 w-3.5" />
+              </button>
+            ) : null}
+          </div>
           {isOpen && node.children && node.children.length > 0 && (
             <div>{node.children.map((child) => renderNode(child, depth + 1))}</div>
           )}
