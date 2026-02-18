@@ -1026,12 +1026,12 @@ export default function DomainEditorPage() {
 
   const onApplyCreatedFiles = async () => {
     if (aiCreateFiles.length === 0) return;
-    const actionable = aiCreateFiles
+    const planned = aiCreateFiles
       .map((file) => ({
         file,
         action: aiCreateApplyPlan[file.path] || (existingFilesMap.has(file.path) ? "skip" : "create"),
-      }))
-      .filter((item) => item.action !== "skip");
+      }));
+    const actionable = planned.filter((item) => item.action !== "skip");
     if (actionable.length === 0) {
       showToast({
         type: "error",
@@ -1048,12 +1048,31 @@ export default function DomainEditorPage() {
     }
     const overwriteCount = actionable.filter((item) => item.action === "overwrite").length;
     const createCount = actionable.length - overwriteCount;
+    const skipCount = planned.length - actionable.length;
+    const createFiles = actionable.filter((item) => item.action === "create").map((item) => item.file.path);
+    const overwriteFiles = actionable.filter((item) => item.action === "overwrite").map((item) => item.file.path);
+    const summaryLines = [
+      `Создать: ${createCount}`,
+      `Перезаписать: ${overwriteCount}`,
+      `Пропустить: ${skipCount}`,
+      createFiles.length ? `\n[CREATE]\n${createFiles.slice(0, 8).join("\n")}${createFiles.length > 8 ? `\n... +${createFiles.length - 8}` : ""}` : "",
+      overwriteFiles.length ? `\n[OVERWRITE]\n${overwriteFiles.slice(0, 8).join("\n")}${overwriteFiles.length > 8 ? `\n... +${overwriteFiles.length - 8}` : ""}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
     const confirmed = window.confirm(
-      `Применить изменения?\nСоздать: ${createCount}\nПерезаписать: ${overwriteCount}\nПропустить: ${aiCreateFiles.length - actionable.length}`
+      `Проверьте план применения:\n\n${summaryLines}\n\nПродолжить?`
     );
     if (!confirmed) return;
+    if (overwriteCount > 0) {
+      const overwriteConfirmed = window.confirm(
+        `Подтвердите перезапись ${overwriteCount} файлов.\nЭто изменит существующие файлы без возможности авто-отката.`
+      );
+      if (!overwriteConfirmed) return;
+    }
     let applied = 0;
     let skipped = 0;
+    const skippedExisting: string[] = [];
     const failed: string[] = [];
     for (const item of actionable) {
       const file = item.file;
@@ -1062,6 +1081,7 @@ export default function DomainEditorPage() {
         if (item.action === "create") {
           if (exists) {
             skipped += 1;
+            skippedExisting.push(file.path);
             continue;
           }
           await createFileOrDir(domainId, {
@@ -1101,13 +1121,20 @@ export default function DomainEditorPage() {
       showToast({
         type: "error",
         title: "Часть файлов не применена",
-        message: `Успешно: ${applied}, пропущено: ${skipped}, ошибок: ${failed.length}`,
+        message: `Успешно: ${applied}, пропущено: ${skipped}, ошибок: ${failed.length}. ${failed.slice(0, 2).join(" | ")}`,
       });
     } else {
       showToast({
         type: "success",
         title: "AI-файлы применены",
         message: `Успешно: ${applied}, пропущено: ${skipped}`,
+      });
+    }
+    if (skippedExisting.length > 0) {
+      showToast({
+        type: "error",
+        title: "Часть create-применений пропущена",
+        message: `Файл уже существовал: ${skippedExisting.slice(0, 3).join(", ")}${skippedExisting.length > 3 ? "..." : ""}`,
       });
     }
   };
