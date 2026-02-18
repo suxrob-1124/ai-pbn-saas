@@ -40,6 +40,7 @@ import {
   restoreFile,
   saveFile,
   uploadFile,
+  type AIPageSuggestionAsset,
   type AIPageSuggestionFile,
   type FileListItem
 } from "../../../../lib/fileApi";
@@ -235,6 +236,7 @@ export default function DomainEditorPage() {
   const [aiCreateContextMode, setAiCreateContextMode] = useState<AIContextMode>("auto");
   const [aiCreateContextSelectedFiles, setAiCreateContextSelectedFiles] = useState<string[]>([]);
   const [aiCreateFiles, setAiCreateFiles] = useState<AIPageSuggestionFile[]>([]);
+  const [aiCreateAssets, setAiCreateAssets] = useState<AIPageSuggestionAsset[]>([]);
   const [aiCreateApplyPlan, setAiCreateApplyPlan] = useState<Record<string, AIPageApplyAction>>({});
   const [aiCreateExistingContent, setAiCreateExistingContent] = useState<Record<string, string>>({});
   const [aiCreateMissingAssets, setAiCreateMissingAssets] = useState<string[]>([]);
@@ -924,6 +926,7 @@ export default function DomainEditorPage() {
     setAiCreateMeta(null);
     setAiCreateContextDebug("");
     setAiCreateMissingAssets([]);
+    setAiCreateAssets([]);
     try {
       const result: AIPageSuggestionDTO = await aiCreatePage(domainId, {
         instruction: aiCreateInstruction.trim(),
@@ -934,11 +937,13 @@ export default function DomainEditorPage() {
         context_files: selectedContextFiles(aiCreateContextMode, aiCreateContextSelectedFiles),
       });
       const generatedFiles = Array.isArray(result.files) ? result.files : [];
+      const generatedAssets = Array.isArray(result.assets) ? result.assets : [];
       if (generatedFiles.length === 0) {
         showToast({ type: "error", title: "AI не вернул файлов", message: "Повторите генерацию с другим запросом." });
         return;
       }
       setAiCreateFiles(generatedFiles);
+      setAiCreateAssets(generatedAssets);
       setAiCreatePreviewPath(generatedFiles[0]?.path || "");
       setAiCreateView("diff");
       const defaultPlan: Record<string, AIPageApplyAction> = {};
@@ -962,6 +967,7 @@ export default function DomainEditorPage() {
       const knownPaths = new Set<string>([
         ...Array.from(existingFilesMap.keys()),
         ...generatedFiles.map((item) => item.path),
+        ...generatedAssets.map((item) => item.path),
       ]);
       const missing = new Set<string>();
       for (const file of generatedFiles) {
@@ -1725,6 +1731,39 @@ export default function DomainEditorPage() {
                   <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
                     Обнаружены отсутствующие ассеты: {aiCreateMissingAssets.slice(0, 8).join(", ")}
                     {aiCreateMissingAssets.length > 8 ? ` (+${aiCreateMissingAssets.length - 8})` : ""}
+                  </div>
+                )}
+
+                {aiCreateAssets.length > 0 && (
+                  <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-2 text-xs dark:border-slate-700 dark:bg-slate-800/50">
+                    <div className="mb-1 font-semibold text-slate-700 dark:text-slate-200">
+                      Манифест ассетов (изображения)
+                    </div>
+                    <div className="max-h-40 overflow-auto">
+                      <table className="min-w-full text-left text-[11px]">
+                        <thead className="text-slate-500 dark:text-slate-400">
+                          <tr>
+                            <th className="px-2 py-1">Путь</th>
+                            <th className="px-2 py-1">Тип</th>
+                            <th className="px-2 py-1">Alt</th>
+                            <th className="px-2 py-1">Промпт</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {aiCreateAssets.map((asset) => (
+                            <tr key={`asset-${asset.path}`} className="border-t border-slate-200 dark:border-slate-700">
+                              <td className="px-2 py-1 font-mono">{asset.path}</td>
+                              <td className="px-2 py-1">{asset.mime_type}</td>
+                              <td className="px-2 py-1">{asset.alt || "—"}</td>
+                              <td className="px-2 py-1">{asset.prompt || "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+                      Изображения из манифеста не применяются автоматически как бинарные файлы. Для них нужен upload/regenerate.
+                    </div>
                   </div>
                 )}
 

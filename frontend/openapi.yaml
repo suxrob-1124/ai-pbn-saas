@@ -2920,6 +2920,20 @@ components:
         mime_type:
           type: string
       required: [path, content, mime_type]
+    AIPageSuggestionAsset:
+      type: object
+      properties:
+        path:
+          type: string
+        alt:
+          type: string
+          nullable: true
+        prompt:
+          type: string
+          nullable: true
+        mime_type:
+          type: string
+      required: [path, mime_type]
     AIPageSuggestionResponse:
       type: object
       properties:
@@ -2927,6 +2941,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AIPageSuggestionFile"
+        assets:
+          type: array
+          items:
+            $ref: "#/components/schemas/AIPageSuggestionAsset"
         warnings:
           type: array
           items:

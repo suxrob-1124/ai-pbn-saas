@@ -101,8 +101,16 @@ export type AIPageSuggestionFile = {
   mime_type: string;
 };
 
+export type AIPageSuggestionAsset = {
+  path: string;
+  alt?: string;
+  prompt?: string;
+  mime_type: string;
+};
+
 export type AIPageSuggestionDTO = {
   files: AIPageSuggestionFile[];
+  assets?: AIPageSuggestionAsset[];
   warnings?: string[];
   prompt_trace?: Record<string, any>;
   token_usage?: Record<string, any>;

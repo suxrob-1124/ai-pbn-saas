@@ -2600,6 +2600,19 @@ type editorGeneratedFile struct {
 	MimeType string `json:"mime_type"`
 }
 
+type editorGeneratedAsset struct {
+	Path     string `json:"path"`
+	Alt      string `json:"alt"`
+	Prompt   string `json:"prompt"`
+	MimeType string `json:"mime_type"`
+}
+
+type editorPageSuggestionPayload struct {
+	Files    []editorGeneratedFile  `json:"files"`
+	Assets   []editorGeneratedAsset `json:"assets"`
+	Warnings []string               `json:"warnings"`
+}
+
 func normalizeEditorContextMode(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "manual":
@@ -2626,19 +2639,16 @@ func stripMarkdownFences(raw string) string {
 	return trimmed
 }
 
-func parseJSONGeneratedFiles(raw string) ([]editorGeneratedFile, []string, error) {
+func parseJSONGeneratedFiles(raw string) (editorPageSuggestionPayload, error) {
 	cleaned := stripMarkdownFences(raw)
-	var payload struct {
-		Files    []editorGeneratedFile `json:"files"`
-		Warnings []string              `json:"warnings"`
-	}
+	var payload editorPageSuggestionPayload
 	if err := json.Unmarshal([]byte(cleaned), &payload); err != nil {
-		return nil, nil, err
+		return editorPageSuggestionPayload{}, err
 	}
 	if len(payload.Files) == 0 {
-		return nil, payload.Warnings, errors.New("empty files array")
+		return editorPageSuggestionPayload{}, errors.New("empty files array")
 	}
-	return payload.Files, payload.Warnings, nil
+	return payload, nil
 }
 
 func sanitizeAISuggestContent(raw string, currentContent string) (string, []string) {
@@ -2698,13 +2708,14 @@ func defaultEditorFilePrompt() string {
 func defaultEditorPagePrompt() string {
 	return `Ты — AI-ассистент по созданию страниц сайта.
 Верни СТРОГО валидный JSON (без markdown fence, без комментариев):
-{"files":[{"path":"...","content":"...","mime_type":"..."}],"warnings":[]}
+{"files":[{"path":"...","content":"...","mime_type":"..."}],"assets":[{"path":"...","alt":"...","prompt":"...","mime_type":"image/webp"}],"warnings":[]}
 
 Правила:
 1) files должен содержать минимум 1 файл.
 2) Путь target страницы: {{target_path}}.
 3) Соблюдай язык сайта и стиль существующего проекта.
-4) Не добавляй посторонних ключей вне schema.
+4) Для изображений не возвращай бинарные данные в files. Используй массив assets как манифест.
+5) Не добавляй посторонних ключей вне schema.
 
 Контекст сайта:
 {{site_context}}
@@ -2719,7 +2730,7 @@ func defaultEditorPagePrompt() string {
 func buildEditorRepairPrompt(raw string) string {
 	return fmt.Sprintf(`Исправь ответ в СТРОГО валидный JSON без markdown fence.
 Schema:
-{"files":[{"path":"...","content":"...","mime_type":"..."}],"warnings":[]}
+{"files":[{"path":"...","content":"...","mime_type":"..."}],"assets":[{"path":"...","alt":"...","prompt":"...","mime_type":"image/webp"}],"warnings":[]}
 Верни только JSON.
 
 Исходный ответ:
@@ -2877,12 +2888,11 @@ func (s *Server) handleDomainEditorActions(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		repairCount := 0
-		var parsedFiles []editorGeneratedFile
-		var warnings []string
+		var parsed editorPageSuggestionPayload
 		var parseErr error
 		currentResponse := response
 		for attempt := 0; attempt < 3; attempt++ {
-			parsedFiles, warnings, parseErr = parseJSONGeneratedFiles(currentResponse)
+			parsed, parseErr = parseJSONGeneratedFiles(currentResponse)
 			if parseErr == nil {
 				break
 			}
@@ -2906,8 +2916,9 @@ func (s *Server) handleDomainEditorActions(w http.ResponseWriter, r *http.Reques
 			})
 			return
 		}
-		outFiles := make([]map[string]any, 0, len(parsedFiles))
-		for _, file := range parsedFiles {
+		warnings := append([]string(nil), parsed.Warnings...)
+		outFiles := make([]map[string]any, 0, len(parsed.Files))
+		for _, file := range parsed.Files {
 			cleanPath, err := sanitizeFilePath(file.Path)
 			if err != nil {
 				warnings = append(warnings, fmt.Sprintf("invalid path skipped: %s", file.Path))
@@ -2924,6 +2935,10 @@ func (s *Server) handleDomainEditorActions(w http.ResponseWriter, r *http.Reques
 			content := file.Content
 			if strings.TrimSpace(content) == "" {
 				warnings = append(warnings, fmt.Sprintf("empty content skipped: %s", cleanPath))
+				continue
+			}
+			if isImagePath(cleanPath) || isImageMime(file.MimeType) {
+				warnings = append(warnings, fmt.Sprintf("binary asset skipped from files, use assets manifest: %s", cleanPath))
 				continue
 			}
 			detected := detectMimeType(cleanPath, []byte(content))
@@ -2944,6 +2959,36 @@ func (s *Server) handleDomainEditorActions(w http.ResponseWriter, r *http.Reques
 				"mime_type": mimeType,
 			})
 		}
+		outAssets := make([]map[string]any, 0, len(parsed.Assets))
+		for _, asset := range parsed.Assets {
+			cleanPath, err := sanitizeFilePath(asset.Path)
+			if err != nil {
+				warnings = append(warnings, fmt.Sprintf("invalid asset path skipped: %s", asset.Path))
+				continue
+			}
+			if err := validateEditorPath(cleanPath); err != nil {
+				warnings = append(warnings, fmt.Sprintf("protected asset path skipped: %s", cleanPath))
+				continue
+			}
+			if err := validateUploadPathPolicy(cleanPath); err != nil {
+				warnings = append(warnings, fmt.Sprintf("blocked asset type skipped: %s", cleanPath))
+				continue
+			}
+			mimeType := strings.TrimSpace(asset.MimeType)
+			if mimeType == "" {
+				mimeType = detectMimeType(cleanPath, nil)
+			}
+			if !isImageMime(mimeType) && !isImagePath(cleanPath) {
+				warnings = append(warnings, fmt.Sprintf("asset skipped (not an image): %s", cleanPath))
+				continue
+			}
+			outAssets = append(outAssets, map[string]any{
+				"path":      cleanPath,
+				"alt":       strings.TrimSpace(asset.Alt),
+				"prompt":    strings.TrimSpace(asset.Prompt),
+				"mime_type": mimeType,
+			})
+		}
 		if len(outFiles) == 0 {
 			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
 				"error":             "ai_response_invalid_format",
@@ -2955,6 +3000,7 @@ func (s *Server) handleDomainEditorActions(w http.ResponseWriter, r *http.Reques
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"files":    outFiles,
+			"assets":   outAssets,
 			"warnings": warnings,
 			"prompt_trace": map[string]any{
 				"resolved_source": promptSource,
@@ -9312,6 +9358,23 @@ func validateUploadPathPolicy(relPath string) error {
 		return fmt.Errorf("file type %s is not allowed", ext)
 	}
 	return nil
+}
+
+func isImageExt(ext string) bool {
+	switch strings.ToLower(strings.TrimSpace(ext)) {
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg":
+		return true
+	default:
+		return false
+	}
+}
+
+func isImagePath(path string) bool {
+	return isImageExt(filepath.Ext(path))
+}
+
+func isImageMime(mimeType string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(baseMimeType(mimeType))), "image/")
 }
 
 func validateUploadSecurity(relPath, mimeType string, content []byte) error {
