@@ -2558,11 +2558,15 @@ func (s *Server) handleDomainFiles(w http.ResponseWriter, r *http.Request, domai
 		if raw := strings.TrimSpace(r.URL.Query().Get("hard")); raw != "" {
 			hardDelete = raw == "1" || strings.EqualFold(raw, "true")
 		}
+		recursiveDelete := false
+		if raw := strings.TrimSpace(r.URL.Query().Get("recursive")); raw != "" {
+			recursiveDelete = raw == "1" || strings.EqualFold(raw, "true")
+		}
 		if hardDelete && !strings.EqualFold(user.Role, "admin") && !strings.EqualFold(memberRole, "owner") {
 			writeError(w, http.StatusForbidden, "hard delete requires owner or admin role")
 			return
 		}
-		s.handleDeleteFile(w, r, domain, cleanPath, user.Email, hardDelete)
+		s.handleDeleteFile(w, r, domain, cleanPath, user.Email, hardDelete, recursiveDelete)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
@@ -4055,7 +4059,7 @@ func (s *Server) handleMoveFile(w http.ResponseWriter, r *http.Request, domain s
 	writeJSON(w, http.StatusOK, map[string]any{"status": "moved", "path": newPath})
 }
 
-func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request, domain sqlstore.Domain, relPath, deletedBy string, hardDelete bool) {
+func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request, domain sqlstore.Domain, relPath, deletedBy string, hardDelete bool, recursiveDelete bool) {
 	domainDir, err := domainFilesDir(domain.URL)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid domain")
@@ -4099,7 +4103,7 @@ func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request, domain
 		return s.siteFiles.Delete(r.Context(), file.ID)
 	}
 
-	if file, err := s.siteFiles.GetByPath(r.Context(), domain.ID, relPath); err == nil && file != nil {
+	if file, err := s.siteFiles.GetByPath(r.Context(), domain.ID, relPath); err == nil && file != nil && !strings.EqualFold(strings.TrimSpace(file.MimeType), "inode/directory") {
 		if hardDelete {
 			if err := hardDeleteSingle(*file); err != nil {
 				writeError(w, http.StatusInternalServerError, "could not hard-delete file")
@@ -4132,13 +4136,45 @@ func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request, domain
 		writeError(w, http.StatusNotFound, "file not found")
 		return
 	}
+
+	dirMetadata := make([]sqlstore.SiteFile, 0, 1)
 	prefix := relPath + "/"
-	matched := 0
+	nested := make([]sqlstore.SiteFile, 0, 8)
 	for _, f := range files {
+		if f.Path == relPath && strings.EqualFold(strings.TrimSpace(f.MimeType), "inode/directory") {
+			dirMetadata = append(dirMetadata, f)
+			continue
+		}
 		if !strings.HasPrefix(f.Path, prefix) {
 			continue
 		}
-		matched++
+		nested = append(nested, f)
+	}
+
+	isDirectoryTarget := (statErr == nil && info.IsDir()) || len(nested) > 0 || len(dirMetadata) > 0
+	if !isDirectoryTarget {
+		writeError(w, http.StatusNotFound, "file not found")
+		return
+	}
+
+	if len(nested) > 0 && !recursiveDelete {
+		writeError(w, http.StatusConflict, "directory is not empty; use recursive=1")
+		return
+	}
+
+	if len(nested) == 0 && statErr == nil && info.IsDir() && !recursiveDelete {
+		entries, readErr := os.ReadDir(fullPath)
+		if readErr != nil {
+			writeError(w, http.StatusInternalServerError, "could not inspect directory")
+			return
+		}
+		if len(entries) > 0 {
+			writeError(w, http.StatusConflict, "directory is not empty; use recursive=1")
+			return
+		}
+	}
+
+	for _, f := range nested {
 		if hardDelete {
 			if err := hardDeleteSingle(f); err != nil {
 				writeError(w, http.StatusInternalServerError, "could not hard-delete directory files")
@@ -4151,16 +4187,33 @@ func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request, domain
 			}
 		}
 	}
-	if matched == 0 {
-		writeError(w, http.StatusNotFound, "file not found")
-		return
+
+	for _, f := range dirMetadata {
+		if err := s.siteFiles.Delete(r.Context(), f.ID); err != nil {
+			writeError(w, http.StatusInternalServerError, "could not delete directory metadata")
+			return
+		}
 	}
-	_ = os.RemoveAll(fullPath)
+
+	if statErr == nil && info.IsDir() {
+		if recursiveDelete {
+			if err := os.RemoveAll(fullPath); err != nil && !os.IsNotExist(err) {
+				writeError(w, http.StatusInternalServerError, "could not remove directory")
+				return
+			}
+		} else {
+			if err := os.Remove(fullPath); err != nil && !os.IsNotExist(err) {
+				writeError(w, http.StatusInternalServerError, "could not remove directory")
+				return
+			}
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status": "deleted",
 		"kind":   "dir",
 		"mode":   map[bool]string{true: "hard", false: "soft"}[hardDelete],
-		"count":  matched,
+		"count":  len(nested),
 	})
 }
 
@@ -9280,8 +9333,56 @@ func validateUploadSecurity(relPath, mimeType string, content []byte) error {
 		return fmt.Errorf("mime type %s is not allowed", normalized)
 	}
 	if strings.HasSuffix(strings.ToLower(relPath), ".svg") {
-		if strings.Contains(strings.ToLower(string(content)), "<script") {
+		lower := strings.ToLower(string(content))
+		if strings.Contains(lower, "<script") {
 			return errors.New("inline scripts in svg are not allowed")
+		}
+		if !strings.Contains(lower, "<svg") {
+			return errors.New("invalid svg content")
+		}
+	}
+	if strings.HasPrefix(normalized, "image/") {
+		if err := validateImagePayload(relPath, normalized, content); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateImagePayload(relPath, mimeType string, content []byte) error {
+	if len(content) == 0 {
+		return errors.New("empty image content")
+	}
+	ext := strings.ToLower(filepath.Ext(relPath))
+	switch ext {
+	case ".png":
+		if len(content) < 8 || !bytes.Equal(content[:8], []byte{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A}) {
+			return errors.New("invalid png signature")
+		}
+	case ".jpg", ".jpeg":
+		if len(content) < 3 || content[0] != 0xFF || content[1] != 0xD8 {
+			return errors.New("invalid jpeg signature")
+		}
+	case ".gif":
+		if len(content) < 6 {
+			return errors.New("invalid gif signature")
+		}
+		head := string(content[:6])
+		if head != "GIF87a" && head != "GIF89a" {
+			return errors.New("invalid gif signature")
+		}
+	case ".webp":
+		if len(content) < 12 || string(content[:4]) != "RIFF" || string(content[8:12]) != "WEBP" {
+			return errors.New("invalid webp signature")
+		}
+	case ".svg":
+		// already validated above in validateUploadSecurity.
+		return nil
+	}
+
+	if strings.HasPrefix(mimeType, "image/") && ext != ".svg" {
+		if _, _, err := image.DecodeConfig(bytes.NewReader(content)); err != nil {
+			return fmt.Errorf("invalid image data: %w", err)
 		}
 	}
 	return nil

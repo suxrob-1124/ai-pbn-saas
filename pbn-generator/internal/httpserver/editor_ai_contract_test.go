@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"encoding/base64"
 	"testing"
 )
 
@@ -65,5 +66,23 @@ func TestNormalizeEditorContextMode(t *testing.T) {
 		if got := normalizeEditorContextMode(input); got != expected {
 			t.Fatalf("input=%q expected=%q got=%q", input, expected, got)
 		}
+	}
+}
+
+func TestValidateImagePayloadRejectsBrokenWebp(t *testing.T) {
+	err := validateImagePayload("about/hero.webp", "image/webp", []byte("not-a-webp"))
+	if err == nil {
+		t.Fatalf("expected invalid webp payload error")
+	}
+}
+
+func TestValidateImagePayloadAcceptsValidPNG(t *testing.T) {
+	// 1x1 transparent PNG
+	raw, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jw2kAAAAASUVORK5CYII=")
+	if err != nil {
+		t.Fatalf("decode base64 png: %v", err)
+	}
+	if err := validateImagePayload("about/pixel.png", "image/png", raw); err != nil {
+		t.Fatalf("expected valid png payload, got %v", err)
 	}
 }

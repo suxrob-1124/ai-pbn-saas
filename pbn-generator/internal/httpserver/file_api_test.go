@@ -798,6 +798,91 @@ func TestFileAPI_CreateFolderVisibleInTreeList(t *testing.T) {
 	}
 }
 
+func TestFileAPI_DeleteEmptyFolder(t *testing.T) {
+	s, _, domainID, _, _ := setupFileAPIDomainFixture(t)
+	adminCtx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: "admin@example.com",
+		Role:  "admin",
+	})
+
+	createBody := `{"path":"pages/archive","kind":"dir"}`
+	createReq := httptest.NewRequest(http.MethodPost, "/api/domains/"+domainID+"/files", strings.NewReader(createBody)).WithContext(adminCtx)
+	createReq.Header.Set("Content-Type", "application/json")
+	createRec := httptest.NewRecorder()
+	s.handleDomainActions(createRec, createReq)
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("create dir status: %d %s", createRec.Code, createRec.Body.String())
+	}
+
+	delReq := httptest.NewRequest(http.MethodDelete, "/api/domains/"+domainID+"/files/pages/archive", nil).WithContext(adminCtx)
+	delRec := httptest.NewRecorder()
+	s.handleDomainActions(delRec, delReq)
+	if delRec.Code != http.StatusOK {
+		t.Fatalf("delete empty dir status: %d %s", delRec.Code, delRec.Body.String())
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/domains/"+domainID+"/files", nil).WithContext(adminCtx)
+	listRec := httptest.NewRecorder()
+	s.handleDomainActions(listRec, listReq)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("list status: %d %s", listRec.Code, listRec.Body.String())
+	}
+	var listResp []fileDTO
+	if err := json.NewDecoder(listRec.Body).Decode(&listResp); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	for _, item := range listResp {
+		if item.Path == "pages/archive" {
+			t.Fatalf("folder pages/archive should be removed")
+		}
+	}
+}
+
+func TestFileAPI_DeleteFolderRequiresRecursiveForNonEmpty(t *testing.T) {
+	s, _, domainID, _, _ := setupFileAPIDomainFixture(t)
+	adminCtx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: "admin@example.com",
+		Role:  "admin",
+	})
+
+	createDirReq := httptest.NewRequest(http.MethodPost, "/api/domains/"+domainID+"/files", strings.NewReader(`{"path":"pages/blog","kind":"dir"}`)).WithContext(adminCtx)
+	createDirReq.Header.Set("Content-Type", "application/json")
+	createDirRec := httptest.NewRecorder()
+	s.handleDomainActions(createDirRec, createDirReq)
+	if createDirRec.Code != http.StatusCreated {
+		t.Fatalf("create dir status: %d %s", createDirRec.Code, createDirRec.Body.String())
+	}
+
+	createFileReq := httptest.NewRequest(http.MethodPost, "/api/domains/"+domainID+"/files", strings.NewReader(`{"path":"pages/blog/post.html","kind":"file","content":"<h1>Post</h1>"}`)).WithContext(adminCtx)
+	createFileReq.Header.Set("Content-Type", "application/json")
+	createFileRec := httptest.NewRecorder()
+	s.handleDomainActions(createFileRec, createFileReq)
+	if createFileRec.Code != http.StatusCreated {
+		t.Fatalf("create file status: %d %s", createFileRec.Code, createFileRec.Body.String())
+	}
+
+	delReq := httptest.NewRequest(http.MethodDelete, "/api/domains/"+domainID+"/files/pages/blog", nil).WithContext(adminCtx)
+	delRec := httptest.NewRecorder()
+	s.handleDomainActions(delRec, delReq)
+	if delRec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 for non-empty dir without recursive, got %d %s", delRec.Code, delRec.Body.String())
+	}
+
+	delRecursiveReq := httptest.NewRequest(http.MethodDelete, "/api/domains/"+domainID+"/files/pages/blog?recursive=1", nil).WithContext(adminCtx)
+	delRecursiveRec := httptest.NewRecorder()
+	s.handleDomainActions(delRecursiveRec, delRecursiveReq)
+	if delRecursiveRec.Code != http.StatusOK {
+		t.Fatalf("delete recursive status: %d %s", delRecursiveRec.Code, delRecursiveRec.Body.String())
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/domains/"+domainID+"/files/pages/blog/post.html", nil).WithContext(adminCtx)
+	getRec := httptest.NewRecorder()
+	s.handleDomainActions(getRec, getReq)
+	if getRec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 after recursive delete, got %d %s", getRec.Code, getRec.Body.String())
+	}
+}
+
 func TestFileAPI_UploadRejectsExecutable(t *testing.T) {
 	s, _, domainID, _, _ := setupFileAPIDomainFixture(t)
 	adminCtx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
