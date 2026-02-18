@@ -38,6 +38,7 @@
     "verify:ai-editor-panel": "node --import tsx scripts/verify_ai_editor_panel.ts",
     "verify:ai-apply-source-guard": "node --import tsx scripts/verify_ai_apply_source_guard.ts",
     "verify:ai-apply-plan-safety": "node --import tsx scripts/verify_ai_apply_plan_safety.ts",
+    "verify:ai-asset-resolution-actions": "node --import tsx scripts/verify_ai_asset_resolution_actions.ts",
     "verify:ai-create-page-assets-manifest": "node --import tsx scripts/verify_ai_create_page_assets_manifest.ts",
     "verify:ai-create-page-wizard": "node --import tsx scripts/verify_ai_create_page_wizard.ts",
     "verify:file-editor-permissions": "node --import tsx scripts/verify_file_editor_permissions.ts",
