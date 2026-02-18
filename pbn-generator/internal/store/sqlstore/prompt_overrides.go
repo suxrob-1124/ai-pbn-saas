@@ -26,6 +26,7 @@ var GenerationPromptStages = []string{
 	"404_page",
 	"editor_file_edit",
 	"editor_page_create",
+	"editor_asset_regenerate",
 }
 
 type PromptOverride struct {

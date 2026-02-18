@@ -757,6 +757,33 @@ func TestFileAPI_OptimisticConflict(t *testing.T) {
 	}
 }
 
+func TestFileAPI_ExpectedPathConflict(t *testing.T) {
+	s, _, domainID, _, _ := setupFileAPIDomainFixture(t)
+	adminCtx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: "admin@example.com",
+		Role:  "admin",
+	})
+
+	updateBody := `{"content":"<h1>Conflict</h1>","expected_path":"other.html"}`
+	updateReq := httptest.NewRequest(http.MethodPut, "/api/domains/"+domainID+"/files/index.html", strings.NewReader(updateBody)).WithContext(adminCtx)
+	updateReq.Header.Set("Content-Type", "application/json")
+	updateRec := httptest.NewRecorder()
+	s.handleDomainActions(updateRec, updateReq)
+	if updateRec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", updateRec.Code, updateRec.Body.String())
+	}
+	var body map[string]any
+	if err := json.NewDecoder(updateRec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["error"] != "path conflict" {
+		t.Fatalf("unexpected error payload: %+v", body)
+	}
+	if body["actual_path"] != "index.html" {
+		t.Fatalf("expected actual_path=index.html, got %+v", body["actual_path"])
+	}
+}
+
 func TestFileAPI_CreateFolderVisibleInTreeList(t *testing.T) {
 	s, _, domainID, _, _ := setupFileAPIDomainFixture(t)
 	adminCtx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
@@ -953,6 +980,46 @@ func TestFileAPI_UploadRejectsBrokenImagePayload(t *testing.T) {
 	lowerBody := strings.ToLower(rec.Body.String())
 	if !strings.Contains(lowerBody, "invalid image") && !strings.Contains(lowerBody, "invalid webp") {
 		t.Fatalf("expected invalid image error, got %s", rec.Body.String())
+	}
+}
+
+func TestEditorAssetRegenerateRequiresPrompt(t *testing.T) {
+	s, _, domainID, _, _ := setupFileAPIDomainFixture(t)
+	adminCtx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: "admin@example.com",
+		Role:  "admin",
+	})
+
+	body := `{"path":"assets/hero.webp","mime_type":"image/webp"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/domains/"+domainID+"/editor/ai-regenerate-asset", strings.NewReader(body)).WithContext(adminCtx)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.handleDomainActions(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(strings.ToLower(rec.Body.String()), "prompt is required") {
+		t.Fatalf("expected prompt required error, got %s", rec.Body.String())
+	}
+}
+
+func TestEditorAssetRegenerateRejectsNonImagePath(t *testing.T) {
+	s, _, domainID, _, _ := setupFileAPIDomainFixture(t)
+	adminCtx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: "admin@example.com",
+		Role:  "admin",
+	})
+
+	body := `{"path":"about.html","prompt":"create hero image","mime_type":"text/html"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/domains/"+domainID+"/editor/ai-regenerate-asset", strings.NewReader(body)).WithContext(adminCtx)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.handleDomainActions(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(strings.ToLower(rec.Body.String()), "image") {
+		t.Fatalf("expected image validation error, got %s", rec.Body.String())
 	}
 }
 

@@ -2727,6 +2727,26 @@ func defaultEditorPagePrompt() string {
 {{instruction}}`
 }
 
+func defaultEditorAssetRegeneratePrompt() string {
+	return `Ты — AI-ассистент по генерации изображений для уже существующего сайта.
+Сгенерируй ОДНО изображение строго по задаче. Возвращай только изображение (binary response), без текста.
+
+Контекст сайта:
+{{site_context}}
+
+Ограничения задачи:
+{{task_constraints}}
+
+Путь ассета:
+{{asset_path}}
+
+Желаемый mime:
+{{asset_mime_type}}
+
+Инструкция для изображения:
+{{asset_prompt}}`
+}
+
 func buildEditorRepairPrompt(raw string) string {
 	return fmt.Sprintf(`Исправь ответ в СТРОГО валидный JSON без markdown fence.
 Schema:
@@ -3012,6 +3032,217 @@ func (s *Server) handleDomainEditorActions(w http.ResponseWriter, r *http.Reques
 				"model":           selectedModel,
 				"stage":           "editor_page_create",
 				"repair_attempts": repairCount,
+			},
+			"token_usage":       tokenUsage,
+			"context_pack_meta": contextMeta,
+		})
+		return
+	case "ai-regenerate-asset":
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		if !ensureJSON(w, r) {
+			return
+		}
+		defer r.Body.Close()
+		var body struct {
+			Path         string   `json:"path"`
+			Prompt       string   `json:"prompt"`
+			Instruction  string   `json:"instruction"`
+			MimeType     string   `json:"mime_type"`
+			Model        string   `json:"model"`
+			ContextMode  string   `json:"context_mode"`
+			ContextFiles []string `json:"context_files"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid body")
+			return
+		}
+		cleanPath, err := sanitizeFilePath(strings.TrimSpace(body.Path))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid path")
+			return
+		}
+		if err := validateEditorPath(cleanPath); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := validateUploadPathPolicy(cleanPath); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		desiredMime := strings.TrimSpace(body.MimeType)
+		if desiredMime == "" {
+			desiredMime = detectMimeType(cleanPath, nil)
+		}
+		if !isImagePath(cleanPath) && !isImageMime(desiredMime) {
+			writeError(w, http.StatusBadRequest, "asset path/mime must be image/*")
+			return
+		}
+		promptInstruction := strings.TrimSpace(body.Prompt)
+		if promptInstruction == "" {
+			promptInstruction = strings.TrimSpace(body.Instruction)
+		}
+		if promptInstruction == "" {
+			writeError(w, http.StatusBadRequest, "prompt is required")
+			return
+		}
+		contextMode := normalizeEditorContextMode(body.ContextMode)
+		siteContext, contextMeta, err := s.buildEditorContextPack(r.Context(), domain, "index.html", cleanPath, body.ContextFiles, contextMode)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not build context pack")
+			return
+		}
+		systemPrompt, promptSource, modelFromPrompt := s.resolveEditorPrompt(r.Context(), domain.ID, project.ID, "editor_asset_regenerate", defaultEditorAssetRegeneratePrompt())
+		selectedModel := strings.TrimSpace(body.Model)
+		if selectedModel == "" {
+			selectedModel = modelFromPrompt
+		}
+		if selectedModel == "" {
+			selectedModel = "gemini-2.5-flash-image"
+		}
+		taskConstraints := fmt.Sprintf("operation=regenerate_asset\ncontext_mode=%s\nasset_path=%s\nasset_mime_type=%s\nlanguage=%s\nkeyword=%s",
+			contextMode,
+			cleanPath,
+			desiredMime,
+			domain.TargetLanguage,
+			domain.MainKeyword,
+		)
+		prompt := llm.BuildPrompt(systemPrompt, "", map[string]string{
+			"asset_path":       cleanPath,
+			"asset_prompt":     promptInstruction,
+			"asset_mime_type":  desiredMime,
+			"site_context":     siteContext,
+			"task_constraints": taskConstraints,
+			"domain_url":       domain.URL,
+			"language":         domain.TargetLanguage,
+			"keyword":          domain.MainKeyword,
+		})
+		imageBytes, tokenUsage, err := s.generateEditorImage(r.Context(), user.Email, project.UserEmail, "editor_asset_regenerate", selectedModel, prompt)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		detectedMime := detectMimeType(cleanPath, imageBytes)
+		if err := validateMimeType(cleanPath, detectedMime, desiredMime); err != nil {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+				"error":             "ai_image_invalid_format",
+				"message":           err.Error(),
+				"context_pack_meta": contextMeta,
+			})
+			return
+		}
+		if err := validateUploadSecurity(cleanPath, detectedMime, imageBytes); err != nil {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+				"error":             "ai_image_invalid_payload",
+				"message":           err.Error(),
+				"context_pack_meta": contextMeta,
+			})
+			return
+		}
+
+		domainDir, err := domainFilesDir(domain.URL)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid domain")
+			return
+		}
+		fullPath := filepath.Join(domainDir, filepath.FromSlash(cleanPath))
+		if err := ensurePathWithin(domainDir, fullPath); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid path")
+			return
+		}
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+			writeError(w, http.StatusInternalServerError, "could not create parent directory")
+			return
+		}
+		existing, getErr := s.siteFiles.GetByPath(r.Context(), domain.ID, cleanPath)
+		if getErr != nil && !errors.Is(getErr, sql.ErrNoRows) {
+			writeError(w, http.StatusInternalServerError, "could not load file")
+			return
+		}
+		var oldContent []byte
+		if existing != nil {
+			oldContent, _ = os.ReadFile(fullPath)
+			_ = s.fileEdits.CreateRevision(r.Context(), buildRevision(existing, oldContent, "ai", user.Email, "baseline before ai regenerate asset"))
+		}
+		if err := os.WriteFile(fullPath, imageBytes, 0o644); err != nil {
+			writeError(w, http.StatusInternalServerError, "could not write file")
+			return
+		}
+		if existing == nil {
+			hash := sha256.Sum256(imageBytes)
+			file := sqlstore.SiteFile{
+				ID:           uuid.NewString(),
+				DomainID:     domain.ID,
+				Path:         cleanPath,
+				ContentHash:  sql.NullString{String: hex.EncodeToString(hash[:]), Valid: true},
+				SizeBytes:    int64(len(imageBytes)),
+				MimeType:     detectedMime,
+				Version:      1,
+				LastEditedBy: sqlstore.NullableString(user.Email),
+			}
+			if err := s.siteFiles.Create(r.Context(), file); err != nil {
+				writeError(w, http.StatusInternalServerError, "could not create file metadata")
+				return
+			}
+			_ = s.fileEdits.CreateRevision(r.Context(), buildRevision(&file, imageBytes, "ai", user.Email, "ai regenerated asset"))
+			_ = s.fileEdits.Create(r.Context(), sqlstore.FileEdit{
+				ID:               uuid.NewString(),
+				FileID:           file.ID,
+				EditedBy:         user.Email,
+				EditType:         "ai",
+				EditDescription:  sql.NullString{String: "ai regenerated asset", Valid: true},
+				ContentAfterHash: sql.NullString{String: hex.EncodeToString(hash[:]), Valid: true},
+			})
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status": "regenerated",
+				"file":   toFileDTO(domain, file),
+				"warnings": []string{
+					"asset regenerated via AI image model",
+				},
+				"prompt_trace": map[string]any{
+					"resolved_source": promptSource,
+					"model":           selectedModel,
+					"stage":           "editor_asset_regenerate",
+				},
+				"token_usage":       tokenUsage,
+				"context_pack_meta": contextMeta,
+			})
+			return
+		}
+		if err := s.siteFiles.Update(r.Context(), existing.ID, imageBytes); err != nil {
+			writeError(w, http.StatusInternalServerError, "could not update file metadata")
+			return
+		}
+		_ = s.siteFiles.SetLastEditedBy(r.Context(), existing.ID, sqlstore.NullableString(user.Email))
+		updated, _ := s.siteFiles.Get(r.Context(), existing.ID)
+		if updated != nil {
+			_ = s.fileEdits.CreateRevision(r.Context(), buildRevision(updated, imageBytes, "ai", user.Email, "ai regenerated asset"))
+		}
+		beforeHash := sha256.Sum256(oldContent)
+		afterHash := sha256.Sum256(imageBytes)
+		_ = s.fileEdits.Create(r.Context(), sqlstore.FileEdit{
+			ID:                uuid.NewString(),
+			FileID:            existing.ID,
+			EditedBy:          user.Email,
+			EditType:          "ai",
+			EditDescription:   sql.NullString{String: "ai regenerated asset", Valid: true},
+			ContentBeforeHash: sql.NullString{String: hex.EncodeToString(beforeHash[:]), Valid: len(oldContent) > 0},
+			ContentAfterHash:  sql.NullString{String: hex.EncodeToString(afterHash[:]), Valid: true},
+		})
+		if updated == nil {
+			writeError(w, http.StatusInternalServerError, "could not load updated file")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":   "regenerated",
+			"file":     toFileDTO(domain, *updated),
+			"warnings": []string{"asset regenerated via AI image model"},
+			"prompt_trace": map[string]any{
+				"resolved_source": promptSource,
+				"model":           selectedModel,
+				"stage":           "editor_asset_regenerate",
 			},
 			"token_usage":       tokenUsage,
 			"context_pack_meta": contextMeta,
@@ -3920,11 +4151,27 @@ func (s *Server) handleUpdateFile(w http.ResponseWriter, r *http.Request, domain
 		Content         string `json:"content"`
 		Description     string `json:"description"`
 		ExpectedVersion *int   `json:"expected_version"`
+		ExpectedPath    string `json:"expected_path"`
 		Source          string `json:"source"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
+	}
+	if strings.TrimSpace(body.ExpectedPath) != "" {
+		expectedPath, err := sanitizeFilePath(body.ExpectedPath)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid expected_path")
+			return
+		}
+		if expectedPath != relPath {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":         "path conflict",
+				"expected_path": expectedPath,
+				"actual_path":   relPath,
+			})
+			return
+		}
 	}
 	file, err := s.siteFiles.GetByPath(r.Context(), domain.ID, relPath)
 	if err != nil {
@@ -10024,6 +10271,31 @@ func (s *Server) generateEditorSuggestion(ctx context.Context, requesterEmail, o
 		return "", nil, llm.SanitizeError(err)
 	}
 	return strings.TrimSpace(result), map[string]any{
+		"source": source,
+		"model":  selectedModel,
+		"stage":  stage,
+	}, nil
+}
+
+func (s *Server) generateEditorImage(ctx context.Context, requesterEmail, ownerEmail, stage, model, prompt string) ([]byte, map[string]any, error) {
+	apiKey, source, err := s.resolveEditorAPIKey(ctx, requesterEmail, ownerEmail)
+	if err != nil {
+		return nil, nil, err
+	}
+	client := llm.NewClient(llm.Config{
+		APIKey:          apiKey,
+		DefaultModel:    s.cfg.GeminiDefaultModel,
+		MaxRetries:      s.cfg.GeminiMaxRetries,
+		RetryDelay:      s.cfg.GeminiRetryDelay,
+		RequestTimeout:  s.cfg.GeminiRequestTimeout,
+		RateLimitPerMin: s.cfg.GeminiRateLimitPerMin,
+	})
+	selectedModel := strings.TrimSpace(model)
+	imageBytes, err := client.GenerateImage(ctx, prompt, selectedModel)
+	if err != nil {
+		return nil, nil, llm.SanitizeError(err)
+	}
+	return imageBytes, map[string]any{
 		"source": source,
 		"model":  selectedModel,
 		"stage":  stage,
