@@ -330,6 +330,22 @@ export default function DomainEditorPage() {
     () => aiCreateMissingAssets.filter((pathValue) => !aiCreateSkippedAssets.includes(pathValue)),
     [aiCreateMissingAssets, aiCreateSkippedAssets]
   );
+  const unresolvedBrokenAssets = useMemo(
+    () =>
+      aiCreateAssets
+        .filter((asset) => {
+          if (aiCreateSkippedAssets.includes(asset.path)) return false;
+          const existing = existingFilesMap.get(asset.path);
+          if (!existing) return false;
+          return !existing.mimeType.toLowerCase().startsWith("image/");
+        })
+        .map((asset) => asset.path),
+    [aiCreateAssets, aiCreateSkippedAssets, existingFilesMap]
+  );
+  const unresolvedAssetIssues = useMemo(() => {
+    const merged = new Set<string>([...unresolvedMissingAssets, ...unresolvedBrokenAssets]);
+    return Array.from(merged).sort();
+  }, [unresolvedBrokenAssets, unresolvedMissingAssets]);
   const unresolvedNonManifestAssets = useMemo(
     () => unresolvedMissingAssets.filter((pathValue) => !aiCreateAssetPathSet.has(pathValue)),
     [aiCreateAssetPathSet, unresolvedMissingAssets]
@@ -1125,9 +1141,9 @@ export default function DomainEditorPage() {
       });
       return;
     }
-    if (unresolvedMissingAssets.length > 0) {
+    if (unresolvedAssetIssues.length > 0) {
       const allowWithMissing = window.confirm(
-        `Обнаружены нерешённые ассеты (${unresolvedMissingAssets.length}):\n${unresolvedMissingAssets.slice(0, 6).join("\n")}\n\nПрименить изменения всё равно?`
+        `Обнаружены нерешённые ассеты (${unresolvedAssetIssues.length}):\n${unresolvedAssetIssues.slice(0, 6).join("\n")}\n\nПрименить изменения всё равно?`
       );
       if (!allowWithMissing) return;
     }
@@ -1846,10 +1862,10 @@ export default function DomainEditorPage() {
                   </div>
                 )}
 
-                {unresolvedMissingAssets.length > 0 && (
+                {unresolvedAssetIssues.length > 0 && (
                   <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
-                    Нерешённые ассеты: {unresolvedMissingAssets.slice(0, 8).join(", ")}
-                    {unresolvedMissingAssets.length > 8 ? ` (+${unresolvedMissingAssets.length - 8})` : ""}
+                    Нерешённые ассеты: {unresolvedAssetIssues.slice(0, 8).join(", ")}
+                    {unresolvedAssetIssues.length > 8 ? ` (+${unresolvedAssetIssues.length - 8})` : ""}
                   </div>
                 )}
 
@@ -1872,11 +1888,14 @@ export default function DomainEditorPage() {
                         </thead>
                         <tbody>
                           {aiCreateAssets.map((asset) => {
+                            const broken = unresolvedBrokenAssets.includes(asset.path);
                             const unresolved = unresolvedMissingAssets.includes(asset.path);
                             const skipped = aiCreateSkippedAssets.includes(asset.path);
                             const status = skipped
                               ? "пропущен"
-                              : unresolved
+                              : broken
+                                ? "битый"
+                                : unresolved
                                 ? "требует файл"
                                 : "готов";
                             return (
@@ -1892,7 +1911,9 @@ export default function DomainEditorPage() {
                                     className={`rounded px-1.5 py-0.5 text-[11px] ${
                                       skipped
                                         ? "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
-                                        : unresolved
+                                        : broken
+                                          ? "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-300"
+                                          : unresolved
                                           ? "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300"
                                           : "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"
                                     }`}
