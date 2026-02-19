@@ -85,12 +85,26 @@ export type ContextPackMetaDTO = {
   source_files: string[];
 };
 
+export type TokenUsageDTO = {
+  source?: string;
+  model?: string;
+  stage?: string;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  token_source?: "provider" | "estimated" | "mixed" | string;
+  estimated_cost_usd?: number | null;
+  input_price_usd_per_million?: number | null;
+  output_price_usd_per_million?: number | null;
+  [key: string]: any;
+};
+
 export type AIEditorSuggestionDTO = {
   suggested_content: string;
   diff_summary?: AIDiffSummary;
   warnings?: string[];
   prompt_trace?: Record<string, any>;
-  token_usage?: Record<string, any>;
+  token_usage?: TokenUsageDTO;
   mime_type?: string;
   context_pack_meta?: ContextPackMetaDTO;
 };
@@ -113,7 +127,7 @@ export type AIPageSuggestionDTO = {
   assets?: AIPageSuggestionAsset[];
   warnings?: string[];
   prompt_trace?: Record<string, any>;
-  token_usage?: Record<string, any>;
+  token_usage?: TokenUsageDTO;
   context_pack_meta?: ContextPackMetaDTO;
 };
 
@@ -122,7 +136,7 @@ export type AIRegeneratedAssetDTO = {
   file?: FileListItem;
   warnings?: string[];
   prompt_trace?: Record<string, any>;
-  token_usage?: Record<string, any>;
+  token_usage?: TokenUsageDTO;
   context_pack_meta?: ContextPackMetaDTO;
 };
 

@@ -140,6 +140,36 @@ frontend/
 - `GET /api/projects/{id}/queue` — только активная operational-очередь (`pending|queued`) для доменов в `waiting`.
 - `GET /api/projects/{id}/queue/history` — история запусков проекта (`completed|failed`) с фильтрами `status/date/search`.
 
+## 💵 LLM Usage (токены и стоимость)
+
+- Введен единый аудит `llm_usage_events` для всех LLM-операций:
+  - генерация (`operation=generation_step`);
+  - AI-редактор (`editor_ai_suggest`, `editor_ai_create_page`, `editor_ai_regenerate_asset`);
+  - link-worker (`link_ai_generate`).
+- Для каждого запроса сохраняются:
+  - модель, операция, этап, пользователь, проект/домен, статус;
+  - `prompt_tokens`, `completion_tokens`, `total_tokens`, `token_source` (`provider|estimated|mixed`);
+  - `estimated_cost_usd` (если есть активный тариф модели).
+- Тарифы моделей хранятся в `llm_model_pricing` (USD), доступны активные цены и админ-обновление.
+
+### API
+
+- Admin:
+  - `GET /api/admin/llm-usage/events`
+  - `GET /api/admin/llm-usage/stats`
+  - `GET /api/admin/llm-pricing`
+  - `PUT /api/admin/llm-pricing/{model}`
+- Project scope (owner/admin):
+  - `GET /api/projects/{id}/llm-usage`
+  - `GET /api/projects/{id}/llm-usage/stats`
+
+### UI
+
+- Global admin monitoring: `/monitoring/llm-usage`
+- Project usage page: `/projects/{id}/usage`
+- Значения с `token_source != provider` помечаются как `estimated`.
+- Если тариф модели не найден на момент запроса, стоимость отображается как `n/a`.
+
 ### Инфраструктура
 
 - ✅ Docker Compose для локальной разработки
