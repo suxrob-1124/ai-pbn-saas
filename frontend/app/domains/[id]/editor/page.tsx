@@ -48,35 +48,9 @@ import {
 import { showToast } from "../../../../lib/toastStore";
 import { useAuthGuard } from "../../../../lib/useAuth";
 import type { EditorDirtyState, EditorFileMeta, EditorSelectionState } from "../../../../types/editor";
-
-type DomainSummaryResponse = {
-  domain: {
-    id: string;
-    project_id: string;
-    url: string;
-    status: string;
-  };
-  project_name: string;
-  my_role: "admin" | "owner" | "editor" | "viewer";
-};
-
-type AIContextMode = "auto" | "manual" | "hybrid";
-
-const EDITOR_MODEL_OPTIONS = [
-  { value: "", label: `По умолчанию (${process.env.NEXT_PUBLIC_GEMINI_DEFAULT_MODEL || "gemini-2.5-pro"})` },
-  { value: "gemini-3-pro-preview", label: "gemini-3-pro-preview" },
-  { value: "gemini-2.5-pro", label: "gemini-2.5-pro" },
-  { value: "gemini-2.5-flash", label: "gemini-2.5-flash" },
-  { value: "gemini-2.5-flash-image", label: "gemini-2.5-flash-image" },
-  { value: "gemini-1.5-pro", label: "gemini-1.5-pro" },
-  { value: "gemini-1.5-flash", label: "gemini-1.5-flash" },
-];
-
-const AI_CONTEXT_MODE_OPTIONS: Array<{ value: AIContextMode; label: string }> = [
-  { value: "auto", label: "Авто (рекомендуется)" },
-  { value: "hybrid", label: "Гибрид: авто + выбранные файлы" },
-  { value: "manual", label: "Только выбранные файлы" },
-];
+import { AI_CONTEXT_MODE_OPTIONS, EDITOR_MODEL_OPTIONS } from "../../../../features/editor-v3/services/constants";
+import type { AIContextMode } from "../../../../features/editor-v3/types/ai";
+import type { DomainSummaryResponse } from "../../../../features/editor-v3/types/editor";
 
 const detectLanguage = (pathValue: string) => {
   const path = pathValue.toLowerCase();
