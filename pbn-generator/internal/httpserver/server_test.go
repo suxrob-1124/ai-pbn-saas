@@ -70,7 +70,7 @@ func setupServer(t *testing.T) *Server {
 	genQueue := newStubGenQueueStore()
 	indexChecks := newStubIndexCheckStore()
 	checkHistory := newStubCheckHistoryStore()
-	return New(cfg, svc, logger, proj, nil, dom, gen, prompts, promptOverrides, deployments, schedules, linkSchedules, nil, siteFiles, fileEdits, linkTasks, genQueue, indexChecks, checkHistory, newStubEnqueuer())
+	return New(cfg, svc, logger, proj, nil, dom, gen, prompts, promptOverrides, deployments, schedules, linkSchedules, nil, siteFiles, fileEdits, linkTasks, genQueue, indexChecks, checkHistory, nil, nil, newStubEnqueuer())
 }
 
 func TestRegisterAndLogin(t *testing.T) {

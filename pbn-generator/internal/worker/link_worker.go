@@ -62,6 +62,14 @@ type FileEditStore interface {
 	Create(ctx context.Context, edit sqlstore.FileEdit) error
 }
 
+type LLMUsageStore interface {
+	CreateEvent(ctx context.Context, item sqlstore.LLMUsageEvent) error
+}
+
+type ModelPricingStore interface {
+	GetActiveByModel(ctx context.Context, provider, model string, at time.Time) (*sqlstore.LLMModelPricing, error)
+}
+
 // ContentGenerator генерирует HTML контент для ссылки.
 type ContentGenerator interface {
 	Generate(ctx context.Context, anchorText, targetURL, pageContext string) (string, error)
@@ -78,6 +86,8 @@ type LinkWorker struct {
 	Users     UserStore
 	SiteFiles SiteFileStore
 	FileEdits FileEditStore
+	LLMUsage  LLMUsageStore
+	Pricing   ModelPricingStore
 	Generator ContentGenerator
 	Now       func() time.Time
 }
@@ -666,7 +676,7 @@ func (w *LinkWorker) generateContent(ctx context.Context, task *sqlstore.LinkTas
 	if w.Generator != nil {
 		return w.Generator.Generate(ctx, task.AnchorText, task.TargetURL, pageContext)
 	}
-	apiKey, err := w.selectAPIKey(ctx, task, domain)
+	apiKey, keyOwnerEmail, keyType, err := w.selectAPIKey(ctx, task, domain)
 	if err != nil {
 		return "", err
 	}
@@ -694,6 +704,11 @@ Page context (excerpt):
 %s`, task.AnchorText, task.TargetURL, ctxSnippet)
 
 	resp, err := llmClient.Generate(ctx, "link_task", prompt, "")
+	reqs := llmClient.GetRequests()
+	if len(reqs) > 0 {
+		req := reqs[len(reqs)-1]
+		w.logLLMUsage(ctx, req, task, domain, keyOwnerEmail, keyType)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -708,17 +723,19 @@ Page context (excerpt):
 	return clean, nil
 }
 
-func (w *LinkWorker) selectAPIKey(ctx context.Context, task *sqlstore.LinkTask, domain sqlstore.Domain) (string, error) {
+func (w *LinkWorker) selectAPIKey(ctx context.Context, task *sqlstore.LinkTask, domain sqlstore.Domain) (string, string, string, error) {
 	apiKey := w.Config.GeminiAPIKey
+	keyOwnerEmail := ""
+	keyType := "global"
 	if w.Users == nil || w.Projects == nil {
 		if strings.TrimSpace(apiKey) == "" {
-			return "", errors.New("API key not configured")
+			return "", "", "", errors.New("API key not configured")
 		}
-		return apiKey, nil
+		return apiKey, keyOwnerEmail, keyType, nil
 	}
 	project, err := w.Projects.GetByID(ctx, domain.ProjectID)
 	if err != nil {
-		return "", fmt.Errorf("project not found: %w", err)
+		return "", "", "", fmt.Errorf("project not found: %w", err)
 	}
 
 	tryUser := func(email string) (string, bool) {
@@ -738,17 +755,101 @@ func (w *LinkWorker) selectAPIKey(ctx context.Context, task *sqlstore.LinkTask, 
 	}
 
 	if key, ok := tryUser(task.CreatedBy); ok {
-		return key, nil
+		return key, task.CreatedBy, "user", nil
 	}
 	if task.CreatedBy != project.UserEmail {
 		if key, ok := tryUser(project.UserEmail); ok {
-			return key, nil
+			return key, project.UserEmail, "user", nil
 		}
 	}
 	if strings.TrimSpace(apiKey) == "" {
-		return "", errors.New("API key not configured")
+		return "", "", "", errors.New("API key not configured")
 	}
-	return apiKey, nil
+	return apiKey, keyOwnerEmail, keyType, nil
+}
+
+func (w *LinkWorker) logLLMUsage(
+	ctx context.Context,
+	req llm.LLMRequest,
+	task *sqlstore.LinkTask,
+	domain sqlstore.Domain,
+	keyOwnerEmail string,
+	keyType string,
+) {
+	if w.LLMUsage == nil || task == nil {
+		return
+	}
+	var (
+		inputPrice  sql.NullFloat64
+		outputPrice sql.NullFloat64
+		estCost     sql.NullFloat64
+	)
+	if w.Pricing != nil {
+		at := req.Timestamp
+		if at.IsZero() {
+			at = time.Now().UTC()
+		}
+		if pricing, err := w.Pricing.GetActiveByModel(ctx, "gemini", req.Model, at); err == nil && pricing != nil {
+			inputPrice = sql.NullFloat64{Float64: pricing.InputUSDPerMillion, Valid: true}
+			outputPrice = sql.NullFloat64{Float64: pricing.OutputUSDPerMillion, Valid: true}
+			cost := estimateLLMCostUSD(req.PromptTokens, req.CompletionTokens, pricing.InputUSDPerMillion, pricing.OutputUSDPerMillion)
+			estCost = sql.NullFloat64{Float64: cost, Valid: true}
+		}
+	}
+
+	event := sqlstore.LLMUsageEvent{
+		Provider:                 "gemini",
+		Operation:                "link_ai_generate",
+		Stage:                    sql.NullString{String: "link_task", Valid: true},
+		Model:                    req.Model,
+		Status:                   llmUsageStatus(req.Error),
+		RequesterEmail:           strings.TrimSpace(task.CreatedBy),
+		KeyOwnerEmail:            sql.NullString{String: strings.TrimSpace(keyOwnerEmail), Valid: strings.TrimSpace(keyOwnerEmail) != ""},
+		KeyType:                  sql.NullString{String: strings.TrimSpace(keyType), Valid: strings.TrimSpace(keyType) != ""},
+		ProjectID:                sql.NullString{String: domain.ProjectID, Valid: domain.ProjectID != ""},
+		DomainID:                 sql.NullString{String: domain.ID, Valid: domain.ID != ""},
+		LinkTaskID:               sql.NullString{String: task.ID, Valid: task.ID != ""},
+		PromptTokens:             sql.NullInt64{Int64: req.PromptTokens, Valid: true},
+		CompletionTokens:         sql.NullInt64{Int64: req.CompletionTokens, Valid: true},
+		TotalTokens:              sql.NullInt64{Int64: req.TotalTokens, Valid: true},
+		TokenSource:              llmTokenSource(req.TokenSource),
+		InputPriceUSDPerMillion:  inputPrice,
+		OutputPriceUSDPerMillion: outputPrice,
+		EstimatedCostUSD:         estCost,
+		ErrorMessage:             sql.NullString{String: req.Error, Valid: strings.TrimSpace(req.Error) != ""},
+		CreatedAt:                req.Timestamp,
+	}
+	if strings.TrimSpace(event.RequesterEmail) == "" {
+		// Без валидного requester_email не сможем сохранить событие из-за FK.
+		return
+	}
+	if event.CreatedAt.IsZero() {
+		event.CreatedAt = time.Now().UTC()
+	}
+	_ = w.LLMUsage.CreateEvent(ctx, event)
+}
+
+func estimateLLMCostUSD(promptTokens, completionTokens int64, inputUSDPerMillion, outputUSDPerMillion float64) float64 {
+	promptCost := (float64(promptTokens) / 1_000_000.0) * inputUSDPerMillion
+	completionCost := (float64(completionTokens) / 1_000_000.0) * outputUSDPerMillion
+	return promptCost + completionCost
+}
+
+func llmUsageStatus(errText string) string {
+	if strings.TrimSpace(errText) == "" {
+		return "success"
+	}
+	return "error"
+}
+
+func llmTokenSource(src string) string {
+	src = strings.TrimSpace(strings.ToLower(src))
+	switch src {
+	case "provider", "estimated", "mixed":
+		return src
+	default:
+		return "estimated"
+	}
 }
 
 func (w *LinkWorker) recordFileEdit(ctx context.Context, task *sqlstore.LinkTask, relPath string, before, after []byte, editType string, description string) error {

@@ -36,6 +36,8 @@ func processGeneration(
 	deploymentStore *sqlstore.DeploymentAttemptStore,
 	userStore *sqlstore.UserStore,
 	apiKeyUsageStore *sqlstore.APIKeyUsageStore,
+	llmUsageStore *sqlstore.LLMUsageStore,
+	modelPricingStore *sqlstore.ModelPricingStore,
 	siteFileStore *sqlstore.SiteFileSQLStore,
 	auditStore *sqlstore.AuditStore,
 ) error {
@@ -157,6 +159,13 @@ func processGeneration(
 		_ = domainStore.UpdateStatus(ctx, payload.DomainID, stableDomainStatus(domain))
 		return fmt.Errorf("project not found: %w", err)
 	}
+	requesterEmail := project.UserEmail
+	if gen.RequestedBy.Valid {
+		v := strings.TrimSpace(gen.RequestedBy.String)
+		if v != "" {
+			requesterEmail = v
+		}
+	}
 
 	// Определяем API ключ
 	apiKey := cfg.GeminiAPIKey
@@ -245,10 +254,60 @@ func processGeneration(
 				// Логируем использование API ключа
 				var totalTokens int64
 				for _, req := range llmRequests {
-					totalTokens += req.TokensUsed
+					totalTokens += req.TotalTokens
 				}
 				if err := apiKeyUsageStore.LogUsage(ctx, keyOwnerEmail, payload.GenerationID, keyType, len(llmRequests), totalTokens); err != nil {
 					sugar.Warnf("failed to log API key usage: %v", err)
+				}
+				if llmUsageStore != nil {
+					for _, req := range llmRequests {
+						var (
+							inputPrice  sql.NullFloat64
+							outputPrice sql.NullFloat64
+							estCost     sql.NullFloat64
+						)
+						if modelPricingStore != nil {
+							at := req.Timestamp
+							if at.IsZero() {
+								at = time.Now().UTC()
+							}
+							if pricing, err := modelPricingStore.GetActiveByModel(ctx, "gemini", req.Model, at); err == nil && pricing != nil {
+								inputPrice = sql.NullFloat64{Float64: pricing.InputUSDPerMillion, Valid: true}
+								outputPrice = sql.NullFloat64{Float64: pricing.OutputUSDPerMillion, Valid: true}
+								cost := estimateLLMCostUSD(req.PromptTokens, req.CompletionTokens, pricing.InputUSDPerMillion, pricing.OutputUSDPerMillion)
+								estCost = sql.NullFloat64{Float64: cost, Valid: true}
+							}
+						}
+						stage := sql.NullString{String: req.Stage, Valid: strings.TrimSpace(req.Stage) != ""}
+						event := sqlstore.LLMUsageEvent{
+							Provider:                 "gemini",
+							Operation:                "generation_step",
+							Stage:                    stage,
+							Model:                    req.Model,
+							Status:                   llmUsageStatus(req.Error),
+							RequesterEmail:           requesterEmail,
+							KeyOwnerEmail:            sql.NullString{String: keyOwnerEmail, Valid: strings.TrimSpace(keyOwnerEmail) != ""},
+							KeyType:                  sql.NullString{String: keyType, Valid: strings.TrimSpace(keyType) != ""},
+							ProjectID:                sql.NullString{String: project.ID, Valid: project.ID != ""},
+							DomainID:                 sql.NullString{String: domain.ID, Valid: domain.ID != ""},
+							GenerationID:             sql.NullString{String: payload.GenerationID, Valid: payload.GenerationID != ""},
+							PromptTokens:             sql.NullInt64{Int64: req.PromptTokens, Valid: true},
+							CompletionTokens:         sql.NullInt64{Int64: req.CompletionTokens, Valid: true},
+							TotalTokens:              sql.NullInt64{Int64: req.TotalTokens, Valid: true},
+							TokenSource:              llmTokenSource(req.TokenSource),
+							InputPriceUSDPerMillion:  inputPrice,
+							OutputPriceUSDPerMillion: outputPrice,
+							EstimatedCostUSD:         estCost,
+							ErrorMessage:             sql.NullString{String: req.Error, Valid: strings.TrimSpace(req.Error) != ""},
+							CreatedAt:                req.Timestamp,
+						}
+						if event.CreatedAt.IsZero() {
+							event.CreatedAt = time.Now().UTC()
+						}
+						if err := llmUsageStore.CreateEvent(ctx, event); err != nil {
+							sugar.Warnf("failed to log llm usage event: %v", err)
+						}
+					}
 				}
 			}
 		}
@@ -409,6 +468,29 @@ func processGeneration(
 	_ = domainStore.UpdateStatus(ctx, payload.DomainID, "published")
 
 	return nil
+}
+
+func estimateLLMCostUSD(promptTokens, completionTokens int64, inputUSDPerMillion, outputUSDPerMillion float64) float64 {
+	promptCost := (float64(promptTokens) / 1_000_000.0) * inputUSDPerMillion
+	completionCost := (float64(completionTokens) / 1_000_000.0) * outputUSDPerMillion
+	return promptCost + completionCost
+}
+
+func llmUsageStatus(errText string) string {
+	if strings.TrimSpace(errText) == "" {
+		return "success"
+	}
+	return "error"
+}
+
+func llmTokenSource(src string) string {
+	src = strings.TrimSpace(strings.ToLower(src))
+	switch src {
+	case "provider", "estimated", "mixed":
+		return src
+	default:
+		return "estimated"
+	}
 }
 
 func isRetryableGenerationError(errMsg string) bool {

@@ -196,6 +196,19 @@ type CheckHistoryStore interface {
 	ListByCheck(ctx context.Context, checkID string, limit int) ([]sqlstore.CheckHistory, error)
 }
 
+type LLMUsageStore interface {
+	CreateEvent(ctx context.Context, item sqlstore.LLMUsageEvent) error
+	ListEvents(ctx context.Context, filters sqlstore.LLMUsageFilters) ([]sqlstore.LLMUsageEvent, error)
+	CountEvents(ctx context.Context, filters sqlstore.LLMUsageFilters) (int, error)
+	AggregateStats(ctx context.Context, filters sqlstore.LLMUsageFilters) (sqlstore.LLMUsageStats, error)
+}
+
+type ModelPricingStore interface {
+	GetActiveByModel(ctx context.Context, provider, model string, at time.Time) (*sqlstore.LLMModelPricing, error)
+	ListActive(ctx context.Context) ([]sqlstore.LLMModelPricing, error)
+	UpsertActive(ctx context.Context, provider, model string, inputUSDPerMillion, outputUSDPerMillion float64, updatedBy string, at time.Time) error
+}
+
 type Server struct {
 	cfg             config.Config
 	svc             *auth.Service
@@ -215,6 +228,8 @@ type Server struct {
 	genQueue        GenQueueStore
 	indexChecks     IndexCheckStore
 	checkHistory    CheckHistoryStore
+	llmUsage        LLMUsageStore
+	modelPricing    ModelPricingStore
 	tasks           tasks.Enqueuer
 	reqDuration     *prometheus.HistogramVec
 	reqCounter      *prometheus.CounterVec
@@ -225,7 +240,7 @@ type Server struct {
 	editorCtxCache  map[string]editorContextPackCacheEntry
 }
 
-func New(cfg config.Config, svc *auth.Service, logger *zap.SugaredLogger, projects ProjectStore, projectMembers *sqlstore.ProjectMemberStore, domains DomainStore, generations GenerationStore, prompts PromptStore, promptOverrides PromptOverrideStore, deployments DeploymentAttemptStore, schedules ScheduleStore, linkSchedules LinkScheduleStore, auditRules *sqlstore.AuditStore, siteFiles SiteFileStore, fileEdits FileEditStore, linkTasks LinkTaskStore, genQueue GenQueueStore, indexChecks IndexCheckStore, checkHistory CheckHistoryStore, tq tasks.Enqueuer) *Server {
+func New(cfg config.Config, svc *auth.Service, logger *zap.SugaredLogger, projects ProjectStore, projectMembers *sqlstore.ProjectMemberStore, domains DomainStore, generations GenerationStore, prompts PromptStore, promptOverrides PromptOverrideStore, deployments DeploymentAttemptStore, schedules ScheduleStore, linkSchedules LinkScheduleStore, auditRules *sqlstore.AuditStore, siteFiles SiteFileStore, fileEdits FileEditStore, linkTasks LinkTaskStore, genQueue GenQueueStore, indexChecks IndexCheckStore, checkHistory CheckHistoryStore, llmUsage LLMUsageStore, modelPricing ModelPricingStore, tq tasks.Enqueuer) *Server {
 	if logger == nil {
 		logger = zap.NewNop().Sugar()
 	}
@@ -267,6 +282,8 @@ func New(cfg config.Config, svc *auth.Service, logger *zap.SugaredLogger, projec
 		genQueue:        genQueue,
 		indexChecks:     indexChecks,
 		checkHistory:    checkHistory,
+		llmUsage:        llmUsage,
+		modelPricing:    modelPricing,
 		tasks:           tq,
 		reqDuration:     reqDuration,
 		reqCounter:      reqCounter,
@@ -313,6 +330,10 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("/api/admin/index-checks/calendar", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminIndexChecksCalendar))))
 	mux.Handle("/api/admin/index-checks/", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminIndexCheckRoute))))
 	mux.Handle("/api/admin/index-checks/failed", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminIndexChecksFailed))))
+	mux.Handle("/api/admin/llm-usage/events", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminLLMUsageEvents))))
+	mux.Handle("/api/admin/llm-usage/stats", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminLLMUsageStats))))
+	mux.Handle("/api/admin/llm-pricing", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminLLMPricing))))
+	mux.Handle("/api/admin/llm-pricing/", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminLLMPricingByModel))))
 	mux.Handle("/api/admin/users", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminUsers))))
 	mux.Handle("/api/admin/users/", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminUserRoute))))
 	mux.Handle("/api/admin/prompts", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminPrompts))))
@@ -1189,6 +1210,18 @@ func (s *Server) handleProjectByID(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(parts) > 1 && parts[1] == "index-checks" {
 		s.handleProjectIndexChecks(w, r, projectID, parts[2:])
+		return
+	}
+	if len(parts) > 1 && parts[1] == "llm-usage" {
+		action := ""
+		if len(parts) > 2 {
+			action = parts[2]
+		}
+		if action == "stats" {
+			s.handleProjectLLMUsageStats(w, r, projectID)
+			return
+		}
+		s.handleProjectLLMUsageEvents(w, r, projectID)
 		return
 	}
 	if len(parts) > 1 && parts[1] == "prompts" {
@@ -2979,7 +3012,18 @@ func (s *Server) handleDomainEditorActions(w http.ResponseWriter, r *http.Reques
 			"site_context":     siteContext,
 			"task_constraints": taskConstraints,
 		})
-		response, tokenUsage, err := s.generateEditorSuggestion(r.Context(), user.Email, project.UserEmail, "editor_page_create", selectedModel, prompt)
+		response, tokenUsage, err := s.generateEditorSuggestion(
+			r.Context(),
+			user.Email,
+			project.UserEmail,
+			project.ID,
+			domain.ID,
+			"editor_ai_create_page",
+			"editor_page_create",
+			cleanTarget,
+			selectedModel,
+			prompt,
+		)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
@@ -2997,7 +3041,18 @@ func (s *Server) handleDomainEditorActions(w http.ResponseWriter, r *http.Reques
 				break
 			}
 			repairPrompt := buildEditorRepairPrompt(currentResponse)
-			currentResponse, tokenUsage, err = s.generateEditorSuggestion(r.Context(), user.Email, project.UserEmail, "editor_page_create", selectedModel, repairPrompt)
+			currentResponse, tokenUsage, err = s.generateEditorSuggestion(
+				r.Context(),
+				user.Email,
+				project.UserEmail,
+				project.ID,
+				domain.ID,
+				"editor_ai_create_page",
+				"editor_page_create",
+				cleanTarget,
+				selectedModel,
+				repairPrompt,
+			)
 			if err != nil {
 				writeError(w, http.StatusBadGateway, err.Error())
 				return
@@ -3119,7 +3174,18 @@ func (s *Server) handleDomainEditorActions(w http.ResponseWriter, r *http.Reques
 			"language":         domain.TargetLanguage,
 			"keyword":          domain.MainKeyword,
 		})
-		imageBytes, tokenUsage, err := s.generateEditorImage(r.Context(), user.Email, project.UserEmail, "editor_asset_regenerate", selectedModel, prompt)
+		imageBytes, tokenUsage, err := s.generateEditorImage(
+			r.Context(),
+			user.Email,
+			project.UserEmail,
+			project.ID,
+			domain.ID,
+			"editor_ai_regenerate_asset",
+			"editor_asset_regenerate",
+			cleanPath,
+			selectedModel,
+			prompt,
+		)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
@@ -4746,7 +4812,18 @@ func (s *Server) handleFileAISuggest(w http.ResponseWriter, r *http.Request, dom
 		"site_context":         siteContext,
 		"task_constraints":     taskConstraints,
 	})
-	suggestedRaw, tokenUsage, err := s.generateEditorSuggestion(r.Context(), requesterEmail, project.UserEmail, "editor_file_edit", selectedModel, prompt)
+	suggestedRaw, tokenUsage, err := s.generateEditorSuggestion(
+		r.Context(),
+		requesterEmail,
+		project.UserEmail,
+		project.ID,
+		domain.ID,
+		"editor_ai_suggest",
+		"editor_file_edit",
+		relPath,
+		selectedModel,
+		prompt,
+	)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -7599,6 +7676,213 @@ func (s *Server) handleAdminIndexCheckHistory(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func (s *Server) handleAdminLLMUsageEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if s.llmUsage == nil {
+		writeError(w, http.StatusInternalServerError, "llm usage store not configured")
+		return
+	}
+	filters := parseLLMUsageFilters(r)
+	items, err := s.llmUsage.ListEvents(r.Context(), filters)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not list llm usage")
+		return
+	}
+	total, err := s.llmUsage.CountEvents(r.Context(), filters)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not count llm usage")
+		return
+	}
+	resp := make([]llmUsageEventDTO, 0, len(items))
+	for _, item := range items {
+		resp = append(resp, toLLMUsageEventDTO(item))
+	}
+	writeJSON(w, http.StatusOK, llmUsageListDTO{Items: resp, Total: total})
+}
+
+func (s *Server) handleAdminLLMUsageStats(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if s.llmUsage == nil {
+		writeError(w, http.StatusInternalServerError, "llm usage store not configured")
+		return
+	}
+	filters := parseLLMUsageFilters(r)
+	filters.Limit = 0
+	filters.Offset = 0
+	stats, err := s.llmUsage.AggregateStats(r.Context(), filters)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not aggregate llm usage")
+		return
+	}
+	writeJSON(w, http.StatusOK, toLLMUsageStatsDTO(stats))
+}
+
+func (s *Server) handleAdminLLMPricing(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if s.modelPricing == nil {
+		writeError(w, http.StatusInternalServerError, "model pricing store not configured")
+		return
+	}
+	items, err := s.modelPricing.ListActive(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not list llm model pricing")
+		return
+	}
+	resp := make([]llmPricingDTO, 0, len(items))
+	for _, item := range items {
+		resp = append(resp, toLLMPricingDTO(item))
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleAdminLLMPricingByModel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if s.modelPricing == nil {
+		writeError(w, http.StatusInternalServerError, "model pricing store not configured")
+		return
+	}
+	model := strings.TrimSpace(strings.TrimPrefix(r.URL.Path, "/api/admin/llm-pricing/"))
+	model, _ = url.PathUnescape(model)
+	model = strings.TrimSpace(model)
+	if model == "" {
+		writeError(w, http.StatusBadRequest, "model is required")
+		return
+	}
+	if !ensureJSON(w, r) {
+		return
+	}
+	defer r.Body.Close()
+	var body struct {
+		Provider            string  `json:"provider"`
+		InputUSDPerMillion  float64 `json:"input_usd_per_million"`
+		OutputUSDPerMillion float64 `json:"output_usd_per_million"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	provider := strings.TrimSpace(body.Provider)
+	if provider == "" {
+		provider = "gemini"
+	}
+	if body.InputUSDPerMillion <= 0 || body.OutputUSDPerMillion <= 0 {
+		writeError(w, http.StatusBadRequest, "input_usd_per_million and output_usd_per_million must be > 0")
+		return
+	}
+	user, ok := currentUserFromContext(r.Context())
+	if !ok || strings.TrimSpace(user.Email) == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if err := s.modelPricing.UpsertActive(
+		r.Context(),
+		provider,
+		model,
+		body.InputUSDPerMillion,
+		body.OutputUSDPerMillion,
+		user.Email,
+		time.Now().UTC(),
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not update model pricing")
+		return
+	}
+	item, err := s.modelPricing.GetActiveByModel(r.Context(), provider, model, time.Now().UTC())
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"status": "updated"})
+		return
+	}
+	writeJSON(w, http.StatusOK, toLLMPricingDTO(*item))
+}
+
+func (s *Server) handleProjectLLMUsageEvents(w http.ResponseWriter, r *http.Request, projectID string) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if s.llmUsage == nil {
+		writeError(w, http.StatusInternalServerError, "llm usage store not configured")
+		return
+	}
+	user, ok := currentUserFromContext(r.Context())
+	if !ok || strings.TrimSpace(user.Email) == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	project, err := s.authorizeProject(r.Context(), projectID)
+	if err != nil {
+		respondAuthzError(w, err, "project not found")
+		return
+	}
+	if !strings.EqualFold(user.Role, "admin") && !strings.EqualFold(project.UserEmail, user.Email) {
+		writeError(w, http.StatusForbidden, "only admin or project owner can view llm usage")
+		return
+	}
+	filters := parseLLMUsageFilters(r)
+	filters.ProjectID = &projectID
+	items, err := s.llmUsage.ListEvents(r.Context(), filters)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not list llm usage")
+		return
+	}
+	total, err := s.llmUsage.CountEvents(r.Context(), filters)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not count llm usage")
+		return
+	}
+	resp := make([]llmUsageEventDTO, 0, len(items))
+	for _, item := range items {
+		resp = append(resp, toLLMUsageEventDTO(item))
+	}
+	writeJSON(w, http.StatusOK, llmUsageListDTO{Items: resp, Total: total})
+}
+
+func (s *Server) handleProjectLLMUsageStats(w http.ResponseWriter, r *http.Request, projectID string) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if s.llmUsage == nil {
+		writeError(w, http.StatusInternalServerError, "llm usage store not configured")
+		return
+	}
+	user, ok := currentUserFromContext(r.Context())
+	if !ok || strings.TrimSpace(user.Email) == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	project, err := s.authorizeProject(r.Context(), projectID)
+	if err != nil {
+		respondAuthzError(w, err, "project not found")
+		return
+	}
+	if !strings.EqualFold(user.Role, "admin") && !strings.EqualFold(project.UserEmail, user.Email) {
+		writeError(w, http.StatusForbidden, "only admin or project owner can view llm usage")
+		return
+	}
+	filters := parseLLMUsageFilters(r)
+	filters.ProjectID = &projectID
+	filters.Limit = 0
+	filters.Offset = 0
+	stats, err := s.llmUsage.AggregateStats(r.Context(), filters)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not aggregate llm usage")
+		return
+	}
+	writeJSON(w, http.StatusOK, toLLMUsageStatsDTO(stats))
+}
+
 func (s *Server) handleAdminAuditRuleByCode(w http.ResponseWriter, r *http.Request) {
 	if s.auditRules == nil {
 		writeError(w, http.StatusInternalServerError, "audit store not configured")
@@ -7888,6 +8172,64 @@ type indexCheckStatsDTO struct {
 	AvgAttemptsToSuccess float64              `json:"avg_attempts_to_success"`
 	FailedInvestigation  int                  `json:"failed_investigation"`
 	Daily                []indexCheckDailyDTO `json:"daily"`
+}
+
+type llmUsageEventDTO struct {
+	ID               string   `json:"id"`
+	CreatedAt        time.Time `json:"created_at"`
+	Provider         string   `json:"provider"`
+	Operation        string   `json:"operation"`
+	Stage            *string  `json:"stage,omitempty"`
+	Model            string   `json:"model"`
+	Status           string   `json:"status"`
+	RequesterEmail   string   `json:"requester_email"`
+	KeyOwnerEmail    *string  `json:"key_owner_email,omitempty"`
+	KeyType          *string  `json:"key_type,omitempty"`
+	ProjectID        *string  `json:"project_id,omitempty"`
+	DomainID         *string  `json:"domain_id,omitempty"`
+	GenerationID     *string  `json:"generation_id,omitempty"`
+	LinkTaskID       *string  `json:"link_task_id,omitempty"`
+	FilePath         *string  `json:"file_path,omitempty"`
+	PromptTokens     *int64   `json:"prompt_tokens,omitempty"`
+	CompletionTokens *int64   `json:"completion_tokens,omitempty"`
+	TotalTokens      *int64   `json:"total_tokens,omitempty"`
+	TokenSource      string   `json:"token_source"`
+	EstimatedCostUSD *float64 `json:"estimated_cost_usd,omitempty"`
+}
+
+type llmUsageListDTO struct {
+	Items []llmUsageEventDTO `json:"items"`
+	Total int                `json:"total"`
+}
+
+type llmUsageBucketDTO struct {
+	Key      string  `json:"key"`
+	Requests int     `json:"requests"`
+	Tokens   int64   `json:"tokens"`
+	CostUSD  float64 `json:"cost_usd"`
+}
+
+type llmUsageStatsDTO struct {
+	TotalRequests int               `json:"total_requests"`
+	TotalTokens   int64             `json:"total_tokens"`
+	TotalCostUSD  float64           `json:"total_cost_usd"`
+	ByDay         []llmUsageBucketDTO `json:"by_day"`
+	ByModel       []llmUsageBucketDTO `json:"by_model"`
+	ByOperation   []llmUsageBucketDTO `json:"by_operation"`
+	ByUser        []llmUsageBucketDTO `json:"by_user"`
+}
+
+type llmPricingDTO struct {
+	ID                string     `json:"id"`
+	Provider          string     `json:"provider"`
+	Model             string     `json:"model"`
+	InputUSDPerMillion float64    `json:"input_usd_per_million"`
+	OutputUSDPerMillion float64   `json:"output_usd_per_million"`
+	ActiveFrom        time.Time  `json:"active_from"`
+	ActiveTo          *time.Time `json:"active_to,omitempty"`
+	IsActive          bool       `json:"is_active"`
+	UpdatedBy         string     `json:"updated_by"`
+	UpdatedAt         time.Time  `json:"updated_at"`
 }
 
 type generationDTO struct {
@@ -8296,6 +8638,128 @@ func buildIndexCheckStatsDTO(
 		}
 	}
 	return resp
+}
+
+func toLLMUsageEventDTO(item sqlstore.LLMUsageEvent) llmUsageEventDTO {
+	dto := llmUsageEventDTO{
+		ID:             item.ID,
+		CreatedAt:      item.CreatedAt,
+		Provider:       item.Provider,
+		Operation:      item.Operation,
+		Model:          item.Model,
+		Status:         item.Status,
+		RequesterEmail: item.RequesterEmail,
+		TokenSource:    item.TokenSource,
+	}
+	if item.Stage.Valid {
+		v := strings.TrimSpace(item.Stage.String)
+		if v != "" {
+			dto.Stage = &v
+		}
+	}
+	if item.KeyOwnerEmail.Valid {
+		v := strings.TrimSpace(item.KeyOwnerEmail.String)
+		if v != "" {
+			dto.KeyOwnerEmail = &v
+		}
+	}
+	if item.KeyType.Valid {
+		v := strings.TrimSpace(item.KeyType.String)
+		if v != "" {
+			dto.KeyType = &v
+		}
+	}
+	if item.ProjectID.Valid {
+		v := strings.TrimSpace(item.ProjectID.String)
+		if v != "" {
+			dto.ProjectID = &v
+		}
+	}
+	if item.DomainID.Valid {
+		v := strings.TrimSpace(item.DomainID.String)
+		if v != "" {
+			dto.DomainID = &v
+		}
+	}
+	if item.GenerationID.Valid {
+		v := strings.TrimSpace(item.GenerationID.String)
+		if v != "" {
+			dto.GenerationID = &v
+		}
+	}
+	if item.LinkTaskID.Valid {
+		v := strings.TrimSpace(item.LinkTaskID.String)
+		if v != "" {
+			dto.LinkTaskID = &v
+		}
+	}
+	if item.FilePath.Valid {
+		v := strings.TrimSpace(item.FilePath.String)
+		if v != "" {
+			dto.FilePath = &v
+		}
+	}
+	if item.PromptTokens.Valid {
+		v := item.PromptTokens.Int64
+		dto.PromptTokens = &v
+	}
+	if item.CompletionTokens.Valid {
+		v := item.CompletionTokens.Int64
+		dto.CompletionTokens = &v
+	}
+	if item.TotalTokens.Valid {
+		v := item.TotalTokens.Int64
+		dto.TotalTokens = &v
+	}
+	if item.EstimatedCostUSD.Valid {
+		v := item.EstimatedCostUSD.Float64
+		dto.EstimatedCostUSD = &v
+	}
+	return dto
+}
+
+func toLLMUsageStatsDTO(stats sqlstore.LLMUsageStats) llmUsageStatsDTO {
+	dto := llmUsageStatsDTO{
+		TotalRequests: stats.Totals.TotalRequests,
+		TotalTokens:   stats.Totals.TotalTokens,
+		TotalCostUSD:  stats.Totals.TotalCostUSD,
+		ByDay:         make([]llmUsageBucketDTO, 0, len(stats.ByDay)),
+		ByModel:       make([]llmUsageBucketDTO, 0, len(stats.ByModel)),
+		ByOperation:   make([]llmUsageBucketDTO, 0, len(stats.ByOperation)),
+		ByUser:        make([]llmUsageBucketDTO, 0, len(stats.ByUser)),
+	}
+	for _, item := range stats.ByDay {
+		dto.ByDay = append(dto.ByDay, llmUsageBucketDTO{Key: item.Key, Requests: item.Requests, Tokens: item.Tokens, CostUSD: item.CostUSD})
+	}
+	for _, item := range stats.ByModel {
+		dto.ByModel = append(dto.ByModel, llmUsageBucketDTO{Key: item.Key, Requests: item.Requests, Tokens: item.Tokens, CostUSD: item.CostUSD})
+	}
+	for _, item := range stats.ByOperation {
+		dto.ByOperation = append(dto.ByOperation, llmUsageBucketDTO{Key: item.Key, Requests: item.Requests, Tokens: item.Tokens, CostUSD: item.CostUSD})
+	}
+	for _, item := range stats.ByUser {
+		dto.ByUser = append(dto.ByUser, llmUsageBucketDTO{Key: item.Key, Requests: item.Requests, Tokens: item.Tokens, CostUSD: item.CostUSD})
+	}
+	return dto
+}
+
+func toLLMPricingDTO(item sqlstore.LLMModelPricing) llmPricingDTO {
+	dto := llmPricingDTO{
+		ID:                 item.ID,
+		Provider:           item.Provider,
+		Model:              item.Model,
+		InputUSDPerMillion: item.InputUSDPerMillion,
+		OutputUSDPerMillion: item.OutputUSDPerMillion,
+		ActiveFrom:         item.ActiveFrom,
+		IsActive:           item.IsActive,
+		UpdatedBy:          item.UpdatedBy,
+		UpdatedAt:          item.UpdatedAt,
+	}
+	if item.ActiveTo.Valid {
+		v := item.ActiveTo.Time
+		dto.ActiveTo = &v
+	}
+	return dto
 }
 
 func toGenerationDTO(g sqlstore.Generation) generationDTO {
@@ -9298,6 +9762,63 @@ func parseIndexCheckFilters(r *http.Request, fallbackLimit int, maxLimit int) sq
 	return filters
 }
 
+func parseLLMUsageFilters(r *http.Request) sqlstore.LLMUsageFilters {
+	limit := parseLimitParam(r, 50, 500)
+	page := parsePageParam(r, 1)
+	offset := (page - 1) * limit
+	filters := sqlstore.LLMUsageFilters{
+		Limit:  limit,
+		Offset: offset,
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("from")); raw != "" {
+		if t, ok := parseLLMUsageTime(raw, true); ok {
+			filters.From = &t
+		}
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("to")); raw != "" {
+		if t, ok := parseLLMUsageTime(raw, false); ok {
+			filters.To = &t
+		}
+	}
+	if v := strings.TrimSpace(r.URL.Query().Get("user_email")); v != "" {
+		filters.UserEmail = &v
+	}
+	if v := strings.TrimSpace(r.URL.Query().Get("project_id")); v != "" {
+		filters.ProjectID = &v
+	}
+	if v := strings.TrimSpace(r.URL.Query().Get("domain_id")); v != "" {
+		filters.DomainID = &v
+	}
+	if v := strings.TrimSpace(r.URL.Query().Get("model")); v != "" {
+		filters.Model = &v
+	}
+	if v := strings.TrimSpace(r.URL.Query().Get("operation")); v != "" {
+		filters.Operation = &v
+	}
+	if v := strings.TrimSpace(r.URL.Query().Get("status")); v != "" {
+		filters.Status = &v
+	}
+	return filters
+}
+
+func parseLLMUsageTime(raw string, startOfDay bool) (time.Time, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}, false
+	}
+	if t, err := time.Parse(time.RFC3339, raw); err == nil {
+		return t.UTC(), true
+	}
+	if d, err := time.Parse("2006-01-02", raw); err == nil {
+		d = d.UTC()
+		if !startOfDay {
+			d = d.Add(24*time.Hour - time.Nanosecond)
+		}
+		return d, true
+	}
+	return time.Time{}, false
+}
+
 func resolveIndexCheckStatsRange(filters *sqlstore.IndexCheckFilters, now time.Time) (time.Time, time.Time) {
 	const defaultDays = 30
 	var from time.Time
@@ -9889,7 +10410,13 @@ func detectImageDimensions(domain sqlstore.Domain, relPath string) (int, int, bo
 	return cfg.Width, cfg.Height, true
 }
 
-func (s *Server) resolveEditorAPIKey(ctx context.Context, requesterEmail, ownerEmail string) (string, string, error) {
+type editorAPIKeyMeta struct {
+	Source        string
+	KeyOwnerEmail string
+	KeyType       string
+}
+
+func (s *Server) resolveEditorAPIKey(ctx context.Context, requesterEmail, ownerEmail string) (string, editorAPIKeyMeta, error) {
 	tryUser := func(email string) (string, bool) {
 		email = strings.TrimSpace(email)
 		if email == "" {
@@ -9911,15 +10438,15 @@ func (s *Server) resolveEditorAPIKey(ctx context.Context, requesterEmail, ownerE
 		return val, true
 	}
 	if key, ok := tryUser(requesterEmail); ok {
-		return key, "user", nil
+		return key, editorAPIKeyMeta{Source: "user", KeyOwnerEmail: requesterEmail, KeyType: "user"}, nil
 	}
 	if key, ok := tryUser(ownerEmail); ok {
-		return key, "owner", nil
+		return key, editorAPIKeyMeta{Source: "owner", KeyOwnerEmail: ownerEmail, KeyType: "user"}, nil
 	}
 	if key := strings.TrimSpace(s.cfg.GeminiAPIKey); key != "" {
-		return key, "global", nil
+		return key, editorAPIKeyMeta{Source: "global", KeyType: "global"}, nil
 	}
-	return "", "", errors.New("gemini api key not configured")
+	return "", editorAPIKeyMeta{}, errors.New("gemini api key not configured")
 }
 
 func (s *Server) resolveEditorPrompt(ctx context.Context, domainID, projectID, stage, fallback string) (string, string, string) {
@@ -10252,8 +10779,8 @@ func (s *Server) buildEditorContextPack(ctx context.Context, domain sqlstore.Dom
 	return contextText, meta, nil
 }
 
-func (s *Server) generateEditorSuggestion(ctx context.Context, requesterEmail, ownerEmail, stage, model, prompt string) (string, map[string]any, error) {
-	apiKey, source, err := s.resolveEditorAPIKey(ctx, requesterEmail, ownerEmail)
+func (s *Server) generateEditorSuggestion(ctx context.Context, requesterEmail, ownerEmail, projectID, domainID, operation, stage, filePath, model, prompt string) (string, map[string]any, error) {
+	apiKey, keyMeta, err := s.resolveEditorAPIKey(ctx, requesterEmail, ownerEmail)
 	if err != nil {
 		return "", nil, err
 	}
@@ -10267,18 +10794,64 @@ func (s *Server) generateEditorSuggestion(ctx context.Context, requesterEmail, o
 	})
 	selectedModel := strings.TrimSpace(model)
 	result, err := client.Generate(ctx, stage, prompt, selectedModel)
+	reqs := client.GetRequests()
+	var req llm.LLMRequest
+	if len(reqs) > 0 {
+		req = reqs[len(reqs)-1]
+	}
+	if req.Model == "" {
+		req.Model = selectedModel
+	}
+	if req.TokenSource == "" {
+		req.TokenSource = "estimated"
+	}
+
 	if err != nil {
+		s.logEditorLLMUsageEvent(ctx, req, requesterEmail, keyMeta, projectID, domainID, operation, stage, filePath)
 		return "", nil, llm.SanitizeError(err)
 	}
-	return strings.TrimSpace(result), map[string]any{
-		"source": source,
-		"model":  selectedModel,
-		"stage":  stage,
-	}, nil
+	var (
+		inputPrice  sql.NullFloat64
+		outputPrice sql.NullFloat64
+		estCost     sql.NullFloat64
+	)
+	if s.modelPricing != nil {
+		at := req.Timestamp
+		if at.IsZero() {
+			at = time.Now().UTC()
+		}
+		if pricing, err := s.modelPricing.GetActiveByModel(ctx, "gemini", req.Model, at); err == nil && pricing != nil {
+			inputPrice = sql.NullFloat64{Float64: pricing.InputUSDPerMillion, Valid: true}
+			outputPrice = sql.NullFloat64{Float64: pricing.OutputUSDPerMillion, Valid: true}
+			estCost = sql.NullFloat64{Float64: estimateLLMCostUSD(req.PromptTokens, req.CompletionTokens, pricing.InputUSDPerMillion, pricing.OutputUSDPerMillion), Valid: true}
+		}
+	}
+
+	s.logEditorLLMUsageEventWithPricing(ctx, req, requesterEmail, keyMeta, projectID, domainID, operation, stage, filePath, inputPrice, outputPrice, estCost)
+
+	tokenUsage := map[string]any{
+		"source":            keyMeta.Source,
+		"model":             req.Model,
+		"stage":             stage,
+		"prompt_tokens":     req.PromptTokens,
+		"completion_tokens": req.CompletionTokens,
+		"total_tokens":      req.TotalTokens,
+		"token_source":      llmTokenSource(req.TokenSource),
+	}
+	if estCost.Valid {
+		tokenUsage["estimated_cost_usd"] = estCost.Float64
+	}
+	if inputPrice.Valid {
+		tokenUsage["input_price_usd_per_million"] = inputPrice.Float64
+	}
+	if outputPrice.Valid {
+		tokenUsage["output_price_usd_per_million"] = outputPrice.Float64
+	}
+	return strings.TrimSpace(result), tokenUsage, nil
 }
 
-func (s *Server) generateEditorImage(ctx context.Context, requesterEmail, ownerEmail, stage, model, prompt string) ([]byte, map[string]any, error) {
-	apiKey, source, err := s.resolveEditorAPIKey(ctx, requesterEmail, ownerEmail)
+func (s *Server) generateEditorImage(ctx context.Context, requesterEmail, ownerEmail, projectID, domainID, operation, stage, filePath, model, prompt string) ([]byte, map[string]any, error) {
+	apiKey, keyMeta, err := s.resolveEditorAPIKey(ctx, requesterEmail, ownerEmail)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -10292,14 +10865,150 @@ func (s *Server) generateEditorImage(ctx context.Context, requesterEmail, ownerE
 	})
 	selectedModel := strings.TrimSpace(model)
 	imageBytes, err := client.GenerateImage(ctx, prompt, selectedModel)
+	reqs := client.GetRequests()
+	var req llm.LLMRequest
+	if len(reqs) > 0 {
+		req = reqs[len(reqs)-1]
+	}
+	if req.Model == "" {
+		req.Model = selectedModel
+	}
+	if req.TokenSource == "" {
+		req.TokenSource = "estimated"
+	}
+
 	if err != nil {
+		s.logEditorLLMUsageEvent(ctx, req, requesterEmail, keyMeta, projectID, domainID, operation, stage, filePath)
 		return nil, nil, llm.SanitizeError(err)
 	}
-	return imageBytes, map[string]any{
-		"source": source,
-		"model":  selectedModel,
-		"stage":  stage,
-	}, nil
+	var (
+		inputPrice  sql.NullFloat64
+		outputPrice sql.NullFloat64
+		estCost     sql.NullFloat64
+	)
+	if s.modelPricing != nil {
+		at := req.Timestamp
+		if at.IsZero() {
+			at = time.Now().UTC()
+		}
+		if pricing, err := s.modelPricing.GetActiveByModel(ctx, "gemini", req.Model, at); err == nil && pricing != nil {
+			inputPrice = sql.NullFloat64{Float64: pricing.InputUSDPerMillion, Valid: true}
+			outputPrice = sql.NullFloat64{Float64: pricing.OutputUSDPerMillion, Valid: true}
+			estCost = sql.NullFloat64{Float64: estimateLLMCostUSD(req.PromptTokens, req.CompletionTokens, pricing.InputUSDPerMillion, pricing.OutputUSDPerMillion), Valid: true}
+		}
+	}
+	s.logEditorLLMUsageEventWithPricing(ctx, req, requesterEmail, keyMeta, projectID, domainID, operation, stage, filePath, inputPrice, outputPrice, estCost)
+	tokenUsage := map[string]any{
+		"source":            keyMeta.Source,
+		"model":             req.Model,
+		"stage":             stage,
+		"prompt_tokens":     req.PromptTokens,
+		"completion_tokens": req.CompletionTokens,
+		"total_tokens":      req.TotalTokens,
+		"token_source":      llmTokenSource(req.TokenSource),
+	}
+	if estCost.Valid {
+		tokenUsage["estimated_cost_usd"] = estCost.Float64
+	}
+	if inputPrice.Valid {
+		tokenUsage["input_price_usd_per_million"] = inputPrice.Float64
+	}
+	if outputPrice.Valid {
+		tokenUsage["output_price_usd_per_million"] = outputPrice.Float64
+	}
+	return imageBytes, tokenUsage, nil
+}
+
+func (s *Server) logEditorLLMUsageEvent(
+	ctx context.Context,
+	req llm.LLMRequest,
+	requesterEmail string,
+	keyMeta editorAPIKeyMeta,
+	projectID string,
+	domainID string,
+	operation string,
+	stage string,
+	filePath string,
+) {
+	s.logEditorLLMUsageEventWithPricing(ctx, req, requesterEmail, keyMeta, projectID, domainID, operation, stage, filePath, sql.NullFloat64{}, sql.NullFloat64{}, sql.NullFloat64{})
+}
+
+func (s *Server) logEditorLLMUsageEventWithPricing(
+	ctx context.Context,
+	req llm.LLMRequest,
+	requesterEmail string,
+	keyMeta editorAPIKeyMeta,
+	projectID string,
+	domainID string,
+	operation string,
+	stage string,
+	filePath string,
+	inputPrice sql.NullFloat64,
+	outputPrice sql.NullFloat64,
+	estCost sql.NullFloat64,
+) {
+	if s.llmUsage == nil {
+		return
+	}
+	requesterEmail = strings.TrimSpace(requesterEmail)
+	if requesterEmail == "" {
+		return
+	}
+	if req.Model == "" {
+		req.Model = strings.TrimSpace(s.cfg.GeminiDefaultModel)
+	}
+	if req.TokenSource == "" {
+		req.TokenSource = "estimated"
+	}
+	event := sqlstore.LLMUsageEvent{
+		Provider:                 "gemini",
+		Operation:                operation,
+		Stage:                    sql.NullString{String: stage, Valid: strings.TrimSpace(stage) != ""},
+		Model:                    req.Model,
+		Status:                   llmUsageStatus(req.Error),
+		RequesterEmail:           requesterEmail,
+		KeyOwnerEmail:            sql.NullString{String: strings.TrimSpace(keyMeta.KeyOwnerEmail), Valid: strings.TrimSpace(keyMeta.KeyOwnerEmail) != ""},
+		KeyType:                  sql.NullString{String: strings.TrimSpace(keyMeta.KeyType), Valid: strings.TrimSpace(keyMeta.KeyType) != ""},
+		ProjectID:                sql.NullString{String: strings.TrimSpace(projectID), Valid: strings.TrimSpace(projectID) != ""},
+		DomainID:                 sql.NullString{String: strings.TrimSpace(domainID), Valid: strings.TrimSpace(domainID) != ""},
+		FilePath:                 sql.NullString{String: strings.TrimSpace(filePath), Valid: strings.TrimSpace(filePath) != ""},
+		PromptTokens:             sql.NullInt64{Int64: req.PromptTokens, Valid: true},
+		CompletionTokens:         sql.NullInt64{Int64: req.CompletionTokens, Valid: true},
+		TotalTokens:              sql.NullInt64{Int64: req.TotalTokens, Valid: true},
+		TokenSource:              llmTokenSource(req.TokenSource),
+		InputPriceUSDPerMillion:  inputPrice,
+		OutputPriceUSDPerMillion: outputPrice,
+		EstimatedCostUSD:         estCost,
+		ErrorMessage:             sql.NullString{String: strings.TrimSpace(req.Error), Valid: strings.TrimSpace(req.Error) != ""},
+		CreatedAt:                req.Timestamp,
+	}
+	if event.CreatedAt.IsZero() {
+		event.CreatedAt = time.Now().UTC()
+	}
+	_ = s.llmUsage.CreateEvent(ctx, event)
+}
+
+func estimateLLMCostUSD(promptTokens, completionTokens int64, inputUSDPerMillion, outputUSDPerMillion float64) float64 {
+	promptCost := (float64(promptTokens) / 1_000_000.0) * inputUSDPerMillion
+	completionCost := (float64(completionTokens) / 1_000_000.0) * outputUSDPerMillion
+	return promptCost + completionCost
+}
+
+func llmUsageStatus(errText string) string {
+	if strings.TrimSpace(errText) == "" {
+		return "success"
+	}
+	return "error"
+}
+
+func llmTokenSource(src string) string {
+	src = strings.TrimSpace(strings.ToLower(src))
+	switch src {
+	case "provider", "estimated", "mixed":
+		return src
+	default:
+		return "estimated"
+	}
 }
 
 // requireProjectRole проверяет права доступа к проекту

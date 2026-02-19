@@ -76,6 +76,8 @@ func TestE2E_RegisterVerifyReset(t *testing.T) {
 		newStubGenQueueStore(),
 		newStubIndexCheckStore(),
 		newStubCheckHistoryStore(),
+		nil,
+		nil,
 		newStubEnqueuer(),
 	)
 	handler := server.Handler()
@@ -203,6 +205,8 @@ func TestE2E_RefreshLogoutChangeEmail(t *testing.T) {
 		newStubGenQueueStore(),
 		newStubIndexCheckStore(),
 		newStubCheckHistoryStore(),
+		nil,
+		nil,
 		newStubEnqueuer(),
 	)
 	handler := server.Handler()
