@@ -167,16 +167,14 @@ const getFlowToneClass = (status: AIFlowStatus) => {
 };
 
 const assetStatusLabel = (status: AIAssetGenerationResultDTO["status"]) => {
-  if (status === "ok") return "ok";
-  if (status === "broken") return "broken";
-  if (status === "missing") return "missing";
-  return "error";
+  if (status === "ok") return editorV3Ru.imagePanel.statusOk;
+  if (status === "broken" || status === "missing") return editorV3Ru.imagePanel.statusAttention;
+  return editorV3Ru.imagePanel.statusError;
 };
 
 const assetStatusClass = (status: AIAssetGenerationResultDTO["status"]) => {
   if (status === "ok") return "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300";
-  if (status === "broken") return "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-300";
-  if (status === "missing") return "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300";
+  if (status === "broken" || status === "missing") return "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300";
   return "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300";
 };
 
@@ -275,6 +273,7 @@ export default function DomainEditorPage() {
   const [aiImageModel, setAiImageModel] = useState("gemini-2.5-flash-image");
   const [aiImageFormat, setAiImageFormat] = useState<"webp" | "png">("webp");
   const [aiImageResult, setAiImageResult] = useState<AIAssetGenerationResultDTO | null>(null);
+  const [aiImageDiagnosticsOpen, setAiImageDiagnosticsOpen] = useState(false);
   const [overwriteConfirmed, setOverwriteConfirmed] = useState(false);
   const aiSuggestFlow = useAIFlowState();
   const aiCreateFlow = useAIFlowState();
@@ -309,11 +308,17 @@ export default function DomainEditorPage() {
       selection?.selectedPath &&
       selection.selectedPath !== aiOutputSourcePath
   );
+  const normalizedAiImageTargetPath = useMemo(() => {
+    const raw = aiImageTargetPath.trim();
+    if (!raw) return "";
+    if (/\.(webp|png)$/i.test(raw)) return raw;
+    return `${raw}.${aiImageFormat}`;
+  }, [aiImageFormat, aiImageTargetPath]);
   const suggestLockKey = `ai-suggest:${selection?.selectedPath || "__none__"}`;
   const suggestContextLockKey = "ai-context:suggest";
   const createLockKey = `ai-create-page:${aiCreatePath.trim() || "__empty__"}`;
   const createContextLockKey = "ai-context:create";
-  const imageGenerateLockKey = `ai-image-generate:${aiImageTargetPath.trim() || "__empty__"}`;
+  const imageGenerateLockKey = `ai-image-generate:${normalizedAiImageTargetPath || "__empty__"}`;
   const assetLockKey = (pathValue: string) => `ai-regenerate-asset:${pathValue}`;
   const suggestLocked = isLocked(suggestLockKey);
   const suggestContextLocked = isLocked(suggestContextLockKey);
@@ -1155,9 +1160,8 @@ export default function DomainEditorPage() {
   };
 
   const onGenerateImage = async () => {
-    const rawPath = aiImageTargetPath.trim();
     const rawPrompt = aiImagePrompt.trim();
-    if (!rawPath || !rawPrompt) {
+    if (!normalizedAiImageTargetPath || !rawPrompt) {
       showToast({
         type: "error",
         title: "Заполните поля генерации",
@@ -1174,7 +1178,6 @@ export default function DomainEditorPage() {
       return;
     }
 
-    const normalizedPath = /\.(webp|png)$/i.test(rawPath) ? rawPath : `${rawPath}.${aiImageFormat}`;
     const promptValue = aiImageAlt.trim() ? `${rawPrompt}\n\nAlt: ${aiImageAlt.trim()}` : rawPrompt;
     const mimeType = aiImageFormat === "png" ? "image/png" : "image/webp";
 
@@ -1182,12 +1185,14 @@ export default function DomainEditorPage() {
       imageGenerateLockKey,
       async () => {
         setAiImageResult(null);
-        aiAssetFlow.start(`Проверяем параметры: ${normalizedPath}`, "validating");
-        setAiCreateAssetBusyPath(normalizedPath);
+        setAiImageDiagnosticsOpen(false);
+        aiAssetFlow.start(`Проверяем параметры: ${normalizedAiImageTargetPath}`, "validating");
+        setAiCreateAssetBusyPath(normalizedAiImageTargetPath);
+        setAiImageTargetPath(normalizedAiImageTargetPath);
         try {
           aiAssetFlow.setStatus("sending", "Отправляем запрос на генерацию изображения");
           const result = await generateEditorAsset(domainId, {
-            path: normalizedPath,
+            path: normalizedAiImageTargetPath,
             prompt: promptValue,
             mime_type: mimeType,
             model: aiImageModel.trim() || undefined,
@@ -1202,31 +1207,31 @@ export default function DomainEditorPage() {
             showToast({
               type: "error",
               title: "Не удалось сгенерировать изображение",
-              message: result.error_message || `Статус: ${result.status}`,
+              message: t.imagePanel.friendlyError,
             });
             return;
           }
 
-          setAiCreateSkippedAssets((prev) => prev.filter((item) => item !== normalizedPath));
+          setAiCreateSkippedAssets((prev) => prev.filter((item) => item !== normalizedAiImageTargetPath));
           const refreshed = await loadFiles();
-          if (selection?.selectedPath === normalizedPath) {
-            const selected = refreshed.find((file) => file.path === normalizedPath);
+          if (selection?.selectedPath === normalizedAiImageTargetPath) {
+            const selected = refreshed.find((file) => file.path === normalizedAiImageTargetPath);
             if (selected) {
               await loadFile(selected);
             }
           }
-          aiAssetFlow.finish(`Изображение готово: ${normalizedPath}`, "done");
+          aiAssetFlow.finish(`Изображение готово: ${normalizedAiImageTargetPath}`, "done");
           showToast({
             type: "success",
             title: "Изображение сгенерировано",
-            message: normalizedPath,
+            message: normalizedAiImageTargetPath,
           });
         } catch (err: any) {
           aiAssetFlow.fail(err, "Не удалось сгенерировать изображение");
           showToast({
             type: "error",
             title: "Ошибка генерации изображения",
-            message: err?.message || "unknown error",
+            message: t.imagePanel.friendlyError,
           });
         } finally {
           setAiCreateAssetBusyPath("");
@@ -2100,10 +2105,10 @@ export default function DomainEditorPage() {
                     <button
                       type="button"
                       onClick={() => void onGenerateImage()}
-                      disabled={readOnly || imageGenerateLocked || Boolean(aiCreateAssetBusyPath) || !aiImageTargetPath.trim() || !aiImagePrompt.trim()}
+                      disabled={readOnly || imageGenerateLocked || Boolean(aiCreateAssetBusyPath) || !normalizedAiImageTargetPath || !aiImagePrompt.trim()}
                       className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
                     >
-                      <FiWind /> {imageGenerateLocked ? t.actions.generating : "Сгенерировать изображение"}
+                      <FiWind /> {imageGenerateLocked ? t.actions.generating : t.imagePanel.generate}
                     </button>
                     {imageGenerateLocked && (
                       <span className="text-[11px] text-slate-500 dark:text-slate-400">
@@ -2122,17 +2127,49 @@ export default function DomainEditorPage() {
                           size: {typeof aiImageResult.size_bytes === "number" ? `${aiImageResult.size_bytes} bytes` : "—"}
                         </span>
                       </div>
-                      {aiImageResult.warnings.length > 0 && (
-                        <div className="mt-1 text-amber-700 dark:text-amber-300">
-                          Предупреждения: {aiImageResult.warnings.join(" | ")}
+                      {aiImageResult.status !== "ok" && (
+                        <div className="mt-2 rounded border border-rose-200 bg-rose-50 px-2 py-1.5 text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-300">
+                          {t.imagePanel.friendlyError}
                         </div>
                       )}
-                      {aiImageResult.error_code || aiImageResult.error_message ? (
-                        <div className="mt-1 text-rose-700 dark:text-rose-300">
-                          {aiImageResult.error_code ? `${aiImageResult.error_code}: ` : ""}
-                          {aiImageResult.error_message || "Ошибка генерации"}
+                      {aiImageResult.status !== "ok" && (
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void onGenerateImage()}
+                            disabled={readOnly || imageGenerateLocked || Boolean(aiCreateAssetBusyPath)}
+                            className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                          >
+                            {t.imagePanel.retry}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onAssetUploadPick(normalizedAiImageTargetPath)}
+                            disabled={readOnly || !normalizedAiImageTargetPath}
+                            className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                          >
+                            {t.imagePanel.uploadManual}
+                          </button>
                         </div>
-                      ) : null}
+                      )}
+                      <details
+                        open={aiImageDiagnosticsOpen}
+                        onToggle={(event) => setAiImageDiagnosticsOpen((event.currentTarget as HTMLDetailsElement).open)}
+                        className="mt-2 rounded border border-slate-200 bg-slate-50 px-2 py-1.5 dark:border-slate-700 dark:bg-slate-800/60"
+                      >
+                        <summary className="cursor-pointer font-semibold text-slate-700 dark:text-slate-200">
+                          {t.imagePanel.diagnostics}
+                        </summary>
+                        <div className="mt-1 space-y-1 text-slate-600 dark:text-slate-300">
+                          <div>error_code: {aiImageResult.error_code || "—"}</div>
+                          <div>error_message: {aiImageResult.error_message || "—"}</div>
+                          <div>{t.imagePanel.warningsCount}: {aiImageResult.warnings.length}</div>
+                          {aiImageResult.warnings.length > 0 ? (
+                            <div className="text-amber-700 dark:text-amber-300">{aiImageResult.warnings.join(" | ")}</div>
+                          ) : null}
+                          <div>token_usage: {aiImageResult.token_usage ? JSON.stringify(aiImageResult.token_usage) : t.imagePanel.diagnosticsEmpty}</div>
+                        </div>
+                      </details>
                     </div>
                   )}
                 </div>

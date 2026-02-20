@@ -75,4 +75,16 @@ export const editorV3Ru = {
     regenerateAsset: "Перегенерирует изображение для выбранного ассета по prompt.",
     overwriteAction: "Перезапишет существующий файл при применении.",
   },
+  imagePanel: {
+    generate: "Сгенерировать изображение",
+    retry: "Повторить",
+    uploadManual: "Загрузить вручную",
+    friendlyError: "Не удалось сгенерировать изображение. Проверьте промпт или попробуйте другую модель.",
+    statusOk: "Успешно",
+    statusAttention: "Требует внимания",
+    statusError: "Ошибка",
+    diagnostics: "Диагностика",
+    diagnosticsEmpty: "Диагностические данные отсутствуют.",
+    warningsCount: "Количество предупреждений",
+  },
 } as const;
