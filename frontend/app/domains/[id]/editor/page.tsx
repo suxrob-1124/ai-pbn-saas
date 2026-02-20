@@ -48,6 +48,7 @@ import {
 import { showToast } from "../../../../lib/toastStore";
 import { useAuthGuard } from "../../../../lib/useAuth";
 import type { EditorDirtyState, EditorFileMeta, EditorSelectionState } from "../../../../types/editor";
+import { EditorContextProvider } from "../../../../features/editor-v3/context/EditorContext";
 import { useEditorState } from "../../../../features/editor-v3/hooks/useEditorState";
 import { AI_CONTEXT_MODE_OPTIONS, EDITOR_MODEL_OPTIONS } from "../../../../features/editor-v3/services/constants";
 import type { AIContextMode } from "../../../../features/editor-v3/types/ai";
@@ -165,6 +166,8 @@ export default function DomainEditorPage() {
   const requestedLineRaw = searchParams.get("line") || "";
   const requestedLine = Number.parseInt(requestedLineRaw, 10);
 
+  const editorState = useEditorState(Number.isFinite(requestedLine) && requestedLine > 0 ? requestedLine : undefined);
+
   const {
     summary,
     setSummary,
@@ -198,7 +201,7 @@ export default function DomainEditorPage() {
     setStylePreview,
     scriptPreview,
     setScriptPreview,
-  } = useEditorState(Number.isFinite(requestedLine) && requestedLine > 0 ? requestedLine : undefined);
+  } = editorState;
   const [aiStudioTab, setAiStudioTab] = useState<"edit" | "create">("edit");
   const [aiInstruction, setAiInstruction] = useState("");
   const [aiOutput, setAiOutput] = useState("");
@@ -1343,7 +1346,8 @@ export default function DomainEditorPage() {
   }
 
   return (
-    <div className="space-y-4">
+    <EditorContextProvider value={editorState}>
+      <div className="space-y-4">
       <div className="rounded-xl border border-slate-200 bg-white/80 p-4 shadow dark:border-slate-800 dark:bg-slate-900/60">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
@@ -2260,6 +2264,7 @@ export default function DomainEditorPage() {
         onOverwrite={() => void onConflictOverwrite()}
         onCancel={() => setConflictState(null)}
       />
-    </div>
+      </div>
+    </EditorContextProvider>
   );
 }
