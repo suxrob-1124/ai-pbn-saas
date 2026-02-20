@@ -7,11 +7,12 @@ const pagePath = path.join(root, "app", "domains", "[id]", "editor", "page.tsx")
 
 assert.ok(existsSync(pagePath), "missing /domains/[id]/editor page");
 const page = readFileSync(pagePath, "utf8");
+const hasAny = (candidates: string[]) => candidates.some((value) => page.includes(value));
 
-assert.ok(page.includes("Проверьте план применения"), "missing pre-apply summary confirmation");
-assert.ok(page.includes("Подтвердите перезапись"), "missing second overwrite confirmation");
-assert.ok(page.includes("[OVERWRITE]"), "missing overwrite details in summary");
+assert.ok(hasAny(["Проверьте план применения", "t.applySafety.summaryTitle"]), "missing pre-apply summary confirmation");
+assert.ok(hasAny(["Подтверждаю перезапись существующих файлов", "t.applySafety.overwriteConfirmLabel"]), "missing explicit overwrite confirmation guard");
+assert.ok(hasAny(["перезапись изменит существующие файлы", "ПЕРЕЗАПИСАТЬ"]), "missing overwrite risk details in summary");
+assert.ok(hasAny(["Проблемы ассетов перед применением", "applyBlockedByAssetIssues"]), "missing asset validation safety block");
 assert.ok(page.includes("Часть create-применений пропущена"), "missing explicit warning for skipped create");
 
 console.log("OK");
-

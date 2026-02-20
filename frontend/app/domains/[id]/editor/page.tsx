@@ -48,6 +48,7 @@ import { useActionLocks } from "../../../../features/editor-v3/hooks/useActionLo
 import { useAIFlowState } from "../../../../features/editor-v3/hooks/useAIFlowState";
 import { useFileActions } from "../../../../features/editor-v3/hooks/useFileActions";
 import { useEditorState } from "../../../../features/editor-v3/hooks/useEditorState";
+import { validateEditorAssets } from "../../../../features/editor-v3/services/assetValidation";
 import { editorV3Ru } from "../../../../features/editor-v3/services/i18n-ru";
 import { AI_CONTEXT_MODE_OPTIONS, EDITOR_IMAGE_MODEL_OPTIONS, EDITOR_MODEL_OPTIONS } from "../../../../features/editor-v3/services/constants";
 import type { AIAssetGenerationResultDTO, AIContextMode, AIFlowStatus } from "../../../../features/editor-v3/types/ai";
@@ -398,15 +399,36 @@ export default function DomainEditorPage() {
         .map((asset) => asset.path),
     [aiCreateAssets, aiCreateSkippedAssets, existingFilesMap]
   );
+  const assetValidationIssues = useMemo(
+    () =>
+      validateEditorAssets({
+        manifestAssets: aiCreateAssets,
+        existingFilesMap,
+        missingPaths: aiCreateMissingAssets,
+        skippedPaths: aiCreateSkippedAssets,
+      }),
+    [aiCreateAssets, aiCreateMissingAssets, aiCreateSkippedAssets, existingFilesMap]
+  );
+  const invalidMimeAssets = useMemo(
+    () =>
+      Array.from(
+        new Set(assetValidationIssues.filter((issue) => issue.type === "invalid_mime").map((issue) => issue.path))
+      ),
+    [assetValidationIssues]
+  );
   const unresolvedAssetIssues = useMemo(() => {
-    const merged = new Set<string>([...unresolvedMissingAssets, ...unresolvedBrokenAssets]);
+    const merged = new Set<string>([
+      ...unresolvedMissingAssets,
+      ...unresolvedBrokenAssets,
+      ...assetValidationIssues.filter((issue) => issue.type === "invalid_mime").map((issue) => issue.path),
+    ]);
     return Array.from(merged).sort();
-  }, [unresolvedBrokenAssets, unresolvedMissingAssets]);
+  }, [assetValidationIssues, unresolvedBrokenAssets, unresolvedMissingAssets]);
   const unresolvedNonManifestAssets = useMemo(
     () => unresolvedMissingAssets.filter((pathValue) => !aiCreateAssetPathSet.has(pathValue)),
     [aiCreateAssetPathSet, unresolvedMissingAssets]
   );
-  const applyBlockedByAssetIssues = unresolvedAssetIssues.length > 0;
+  const applyBlockedByAssetIssues = assetValidationIssues.length > 0;
   const applyNeedsOverwriteConfirm = aiCreatePlanSummary.overwrite > 0 && !overwriteConfirmed;
   const canApplyCreatePlan =
     aiCreateFiles.length > 0 && !createLocked && !aiCreateBusy && !applyBlockedByAssetIssues && !applyNeedsOverwriteConfirm;
@@ -2121,6 +2143,62 @@ export default function DomainEditorPage() {
                     {unresolvedAssetIssues.length > 8 ? ` (+${unresolvedAssetIssues.length - 8})` : ""}
                   </div>
                 )}
+                {assetValidationIssues.length > 0 && (
+                  <div className="rounded-lg border border-red-200 bg-red-50/70 p-2 text-xs dark:border-red-900 dark:bg-red-950/20">
+                    <div className="mb-1 font-semibold text-red-700 dark:text-red-300">
+                      Проблемы ассетов перед применением
+                    </div>
+                    <div className="space-y-1">
+                      {assetValidationIssues.map((issue) => {
+                        const manifestAsset = aiCreateAssets.find((asset) => asset.path === issue.path);
+                        const skipped = aiCreateSkippedAssets.includes(issue.path);
+                        return (
+                          <div
+                            key={`asset-issue-${issue.path}-${issue.type}`}
+                            className="flex flex-wrap items-center justify-between gap-2 rounded border border-red-200 bg-white/80 px-2 py-1 dark:border-red-900 dark:bg-slate-900/50"
+                          >
+                            <div className="min-w-0">
+                              <div className="truncate font-mono text-[11px] text-red-800 dark:text-red-300">{issue.path}</div>
+                              <div className="text-[11px] text-red-700/90 dark:text-red-300/90">
+                                {issue.type}: {issue.message}
+                                {issue.expectedMimeType || issue.actualMimeType
+                                  ? ` (expected: ${issue.expectedMimeType || "—"}, actual: ${issue.actualMimeType || "—"})`
+                                  : ""}
+                              </div>
+                            </div>
+                            <div className="flex flex-wrap gap-1">
+                              <button
+                                type="button"
+                                onClick={() => onAssetUploadPick(issue.path)}
+                                disabled={readOnly}
+                                className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                              >
+                                Загрузить вручную
+                              </button>
+                              {manifestAsset?.prompt ? (
+                                <button
+                                  type="button"
+                                  onClick={() => void onRegenerateAsset(issue.path)}
+                                  disabled={Boolean(aiCreateAssetBusyPath) || isLocked(assetLockKey(issue.path))}
+                                  className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                                >
+                                  Повторить генерацию
+                                </button>
+                              ) : null}
+                              <button
+                                type="button"
+                                onClick={() => onToggleSkipAsset(issue.path)}
+                                className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                              >
+                                {skipped ? "Вернуть ассет" : "Пропустить ассет"}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
 
                 {aiCreateAssets.length > 0 && (
                   <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-2 text-xs dark:border-slate-700 dark:bg-slate-800/50">
@@ -2143,9 +2221,12 @@ export default function DomainEditorPage() {
                           {aiCreateAssets.map((asset) => {
                             const broken = unresolvedBrokenAssets.includes(asset.path);
                             const unresolved = unresolvedMissingAssets.includes(asset.path);
+                            const invalidMime = invalidMimeAssets.includes(asset.path);
                             const skipped = aiCreateSkippedAssets.includes(asset.path);
                             const status = skipped
                               ? "пропущен"
+                              : invalidMime
+                                ? "mime mismatch"
                               : broken
                                 ? "битый"
                                 : unresolved
@@ -2164,6 +2245,8 @@ export default function DomainEditorPage() {
                                     className={`rounded px-1.5 py-0.5 text-[11px] ${
                                       skipped
                                         ? "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
+                                        : invalidMime
+                                          ? "bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300"
                                         : broken
                                           ? "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-300"
                                           : unresolved
