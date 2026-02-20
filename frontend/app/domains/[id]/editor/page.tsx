@@ -48,6 +48,7 @@ import {
 import { showToast } from "../../../../lib/toastStore";
 import { useAuthGuard } from "../../../../lib/useAuth";
 import type { EditorDirtyState, EditorFileMeta, EditorSelectionState } from "../../../../types/editor";
+import { useEditorState } from "../../../../features/editor-v3/hooks/useEditorState";
 import { AI_CONTEXT_MODE_OPTIONS, EDITOR_MODEL_OPTIONS } from "../../../../features/editor-v3/services/constants";
 import type { AIContextMode } from "../../../../features/editor-v3/types/ai";
 import type { DomainSummaryResponse } from "../../../../features/editor-v3/types/editor";
@@ -164,28 +165,40 @@ export default function DomainEditorPage() {
   const requestedLineRaw = searchParams.get("line") || "";
   const requestedLine = Number.parseInt(requestedLineRaw, 10);
 
-  const [summary, setSummary] = useState<DomainSummaryResponse | null>(null);
-  const [files, setFiles] = useState<EditorFileMeta[]>([]);
-  const [deletedFiles, setDeletedFiles] = useState<EditorFileMeta[]>([]);
-  const [selection, setSelection] = useState<EditorSelectionState | null>(null);
-  const [dirtyState, setDirtyState] = useState<EditorDirtyState>({
-    isDirty: false,
-    originalContent: "",
-    currentContent: "",
-  });
-  const [description, setDescription] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [fileLoading, setFileLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [focusLine, setFocusLine] = useState<number | undefined>(
-    Number.isFinite(requestedLine) && requestedLine > 0 ? requestedLine : undefined
-  );
-  const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
-  const [previewMode, setPreviewMode] = useState<"code" | "preview">("code");
-  const [previewSource, setPreviewSource] = useState<"buffer" | "published">("buffer");
-  const [stylePreview, setStylePreview] = useState("");
-  const [scriptPreview, setScriptPreview] = useState("");
+  const {
+    summary,
+    setSummary,
+    files,
+    setFiles,
+    deletedFiles,
+    setDeletedFiles,
+    selection,
+    setSelection,
+    dirtyState,
+    setDirtyState,
+    description,
+    setDescription,
+    loading,
+    setLoading,
+    fileLoading,
+    setFileLoading,
+    saving,
+    setSaving,
+    error,
+    setError,
+    focusLine,
+    setFocusLine,
+    historyRefreshKey,
+    setHistoryRefreshKey,
+    previewMode,
+    setPreviewMode,
+    previewSource,
+    setPreviewSource,
+    stylePreview,
+    setStylePreview,
+    scriptPreview,
+    setScriptPreview,
+  } = useEditorState(Number.isFinite(requestedLine) && requestedLine > 0 ? requestedLine : undefined);
   const [aiStudioTab, setAiStudioTab] = useState<"edit" | "create">("edit");
   const [aiInstruction, setAiInstruction] = useState("");
   const [aiOutput, setAiOutput] = useState("");
