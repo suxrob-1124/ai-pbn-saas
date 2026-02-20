@@ -27,9 +27,9 @@ import {
   SaveConflictError,
   type AIPageApplyAction,
   type AIEditorSuggestionDTO,
-  aiRegenerateAsset,
   type AIPageSuggestionDTO,
   aiCreatePage,
+  generateEditorAsset,
   aiSuggestFile,
   type ContextPackMetaDTO,
   createFileOrDir,
@@ -1053,7 +1053,7 @@ export default function DomainEditorPage() {
         setAiCreateAssetBusyPath(pathValue);
         try {
           aiAssetFlow.setStatus("sending", "Отправляем запрос на генерацию изображения");
-          const result = await aiRegenerateAsset(domainId, {
+          const result = await generateEditorAsset(domainId, {
             path: asset.path,
             prompt: promptValue,
             mime_type: asset.mime_type || undefined,
@@ -1061,6 +1061,9 @@ export default function DomainEditorPage() {
             context_mode: aiCreateContextMode,
             context_files: selectedContextFiles(aiCreateContextMode, aiCreateContextSelectedFiles),
           });
+          if (result.status !== "ok") {
+            throw new Error(result.error_message || `asset generation status: ${result.status}`);
+          }
           aiAssetFlow.setStatus("parsing", "Проверяем полученный ассет");
           setAiCreateSkippedAssets((prev) => prev.filter((item) => item !== pathValue));
           const refreshed = await loadFiles();

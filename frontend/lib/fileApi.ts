@@ -1,4 +1,5 @@
 import { apiBase, authFetch, refreshTokens } from "./http";
+import type { AIAssetGenerationResultDTO, AIAssetGenerationStatus } from "../features/editor-v3/types/ai";
 
 export type FileListItem = {
   id: string;
@@ -138,6 +139,17 @@ export type AIRegeneratedAssetDTO = {
   prompt_trace?: Record<string, any>;
   token_usage?: TokenUsageDTO;
   context_pack_meta?: ContextPackMetaDTO;
+};
+
+type AIAssetGenerationRawDTO = {
+  status?: string;
+  file?: FileListItem;
+  mime_type?: string;
+  size_bytes?: number;
+  warnings?: string[];
+  error_code?: string;
+  error_message?: string;
+  token_usage?: AIAssetGenerationResultDTO["token_usage"];
 };
 
 export type AIPageApplyAction = "create" | "overwrite" | "skip";
@@ -391,6 +403,43 @@ export async function aiRegenerateAsset(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
+}
+
+const normalizeAssetGenerationStatus = (value?: string): AIAssetGenerationStatus => {
+  const normalized = (value || "").trim().toLowerCase();
+  if (normalized === "ok" || normalized === "success" || normalized === "generated") return "ok";
+  if (normalized === "broken") return "broken";
+  if (normalized === "missing") return "missing";
+  return "error";
+};
+
+export async function generateEditorAsset(
+  domainId: string,
+  payload: {
+    path: string;
+    prompt?: string;
+    instruction?: string;
+    mime_type?: string;
+    model?: string;
+    context_mode?: "auto" | "manual" | "hybrid";
+    context_files?: string[];
+  }
+): Promise<AIAssetGenerationResultDTO> {
+  const raw = await authFetch<AIAssetGenerationRawDTO>(`/api/domains/${encodeDomainId(domainId)}/editor/ai-regenerate-asset`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  return {
+    status: normalizeAssetGenerationStatus(raw.status),
+    mime_type: raw.mime_type || raw.file?.mimeType,
+    size_bytes: typeof raw.size_bytes === "number" ? raw.size_bytes : raw.file?.size,
+    warnings: Array.isArray(raw.warnings) ? raw.warnings : [],
+    error_code: raw.error_code,
+    error_message: raw.error_message,
+    token_usage: raw.token_usage,
+  };
 }
 
 export async function getEditorContextPack(
