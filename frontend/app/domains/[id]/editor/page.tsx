@@ -254,6 +254,7 @@ export default function DomainEditorPage() {
   const [aiCreateDiagnosticsOpen, setAiCreateDiagnosticsOpen] = useState(false);
   const [aiCreateContextBusy, setAiCreateContextBusy] = useState(false);
   const [aiCreateContextDebug, setAiCreateContextDebug] = useState("");
+  const [overwriteConfirmed, setOverwriteConfirmed] = useState(false);
   const aiSuggestFlow = useAIFlowState();
   const aiCreateFlow = useAIFlowState();
   const aiAssetFlow = useAIFlowState();
@@ -315,6 +316,23 @@ export default function DomainEditorPage() {
     () => aiCreateFiles.find((item) => item.path === aiCreatePreviewPath) || null,
     [aiCreateFiles, aiCreatePreviewPath]
   );
+  const aiCreatePlanSummary = useMemo(() => {
+    let create = 0;
+    let overwrite = 0;
+    let skip = 0;
+    for (const file of aiCreateFiles) {
+      const exists = existingFilesMap.has(file.path);
+      const action = aiCreateApplyPlan[file.path] || (exists ? "skip" : "create");
+      if (action === "create") {
+        create += 1;
+      } else if (action === "overwrite" && exists) {
+        overwrite += 1;
+      } else {
+        skip += 1;
+      }
+    }
+    return { create, overwrite, skip };
+  }, [aiCreateApplyPlan, aiCreateFiles, existingFilesMap]);
   const aiCreateAssetPathSet = useMemo(() => new Set(aiCreateAssets.map((item) => item.path)), [aiCreateAssets]);
   const aiCreateFilePathSet = useMemo(() => new Set(aiCreateFiles.map((item) => item.path)), [aiCreateFiles]);
   const aiCreateMissingAssets = useMemo(() => {
@@ -366,6 +384,10 @@ export default function DomainEditorPage() {
     () => unresolvedMissingAssets.filter((pathValue) => !aiCreateAssetPathSet.has(pathValue)),
     [aiCreateAssetPathSet, unresolvedMissingAssets]
   );
+  const applyBlockedByAssetIssues = unresolvedAssetIssues.length > 0;
+  const applyNeedsOverwriteConfirm = aiCreatePlanSummary.overwrite > 0 && !overwriteConfirmed;
+  const canApplyCreatePlan =
+    aiCreateFiles.length > 0 && !createLocked && !aiCreateBusy && !applyBlockedByAssetIssues && !applyNeedsOverwriteConfirm;
 
   useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => {
@@ -380,6 +402,10 @@ export default function DomainEditorPage() {
   useEffect(() => {
     setAiCreateSkippedAssets((prev) => prev.filter((pathValue) => aiCreateMissingAssets.includes(pathValue)));
   }, [aiCreateMissingAssets]);
+
+  useEffect(() => {
+    setOverwriteConfirmed(false);
+  }, [aiCreateApplyPlan, aiCreateFiles]);
 
   const updatePathQuery = (pathValue: string) => {
     const query = new URLSearchParams(searchParams.toString());
@@ -875,6 +901,7 @@ export default function DomainEditorPage() {
             defaultPlan[file.path] = existingFilesMap.has(file.path) ? "skip" : "create";
           }
           setAiCreateApplyPlan(defaultPlan);
+          setOverwriteConfirmed(false);
           const existingMap: Record<string, string> = {};
           const existingPaths = generatedFiles.filter((item) => existingFilesMap.has(item.path)).map((item) => item.path);
           await Promise.all(
@@ -925,6 +952,7 @@ export default function DomainEditorPage() {
 
   const onSetCreatePlan = (pathValue: string, action: AIPageApplyAction) => {
     setAiCreateApplyPlan((prev) => ({ ...prev, [pathValue]: action }));
+    setOverwriteConfirmed(false);
   };
 
   const onToggleSkipAsset = (pathValue: string) => {
@@ -1082,6 +1110,24 @@ export default function DomainEditorPage() {
   const onApplyCreatedFiles = async () => {
     if (aiCreateFiles.length === 0) return;
     aiCreateFlow.setStatus("applying", "Применяем выбранный план к файлам");
+    if (applyBlockedByAssetIssues) {
+      aiCreateFlow.fail("unresolved asset issues", t.applySafety.blockedByAssets);
+      showToast({
+        type: "error",
+        title: "Нужно решить проблемы с ассетами",
+        message: t.applySafety.blockedByAssets,
+      });
+      return;
+    }
+    if (applyNeedsOverwriteConfirm) {
+      aiCreateFlow.fail("overwrite not confirmed", t.applySafety.overwriteRequiredHint);
+      showToast({
+        type: "error",
+        title: "Подтвердите перезапись",
+        message: t.applySafety.overwriteRequiredHint,
+      });
+      return;
+    }
     const planned = aiCreateFiles
       .map((file) => ({
         file,
@@ -1093,15 +1139,9 @@ export default function DomainEditorPage() {
       showToast({
         type: "error",
         title: "Нет действий для применения",
-        message: "Выберите create или overwrite хотя бы для одного файла.",
+        message: "Выберите «создать» или «перезаписать» хотя бы для одного файла.",
       });
       return;
-    }
-    if (unresolvedAssetIssues.length > 0) {
-      const allowWithMissing = window.confirm(
-        `Обнаружены нерешённые ассеты (${unresolvedAssetIssues.length}):\n${unresolvedAssetIssues.slice(0, 6).join("\n")}\n\nПрименить изменения всё равно?`
-      );
-      if (!allowWithMissing) return;
     }
     const overwriteCount = actionable.filter((item) => item.action === "overwrite").length;
     const createCount = actionable.length - overwriteCount;
@@ -1112,21 +1152,18 @@ export default function DomainEditorPage() {
       `Создать: ${createCount}`,
       `Перезаписать: ${overwriteCount}`,
       `Пропустить: ${skipCount}`,
-      createFiles.length ? `\n[CREATE]\n${createFiles.slice(0, 8).join("\n")}${createFiles.length > 8 ? `\n... +${createFiles.length - 8}` : ""}` : "",
-      overwriteFiles.length ? `\n[OVERWRITE]\n${overwriteFiles.slice(0, 8).join("\n")}${overwriteFiles.length > 8 ? `\n... +${overwriteFiles.length - 8}` : ""}` : "",
+      overwriteCount > 0 ? "\nВнимание: перезапись изменит существующие файлы." : "",
+      createFiles.length
+        ? `\n[СОЗДАТЬ]\n${createFiles.slice(0, 8).join("\n")}${createFiles.length > 8 ? `\n... +${createFiles.length - 8}` : ""}`
+        : "",
+      overwriteFiles.length
+        ? `\n[ПЕРЕЗАПИСАТЬ]\n${overwriteFiles.slice(0, 8).join("\n")}${overwriteFiles.length > 8 ? `\n... +${overwriteFiles.length - 8}` : ""}`
+        : "",
     ]
       .filter(Boolean)
       .join("\n");
-    const confirmed = window.confirm(
-      `Проверьте план применения:\n\n${summaryLines}\n\nПродолжить?`
-    );
+    const confirmed = window.confirm(`${t.applySafety.summaryTitle}\n\n${summaryLines}\n\n${t.applySafety.continueQuestion}`);
     if (!confirmed) return;
-    if (overwriteCount > 0) {
-      const overwriteConfirmed = window.confirm(
-        `Подтвердите перезапись ${overwriteCount} файлов.\nЭто изменит существующие файлы без возможности авто-отката.`
-      );
-      if (!overwriteConfirmed) return;
-    }
     let applied = 0;
     let skipped = 0;
     const skippedExisting: string[] = [];
@@ -1819,7 +1856,7 @@ export default function DomainEditorPage() {
                   <button
                     type="button"
                     onClick={onApplyCreatedFiles}
-                    disabled={aiCreateFiles.length === 0 || createLocked || aiCreateBusy}
+                    disabled={!canApplyCreatePlan}
                     title={t.tooltips.applySelectedDanger}
                     className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   >
@@ -1837,6 +1874,21 @@ export default function DomainEditorPage() {
                 {(createLocked || createContextLocked) && (
                   <div className="text-[11px] text-slate-500 dark:text-slate-400">
                     {createLocked ? lockReason(createLockKey) || t.actions.generating : lockReason(createContextLockKey)}
+                  </div>
+                )}
+                {aiCreatePlanSummary.overwrite > 0 && (
+                  <label className="inline-flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-[11px] text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">
+                    <input
+                      type="checkbox"
+                      checked={overwriteConfirmed}
+                      onChange={(event) => setOverwriteConfirmed(event.currentTarget.checked)}
+                    />
+                    {t.applySafety.overwriteConfirmLabel}
+                  </label>
+                )}
+                {(applyBlockedByAssetIssues || applyNeedsOverwriteConfirm) && (
+                  <div className="text-[11px] text-amber-700 dark:text-amber-300">
+                    {applyBlockedByAssetIssues ? t.applySafety.blockedByAssets : t.applySafety.overwriteRequiredHint}
                   </div>
                 )}
                 {aiCreateFlow.flow.status !== "idle" && (
@@ -2032,6 +2084,7 @@ export default function DomainEditorPage() {
                         <tbody>
                           {aiCreateFiles.map((file) => {
                             const exists = existingFilesMap.has(file.path);
+                            const selectedAction = aiCreateApplyPlan[file.path] || (exists ? "skip" : "create");
                             return (
                               <tr key={`plan-${file.path}`} className="border-t border-slate-200 dark:border-slate-700">
                                 <td className="px-2 py-2">
@@ -2047,21 +2100,25 @@ export default function DomainEditorPage() {
                                   <div className="text-[11px] text-slate-500 dark:text-slate-400">{file.mime_type}</div>
                                 </td>
                                 <td className="px-2 py-2">
-                                  {exists ? (
+                                  {exists && selectedAction === "overwrite" ? (
+                                    <span className="rounded bg-rose-100 px-1.5 py-0.5 text-[11px] text-rose-800 dark:bg-rose-900/40 dark:text-rose-300">
+                                      {t.applySafety.overwriteBadge}
+                                    </span>
+                                  ) : exists ? (
                                     <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
-                                      уже существует
+                                      {t.applySafety.existingBadge}
                                     </span>
                                   ) : (
                                     <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[11px] text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">
-                                      новый
+                                      {t.applySafety.newBadge}
                                     </span>
                                   )}
                                 </td>
                                 <td className="px-2 py-2">
                                   <select
-                                    value={aiCreateApplyPlan[file.path] || (exists ? "skip" : "create")}
+                                    value={selectedAction}
                                     onChange={(e) => onSetCreatePlan(file.path, e.target.value as AIPageApplyAction)}
-                                    title={(aiCreateApplyPlan[file.path] || (exists ? "skip" : "create")) === "overwrite" ? t.tooltips.overwriteAction : undefined}
+                                    title={selectedAction === "overwrite" ? t.tooltips.overwriteAction : undefined}
                                     className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs dark:border-slate-700 dark:bg-slate-800"
                                   >
                                     <option value="create">{t.applyPlan.create}</option>

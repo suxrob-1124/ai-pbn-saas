@@ -36,6 +36,16 @@ export const editorV3Ru = {
     overwrite: "перезаписать",
     skip: "пропустить",
   },
+  applySafety: {
+    summaryTitle: "Проверьте план применения:",
+    continueQuestion: "Продолжить?",
+    overwriteConfirmLabel: "Подтверждаю перезапись существующих файлов",
+    overwriteRequiredHint: "Для применения выберите подтверждение перезаписи.",
+    blockedByAssets: "Сначала решите проблемы с ассетами или пометьте их как пропущенные.",
+    existingBadge: "существует",
+    overwriteBadge: "будет перезаписан",
+    newBadge: "новый",
+  },
   flowTitles: {
     suggest: "AI-правка",
     createPage: "AI-генерация страницы",
