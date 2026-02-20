@@ -44,6 +44,7 @@ import { showToast } from "../../../../lib/toastStore";
 import { useAuthGuard } from "../../../../lib/useAuth";
 import type { EditorDirtyState, EditorFileMeta, EditorSelectionState } from "../../../../types/editor";
 import { EditorContextProvider } from "../../../../features/editor-v3/context/EditorContext";
+import { useActionLocks } from "../../../../features/editor-v3/hooks/useActionLocks";
 import { useFileActions } from "../../../../features/editor-v3/hooks/useFileActions";
 import { useEditorState } from "../../../../features/editor-v3/hooks/useEditorState";
 import { AI_CONTEXT_MODE_OPTIONS, EDITOR_MODEL_OPTIONS } from "../../../../features/editor-v3/services/constants";
@@ -262,12 +263,22 @@ export default function DomainEditorPage() {
     !binaryPreview &&
     dirtyState.isDirty &&
     !saving;
+  const { isLocked, runLocked, lockReason } = useActionLocks();
   const aiApplyPathMismatch = Boolean(
     aiOutput &&
       aiOutputSourcePath &&
       selection?.selectedPath &&
       selection.selectedPath !== aiOutputSourcePath
   );
+  const suggestLockKey = `ai-suggest:${selection?.selectedPath || "__none__"}`;
+  const suggestContextLockKey = "ai-context:suggest";
+  const createLockKey = `ai-create-page:${aiCreatePath.trim() || "__empty__"}`;
+  const createContextLockKey = "ai-context:create";
+  const assetLockKey = (pathValue: string) => `ai-regenerate-asset:${pathValue}`;
+  const suggestLocked = isLocked(suggestLockKey);
+  const suggestContextLocked = isLocked(suggestContextLockKey);
+  const createLocked = isLocked(createLockKey);
+  const createContextLocked = isLocked(createContextLockKey);
   const selectableContextFiles = useMemo(
     () =>
       files
@@ -647,27 +658,33 @@ export default function DomainEditorPage() {
 
   const onAISuggestContextPreview = async () => {
     if (!selection?.selectedPath) return;
-    setAiSuggestContextBusy(true);
-    try {
-      const payload = {
-        target_path: selection.selectedPath,
-        context_mode: aiContextMode,
-        context_files: selectedContextFiles(aiContextMode, aiContextSelectedFiles),
-      } as const;
-      const debug = await getEditorContextPack(domainId, payload);
-      setAiSuggestContextDebug(debug.site_context || "");
-      setAiSuggestMeta((prev) => ({
-        source: prev?.source,
-        warnings: prev?.warnings || [],
-        tokenUsage: prev?.tokenUsage,
-        contextPack: debug.context_pack_meta,
-      }));
-      setAiSuggestDiagnosticsOpen(true);
-    } catch (err: any) {
-      showToast({ type: "error", title: "Не удалось собрать контекст", message: err?.message || "unknown error" });
-    } finally {
-      setAiSuggestContextBusy(false);
-    }
+    await runLocked(
+      suggestContextLockKey,
+      async () => {
+        setAiSuggestContextBusy(true);
+        try {
+          const payload = {
+            target_path: selection.selectedPath,
+            context_mode: aiContextMode,
+            context_files: selectedContextFiles(aiContextMode, aiContextSelectedFiles),
+          } as const;
+          const debug = await getEditorContextPack(domainId, payload);
+          setAiSuggestContextDebug(debug.site_context || "");
+          setAiSuggestMeta((prev) => ({
+            source: prev?.source,
+            warnings: prev?.warnings || [],
+            tokenUsage: prev?.tokenUsage,
+            contextPack: debug.context_pack_meta,
+          }));
+          setAiSuggestDiagnosticsOpen(true);
+        } catch (err: any) {
+          showToast({ type: "error", title: "Не удалось собрать контекст", message: err?.message || "unknown error" });
+        } finally {
+          setAiSuggestContextBusy(false);
+        }
+      },
+      "Сбор контекста"
+    );
   };
 
   const onAISuggest = async () => {
@@ -680,41 +697,47 @@ export default function DomainEditorPage() {
       });
       return;
     }
-    setAiBusy(true);
-    setAiSuggestMeta(null);
-    setAiSuggestContextDebug("");
-    setAiOutputSourcePath(selection.selectedPath);
-    try {
-      const result: AIEditorSuggestionDTO = await aiSuggestFile(domainId, selection.selectedPath, {
-        instruction: aiInstruction.trim(),
-        model: aiModel.trim() || undefined,
-        context_mode: aiContextMode,
-        context_files: selectedContextFiles(aiContextMode, aiContextSelectedFiles),
-      });
-      setAiOutput(result.suggested_content || "");
-      setAiSuggestView("diff");
-      const promptSource =
-        typeof result.prompt_trace?.resolved_source === "string" ? result.prompt_trace.resolved_source : undefined;
-      setAiSuggestMeta({
-        source: promptSource,
-        warnings: Array.isArray(result.warnings) ? result.warnings : [],
-        tokenUsage: result.token_usage,
-        contextPack: result.context_pack_meta,
-      });
-      if ((result.suggested_content || "") === dirtyState.currentContent) {
-        showToast({
-          type: "success",
-          title: "Предложение без изменений",
-          message: "AI не предложил отличий для текущего файла.",
-        });
-      } else {
-        showToast({ type: "success", title: "AI-предложение готово", message: selection.selectedPath });
-      }
-    } catch (err: any) {
-      showToast({ type: "error", title: "Ошибка AI-редактирования", message: err?.message || "unknown error" });
-    } finally {
-      setAiBusy(false);
-    }
+    await runLocked(
+      suggestLockKey,
+      async () => {
+        setAiBusy(true);
+        setAiSuggestMeta(null);
+        setAiSuggestContextDebug("");
+        setAiOutputSourcePath(selection.selectedPath);
+        try {
+          const result: AIEditorSuggestionDTO = await aiSuggestFile(domainId, selection.selectedPath, {
+            instruction: aiInstruction.trim(),
+            model: aiModel.trim() || undefined,
+            context_mode: aiContextMode,
+            context_files: selectedContextFiles(aiContextMode, aiContextSelectedFiles),
+          });
+          setAiOutput(result.suggested_content || "");
+          setAiSuggestView("diff");
+          const promptSource =
+            typeof result.prompt_trace?.resolved_source === "string" ? result.prompt_trace.resolved_source : undefined;
+          setAiSuggestMeta({
+            source: promptSource,
+            warnings: Array.isArray(result.warnings) ? result.warnings : [],
+            tokenUsage: result.token_usage,
+            contextPack: result.context_pack_meta,
+          });
+          if ((result.suggested_content || "") === dirtyState.currentContent) {
+            showToast({
+              type: "success",
+              title: "Предложение без изменений",
+              message: "AI не предложил отличий для текущего файла.",
+            });
+          } else {
+            showToast({ type: "success", title: "AI-предложение готово", message: selection.selectedPath });
+          }
+        } catch (err: any) {
+          showToast({ type: "error", title: "Ошибка AI-редактирования", message: err?.message || "unknown error" });
+        } finally {
+          setAiBusy(false);
+        }
+      },
+      "Генерация предложения"
+    );
   };
 
   const onOpenAISourceFile = async () => {
@@ -750,27 +773,33 @@ export default function DomainEditorPage() {
 
   const onAICreateContextPreview = async () => {
     if (!aiCreatePath.trim()) return;
-    setAiCreateContextBusy(true);
-    try {
-      const payload = {
-        target_path: aiCreatePath.trim(),
-        context_mode: aiCreateContextMode,
-        context_files: selectedContextFiles(aiCreateContextMode, aiCreateContextSelectedFiles),
-      } as const;
-      const debug = await getEditorContextPack(domainId, payload);
-      setAiCreateContextDebug(debug.site_context || "");
-      setAiCreateMeta((prev) => ({
-        source: prev?.source,
-        warnings: prev?.warnings || [],
-        tokenUsage: prev?.tokenUsage,
-        contextPack: debug.context_pack_meta,
-      }));
-      setAiCreateDiagnosticsOpen(true);
-    } catch (err: any) {
-      showToast({ type: "error", title: "Не удалось собрать контекст", message: err?.message || "unknown error" });
-    } finally {
-      setAiCreateContextBusy(false);
-    }
+    await runLocked(
+      createContextLockKey,
+      async () => {
+        setAiCreateContextBusy(true);
+        try {
+          const payload = {
+            target_path: aiCreatePath.trim(),
+            context_mode: aiCreateContextMode,
+            context_files: selectedContextFiles(aiCreateContextMode, aiCreateContextSelectedFiles),
+          } as const;
+          const debug = await getEditorContextPack(domainId, payload);
+          setAiCreateContextDebug(debug.site_context || "");
+          setAiCreateMeta((prev) => ({
+            source: prev?.source,
+            warnings: prev?.warnings || [],
+            tokenUsage: prev?.tokenUsage,
+            contextPack: debug.context_pack_meta,
+          }));
+          setAiCreateDiagnosticsOpen(true);
+        } catch (err: any) {
+          showToast({ type: "error", title: "Не удалось собрать контекст", message: err?.message || "unknown error" });
+        } finally {
+          setAiCreateContextBusy(false);
+        }
+      },
+      "Сбор контекста"
+    );
   };
 
   const onAICreatePage = async () => {
@@ -783,76 +812,82 @@ export default function DomainEditorPage() {
       });
       return;
     }
-    setAiCreateBusy(true);
-    setAiCreateMeta(null);
-    setAiCreateContextDebug("");
-    setAiCreateSkippedAssets([]);
-    setAiCreateAssets([]);
-    try {
-      const result: AIPageSuggestionDTO = await aiCreatePage(domainId, {
-        instruction: aiCreateInstruction.trim(),
-        target_path: aiCreatePath.trim(),
-        with_assets: true,
-        model: aiCreateModel.trim() || undefined,
-        context_mode: aiCreateContextMode,
-        context_files: selectedContextFiles(aiCreateContextMode, aiCreateContextSelectedFiles),
-      });
-      const generatedFiles = Array.isArray(result.files) ? result.files : [];
-      const generatedAssets = Array.isArray(result.assets) ? result.assets : [];
-      if (generatedFiles.length === 0) {
-        showToast({ type: "error", title: "AI не вернул файлов", message: "Повторите генерацию с другим запросом." });
-        return;
-      }
-      setAiCreateFiles(generatedFiles);
-      setAiCreateAssets(generatedAssets);
-      setAiCreatePreviewPath(generatedFiles[0]?.path || "");
-      setAiCreateView("diff");
-      const defaultPlan: Record<string, AIPageApplyAction> = {};
-      for (const file of generatedFiles) {
-        defaultPlan[file.path] = existingFilesMap.has(file.path) ? "skip" : "create";
-      }
-      setAiCreateApplyPlan(defaultPlan);
-      const existingMap: Record<string, string> = {};
-      const existingPaths = generatedFiles.filter((item) => existingFilesMap.has(item.path)).map((item) => item.path);
-      await Promise.all(
-        existingPaths.map(async (filePath) => {
-          try {
-            const payload = await getFile(domainId, filePath);
-            existingMap[filePath] = payload.content || "";
-          } catch {
-            existingMap[filePath] = "";
+    await runLocked(
+      createLockKey,
+      async () => {
+        setAiCreateBusy(true);
+        setAiCreateMeta(null);
+        setAiCreateContextDebug("");
+        setAiCreateSkippedAssets([]);
+        setAiCreateAssets([]);
+        try {
+          const result: AIPageSuggestionDTO = await aiCreatePage(domainId, {
+            instruction: aiCreateInstruction.trim(),
+            target_path: aiCreatePath.trim(),
+            with_assets: true,
+            model: aiCreateModel.trim() || undefined,
+            context_mode: aiCreateContextMode,
+            context_files: selectedContextFiles(aiCreateContextMode, aiCreateContextSelectedFiles),
+          });
+          const generatedFiles = Array.isArray(result.files) ? result.files : [];
+          const generatedAssets = Array.isArray(result.assets) ? result.assets : [];
+          if (generatedFiles.length === 0) {
+            showToast({ type: "error", title: "AI не вернул файлов", message: "Повторите генерацию с другим запросом." });
+            return;
           }
-        })
-      );
-      setAiCreateExistingContent(existingMap);
-      const promptSource =
-        typeof result.prompt_trace?.resolved_source === "string" ? result.prompt_trace.resolved_source : undefined;
-      setAiCreateMeta({
-        source: promptSource,
-        warnings: Array.isArray(result.warnings) ? result.warnings : [],
-        tokenUsage: result.token_usage,
-        contextPack: result.context_pack_meta,
-      });
-      const existingCount = generatedFiles.filter((item) => existingFilesMap.has(item.path)).length;
-      showToast({
-        type: "success",
-        title: "AI сгенерировал пакет файлов",
-        message: `${generatedFiles.length} файлов, конфликтов по пути: ${existingCount}`,
-      });
-    } catch (err: any) {
-      const status = Number(err?.status || err?.response?.status || 0);
-      if (status === 422 || String(err?.message || "").toLowerCase().includes("ai_response_invalid_format")) {
-        showToast({
-          type: "error",
-          title: "AI вернул невалидный формат",
-          message: "Модель не вернула корректный JSON-контракт. Уточните инструкцию и повторите.",
-        });
-      } else {
-        showToast({ type: "error", title: "Ошибка создания страницы", message: err?.message || "unknown error" });
-      }
-    } finally {
-      setAiCreateBusy(false);
-    }
+          setAiCreateFiles(generatedFiles);
+          setAiCreateAssets(generatedAssets);
+          setAiCreatePreviewPath(generatedFiles[0]?.path || "");
+          setAiCreateView("diff");
+          const defaultPlan: Record<string, AIPageApplyAction> = {};
+          for (const file of generatedFiles) {
+            defaultPlan[file.path] = existingFilesMap.has(file.path) ? "skip" : "create";
+          }
+          setAiCreateApplyPlan(defaultPlan);
+          const existingMap: Record<string, string> = {};
+          const existingPaths = generatedFiles.filter((item) => existingFilesMap.has(item.path)).map((item) => item.path);
+          await Promise.all(
+            existingPaths.map(async (filePath) => {
+              try {
+                const payload = await getFile(domainId, filePath);
+                existingMap[filePath] = payload.content || "";
+              } catch {
+                existingMap[filePath] = "";
+              }
+            })
+          );
+          setAiCreateExistingContent(existingMap);
+          const promptSource =
+            typeof result.prompt_trace?.resolved_source === "string" ? result.prompt_trace.resolved_source : undefined;
+          setAiCreateMeta({
+            source: promptSource,
+            warnings: Array.isArray(result.warnings) ? result.warnings : [],
+            tokenUsage: result.token_usage,
+            contextPack: result.context_pack_meta,
+          });
+          const existingCount = generatedFiles.filter((item) => existingFilesMap.has(item.path)).length;
+          showToast({
+            type: "success",
+            title: "AI сгенерировал пакет файлов",
+            message: `${generatedFiles.length} файлов, конфликтов по пути: ${existingCount}`,
+          });
+        } catch (err: any) {
+          const status = Number(err?.status || err?.response?.status || 0);
+          if (status === 422 || String(err?.message || "").toLowerCase().includes("ai_response_invalid_format")) {
+            showToast({
+              type: "error",
+              title: "AI вернул невалидный формат",
+              message: "Модель не вернула корректный JSON-контракт. Уточните инструкцию и повторите.",
+            });
+          } else {
+            showToast({ type: "error", title: "Ошибка создания страницы", message: err?.message || "unknown error" });
+          }
+        } finally {
+          setAiCreateBusy(false);
+        }
+      },
+      "Генерация пакета файлов"
+    );
   };
 
   const onSetCreatePlan = (pathValue: string, action: AIPageApplyAction) => {
@@ -948,54 +983,60 @@ export default function DomainEditorPage() {
       });
       return;
     }
-    setAiCreateAssetBusyPath(pathValue);
-    try {
-      const result = await aiRegenerateAsset(domainId, {
-        path: asset.path,
-        prompt: promptValue,
-        mime_type: asset.mime_type || undefined,
-        model: aiCreateModel.trim() || undefined,
-        context_mode: aiCreateContextMode,
-        context_files: selectedContextFiles(aiCreateContextMode, aiCreateContextSelectedFiles),
-      });
-      setAiCreateSkippedAssets((prev) => prev.filter((item) => item !== pathValue));
-      const refreshed = await loadFiles();
-      if (selection?.selectedPath === pathValue) {
-        const selected = refreshed.find((file) => file.path === pathValue);
-        if (selected) {
-          await loadFile(selected);
+    await runLocked(
+      assetLockKey(pathValue),
+      async () => {
+        setAiCreateAssetBusyPath(pathValue);
+        try {
+          const result = await aiRegenerateAsset(domainId, {
+            path: asset.path,
+            prompt: promptValue,
+            mime_type: asset.mime_type || undefined,
+            model: aiCreateModel.trim() || undefined,
+            context_mode: aiCreateContextMode,
+            context_files: selectedContextFiles(aiCreateContextMode, aiCreateContextSelectedFiles),
+          });
+          setAiCreateSkippedAssets((prev) => prev.filter((item) => item !== pathValue));
+          const refreshed = await loadFiles();
+          if (selection?.selectedPath === pathValue) {
+            const selected = refreshed.find((file) => file.path === pathValue);
+            if (selected) {
+              await loadFile(selected);
+            }
+          }
+          showToast({
+            type: "success",
+            title: "Изображение сгенерировано",
+            message: pathValue,
+          });
+          if (result.warnings && result.warnings.length > 0) {
+            showToast({
+              type: "error",
+              title: "Предупреждения регенерации",
+              message: result.warnings.slice(0, 2).join(" | "),
+            });
+          }
+        } catch (err: any) {
+          const status = Number(err?.status || err?.response?.status || 0);
+          if (status === 422) {
+            showToast({
+              type: "error",
+              title: "Невалидное изображение от AI",
+              message: err?.message || "AI вернул неподходящий формат, попробуйте другую модель или prompt.",
+            });
+          } else {
+            showToast({
+              type: "error",
+              title: "Ошибка регенерации ассета",
+              message: err?.message || "unknown error",
+            });
+          }
+        } finally {
+          setAiCreateAssetBusyPath("");
         }
-      }
-      showToast({
-        type: "success",
-        title: "Изображение сгенерировано",
-        message: pathValue,
-      });
-      if (result.warnings && result.warnings.length > 0) {
-        showToast({
-          type: "error",
-          title: "Предупреждения регенерации",
-          message: result.warnings.slice(0, 2).join(" | "),
-        });
-      }
-    } catch (err: any) {
-      const status = Number(err?.status || err?.response?.status || 0);
-      if (status === 422) {
-        showToast({
-          type: "error",
-          title: "Невалидное изображение от AI",
-          message: err?.message || "AI вернул неподходящий формат, попробуйте другую модель или prompt.",
-        });
-      } else {
-        showToast({
-          type: "error",
-          title: "Ошибка регенерации ассета",
-          message: err?.message || "unknown error",
-        });
-      }
-    } finally {
-      setAiCreateAssetBusyPath("");
-    }
+      },
+      "Регенерация ассета"
+    );
   };
 
   const onApplyCreatedFiles = async () => {
@@ -1517,15 +1558,15 @@ export default function DomainEditorPage() {
                   <button
                     type="button"
                     onClick={onAISuggest}
-                    disabled={aiBusy || !selection?.selectedPath || !aiInstruction.trim()}
+                    disabled={aiBusy || suggestLocked || !selection?.selectedPath || !aiInstruction.trim()}
                     className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
                   >
-                    <FiWind /> Сгенерировать предложение
+                    <FiWind /> {suggestLocked ? "Выполняется..." : "Сгенерировать предложение"}
                   </button>
                   <button
                     type="button"
                     onClick={onApplyAISuggest}
-                    disabled={!aiOutput || aiApplyPathMismatch}
+                    disabled={!aiOutput || aiApplyPathMismatch || suggestLocked}
                     className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   >
                     Применить в буфер
@@ -1533,12 +1574,17 @@ export default function DomainEditorPage() {
                   <button
                     type="button"
                     onClick={onAISuggestContextPreview}
-                    disabled={aiSuggestContextBusy || !selection?.selectedPath}
+                    disabled={aiSuggestContextBusy || suggestContextLocked || !selection?.selectedPath}
                     className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   >
-                    Контекст запроса
+                    {suggestContextLocked ? "Контекст..." : "Контекст запроса"}
                   </button>
                 </div>
+                {(suggestLocked || suggestContextLocked) && (
+                  <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                    {suggestLocked ? lockReason(suggestLockKey) || "Выполняется..." : lockReason(suggestContextLockKey)}
+                  </div>
+                )}
 
                 {aiApplyPathMismatch && (
                   <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">
@@ -1709,15 +1755,15 @@ export default function DomainEditorPage() {
                   <button
                     type="button"
                     onClick={onAICreatePage}
-                    disabled={aiCreateBusy || !aiCreateInstruction.trim() || !aiCreatePath.trim()}
+                    disabled={aiCreateBusy || createLocked || !aiCreateInstruction.trim() || !aiCreatePath.trim()}
                     className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
                   >
-                    <FiWind /> Сгенерировать пакет файлов
+                    <FiWind /> {createLocked ? "Выполняется..." : "Сгенерировать пакет файлов"}
                   </button>
                   <button
                     type="button"
                     onClick={onApplyCreatedFiles}
-                    disabled={aiCreateFiles.length === 0}
+                    disabled={aiCreateFiles.length === 0 || createLocked || aiCreateBusy}
                     className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   >
                     Применить план
@@ -1725,12 +1771,17 @@ export default function DomainEditorPage() {
                   <button
                     type="button"
                     onClick={onAICreateContextPreview}
-                    disabled={aiCreateContextBusy || !aiCreatePath.trim()}
+                    disabled={aiCreateContextBusy || createContextLocked || !aiCreatePath.trim()}
                     className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   >
-                    Контекст запроса
+                    {createContextLocked ? "Контекст..." : "Контекст запроса"}
                   </button>
                 </div>
+                {(createLocked || createContextLocked) && (
+                  <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                    {createLocked ? lockReason(createLockKey) || "Выполняется..." : lockReason(createContextLockKey)}
+                  </div>
+                )}
 
                 {aiCreateMeta?.contextPack && (
                   <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
@@ -1811,10 +1862,14 @@ export default function DomainEditorPage() {
                                     <button
                                       type="button"
                                       onClick={() => void onRegenerateAsset(asset.path)}
-                                      disabled={Boolean(aiCreateAssetBusyPath) || !asset.prompt}
+                                      disabled={
+                                        Boolean(aiCreateAssetBusyPath) || isLocked(assetLockKey(asset.path)) || !asset.prompt
+                                      }
                                       className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
                                     >
-                                      {aiCreateAssetBusyPath === asset.path ? "Генерация..." : "Регенерировать"}
+                                      {aiCreateAssetBusyPath === asset.path || isLocked(assetLockKey(asset.path))
+                                        ? "Генерация..."
+                                        : "Регенерировать"}
                                     </button>
                                     <button
                                       type="button"
