@@ -45,10 +45,11 @@ import { useAuthGuard } from "../../../../lib/useAuth";
 import type { EditorDirtyState, EditorFileMeta, EditorSelectionState } from "../../../../types/editor";
 import { EditorContextProvider } from "../../../../features/editor-v3/context/EditorContext";
 import { useActionLocks } from "../../../../features/editor-v3/hooks/useActionLocks";
+import { useAIFlowState } from "../../../../features/editor-v3/hooks/useAIFlowState";
 import { useFileActions } from "../../../../features/editor-v3/hooks/useFileActions";
 import { useEditorState } from "../../../../features/editor-v3/hooks/useEditorState";
 import { AI_CONTEXT_MODE_OPTIONS, EDITOR_MODEL_OPTIONS } from "../../../../features/editor-v3/services/constants";
-import type { AIContextMode } from "../../../../features/editor-v3/types/ai";
+import type { AIContextMode, AIFlowStatus } from "../../../../features/editor-v3/types/ai";
 import type { DomainSummaryResponse } from "../../../../features/editor-v3/types/editor";
 
 const detectLanguage = (pathValue: string) => {
@@ -152,6 +153,26 @@ function injectRuntimeAssets(indexHtml: string, styleContent: string, scriptCont
   return html;
 }
 
+const AI_FLOW_STATUS_LABELS: Record<AIFlowStatus, string> = {
+  idle: "Ожидание",
+  validating: "Проверка",
+  sending: "Отправка",
+  parsing: "Обработка",
+  ready: "Готово к применению",
+  applying: "Применение",
+  done: "Завершено",
+  error: "Ошибка",
+};
+
+const getFlowToneClass = (status: AIFlowStatus) => {
+  if (status === "error") return "border-rose-300 bg-rose-50 text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-300";
+  if (status === "ready" || status === "done")
+    return "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300";
+  if (status === "idle")
+    return "border-slate-300 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-800/40 dark:text-slate-300";
+  return "border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-900 dark:bg-indigo-950/30 dark:text-indigo-300";
+};
+
 export default function DomainEditorPage() {
   useAuthGuard();
   const params = useParams();
@@ -240,6 +261,9 @@ export default function DomainEditorPage() {
   const [aiCreateDiagnosticsOpen, setAiCreateDiagnosticsOpen] = useState(false);
   const [aiCreateContextBusy, setAiCreateContextBusy] = useState(false);
   const [aiCreateContextDebug, setAiCreateContextDebug] = useState("");
+  const aiSuggestFlow = useAIFlowState();
+  const aiCreateFlow = useAIFlowState();
+  const aiAssetFlow = useAIFlowState();
   const [conflictState, setConflictState] = useState<{
     currentVersion: number;
     currentHash?: string;
@@ -689,7 +713,9 @@ export default function DomainEditorPage() {
 
   const onAISuggest = async () => {
     if (!selection?.selectedPath || !aiInstruction.trim()) return;
+    aiSuggestFlow.start("Проверяем входные параметры", "validating");
     if (aiContextMode === "manual" && aiContextSelectedFiles.length === 0) {
+      aiSuggestFlow.fail("manual context files missing", "Выберите контекстные файлы для режима manual");
       showToast({
         type: "error",
         title: "Нужны контекстные файлы",
@@ -701,6 +727,7 @@ export default function DomainEditorPage() {
       suggestLockKey,
       async () => {
         setAiBusy(true);
+        aiSuggestFlow.setStatus("sending", "Отправляем запрос к AI");
         setAiSuggestMeta(null);
         setAiSuggestContextDebug("");
         setAiOutputSourcePath(selection.selectedPath);
@@ -711,6 +738,7 @@ export default function DomainEditorPage() {
             context_mode: aiContextMode,
             context_files: selectedContextFiles(aiContextMode, aiContextSelectedFiles),
           });
+          aiSuggestFlow.setStatus("parsing", "Обрабатываем ответ модели");
           setAiOutput(result.suggested_content || "");
           setAiSuggestView("diff");
           const promptSource =
@@ -730,7 +758,9 @@ export default function DomainEditorPage() {
           } else {
             showToast({ type: "success", title: "AI-предложение готово", message: selection.selectedPath });
           }
+          aiSuggestFlow.finish("Предложение готово к применению", "ready");
         } catch (err: any) {
+          aiSuggestFlow.fail(err, "Не удалось получить AI-предложение");
           showToast({ type: "error", title: "Ошибка AI-редактирования", message: err?.message || "unknown error" });
         } finally {
           setAiBusy(false);
@@ -756,7 +786,9 @@ export default function DomainEditorPage() {
 
   const onApplyAISuggest = () => {
     if (!aiOutput) return;
+    aiSuggestFlow.setStatus("applying", "Применяем предложение в буфер");
     if (!selection?.selectedPath || !aiOutputSourcePath || selection.selectedPath !== aiOutputSourcePath) {
+      aiSuggestFlow.fail("path mismatch", "Откройте исходный файл перед применением");
       showToast({
         type: "error",
         title: "Неверный файл для применения",
@@ -769,6 +801,7 @@ export default function DomainEditorPage() {
       currentContent: aiOutput,
       isDirty: aiOutput !== prev.originalContent,
     }));
+    aiSuggestFlow.finish("Предложение применено в буфер");
   };
 
   const onAICreateContextPreview = async () => {
@@ -804,7 +837,9 @@ export default function DomainEditorPage() {
 
   const onAICreatePage = async () => {
     if (!aiCreateInstruction.trim() || !aiCreatePath.trim()) return;
+    aiCreateFlow.start("Проверяем входные параметры", "validating");
     if (aiCreateContextMode === "manual" && aiCreateContextSelectedFiles.length === 0) {
+      aiCreateFlow.fail("manual context files missing", "Выберите контекстные файлы для режима manual");
       showToast({
         type: "error",
         title: "Нужны контекстные файлы",
@@ -816,6 +851,7 @@ export default function DomainEditorPage() {
       createLockKey,
       async () => {
         setAiCreateBusy(true);
+        aiCreateFlow.setStatus("sending", "Отправляем запрос к AI");
         setAiCreateMeta(null);
         setAiCreateContextDebug("");
         setAiCreateSkippedAssets([]);
@@ -829,9 +865,11 @@ export default function DomainEditorPage() {
             context_mode: aiCreateContextMode,
             context_files: selectedContextFiles(aiCreateContextMode, aiCreateContextSelectedFiles),
           });
+          aiCreateFlow.setStatus("parsing", "Обрабатываем пакет файлов");
           const generatedFiles = Array.isArray(result.files) ? result.files : [];
           const generatedAssets = Array.isArray(result.assets) ? result.assets : [];
           if (generatedFiles.length === 0) {
+            aiCreateFlow.fail("empty files", "AI не вернул файлов для применения");
             showToast({ type: "error", title: "AI не вернул файлов", message: "Повторите генерацию с другим запросом." });
             return;
           }
@@ -871,7 +909,9 @@ export default function DomainEditorPage() {
             title: "AI сгенерировал пакет файлов",
             message: `${generatedFiles.length} файлов, конфликтов по пути: ${existingCount}`,
           });
+          aiCreateFlow.finish("Пакет файлов готов к применению", "ready");
         } catch (err: any) {
+          aiCreateFlow.fail(err, "Не удалось сгенерировать пакет файлов");
           const status = Number(err?.status || err?.response?.status || 0);
           if (status === 422 || String(err?.message || "").toLowerCase().includes("ai_response_invalid_format")) {
             showToast({
@@ -967,6 +1007,7 @@ export default function DomainEditorPage() {
   const onRegenerateAsset = async (pathValue: string) => {
     const asset = aiCreateAssets.find((item) => item.path === pathValue);
     if (!asset) {
+      aiAssetFlow.fail("asset not found", "Ассет не найден в текущем манифесте");
       showToast({
         type: "error",
         title: "Ассет не найден",
@@ -976,6 +1017,7 @@ export default function DomainEditorPage() {
     }
     const promptValue = asset.prompt?.trim();
     if (!promptValue) {
+      aiAssetFlow.fail("asset prompt missing", "Для регенерации нужен prompt ассета");
       showToast({
         type: "error",
         title: "Нет prompt для регенерации",
@@ -986,8 +1028,10 @@ export default function DomainEditorPage() {
     await runLocked(
       assetLockKey(pathValue),
       async () => {
+        aiAssetFlow.start(`Проверяем ассет ${pathValue}`, "validating");
         setAiCreateAssetBusyPath(pathValue);
         try {
+          aiAssetFlow.setStatus("sending", "Отправляем запрос на генерацию изображения");
           const result = await aiRegenerateAsset(domainId, {
             path: asset.path,
             prompt: promptValue,
@@ -996,6 +1040,7 @@ export default function DomainEditorPage() {
             context_mode: aiCreateContextMode,
             context_files: selectedContextFiles(aiCreateContextMode, aiCreateContextSelectedFiles),
           });
+          aiAssetFlow.setStatus("parsing", "Проверяем полученный ассет");
           setAiCreateSkippedAssets((prev) => prev.filter((item) => item !== pathValue));
           const refreshed = await loadFiles();
           if (selection?.selectedPath === pathValue) {
@@ -1016,7 +1061,9 @@ export default function DomainEditorPage() {
               message: result.warnings.slice(0, 2).join(" | "),
             });
           }
+          aiAssetFlow.finish(`Ассет готов: ${pathValue}`, "done");
         } catch (err: any) {
+          aiAssetFlow.fail(err, `Не удалось регенерировать ассет: ${pathValue}`);
           const status = Number(err?.status || err?.response?.status || 0);
           if (status === 422) {
             showToast({
@@ -1041,6 +1088,7 @@ export default function DomainEditorPage() {
 
   const onApplyCreatedFiles = async () => {
     if (aiCreateFiles.length === 0) return;
+    aiCreateFlow.setStatus("applying", "Применяем выбранный план к файлам");
     const planned = aiCreateFiles
       .map((file) => ({
         file,
@@ -1048,6 +1096,7 @@ export default function DomainEditorPage() {
       }));
     const actionable = planned.filter((item) => item.action !== "skip");
     if (actionable.length === 0) {
+      aiCreateFlow.fail("empty apply plan", "Нет файлов для применения по текущему плану");
       showToast({
         type: "error",
         title: "Нет действий для применения",
@@ -1136,12 +1185,14 @@ export default function DomainEditorPage() {
       }
     }
     if (failed.length > 0) {
+      aiCreateFlow.fail("partial apply failed", "План применён частично, есть ошибки");
       showToast({
         type: "error",
         title: "Часть файлов не применена",
         message: `Успешно: ${applied}, пропущено: ${skipped}, ошибок: ${failed.length}. ${failed.slice(0, 2).join(" | ")}`,
       });
     } else {
+      aiCreateFlow.finish("План успешно применён", "done");
       showToast({
         type: "success",
         title: "AI-файлы применены",
@@ -1585,6 +1636,17 @@ export default function DomainEditorPage() {
                     {suggestLocked ? lockReason(suggestLockKey) || "Выполняется..." : lockReason(suggestContextLockKey)}
                   </div>
                 )}
+                {aiSuggestFlow.flow.status !== "idle" && (
+                  <div
+                    className={`rounded-lg border px-3 py-2 text-[11px] ${getFlowToneClass(aiSuggestFlow.flow.status)}`}
+                  >
+                    <div className="font-semibold">
+                      AI Suggest: {AI_FLOW_STATUS_LABELS[aiSuggestFlow.flow.status]}
+                    </div>
+                    <div>{aiSuggestFlow.flow.message || "Выполняем операцию..."}</div>
+                    {aiSuggestFlow.flow.error ? <div className="mt-1">Причина: {aiSuggestFlow.flow.error}</div> : null}
+                  </div>
+                )}
 
                 {aiApplyPathMismatch && (
                   <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">
@@ -1782,6 +1844,17 @@ export default function DomainEditorPage() {
                     {createLocked ? lockReason(createLockKey) || "Выполняется..." : lockReason(createContextLockKey)}
                   </div>
                 )}
+                {aiCreateFlow.flow.status !== "idle" && (
+                  <div
+                    className={`rounded-lg border px-3 py-2 text-[11px] ${getFlowToneClass(aiCreateFlow.flow.status)}`}
+                  >
+                    <div className="font-semibold">
+                      AI Create Page: {AI_FLOW_STATUS_LABELS[aiCreateFlow.flow.status]}
+                    </div>
+                    <div>{aiCreateFlow.flow.message || "Выполняем операцию..."}</div>
+                    {aiCreateFlow.flow.error ? <div className="mt-1">Причина: {aiCreateFlow.flow.error}</div> : null}
+                  </div>
+                )}
 
                 {aiCreateMeta?.contextPack && (
                   <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
@@ -1897,6 +1970,17 @@ export default function DomainEditorPage() {
                     <div className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
                       Изображения из манифеста не применяются автоматически как бинарные файлы. Добавьте их через Upload или пометьте Skip.
                     </div>
+                    {aiAssetFlow.flow.status !== "idle" && (
+                      <div
+                        className={`mt-2 rounded-lg border px-2 py-1.5 text-[11px] ${getFlowToneClass(aiAssetFlow.flow.status)}`}
+                      >
+                        <div className="font-semibold">
+                          AI Regenerate Asset: {AI_FLOW_STATUS_LABELS[aiAssetFlow.flow.status]}
+                        </div>
+                        <div>{aiAssetFlow.flow.message || "Выполняем операцию..."}</div>
+                        {aiAssetFlow.flow.error ? <div className="mt-1">Причина: {aiAssetFlow.flow.error}</div> : null}
+                      </div>
+                    )}
                   </div>
                 )}
 
