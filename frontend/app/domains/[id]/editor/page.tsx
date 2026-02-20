@@ -48,6 +48,7 @@ import { useActionLocks } from "../../../../features/editor-v3/hooks/useActionLo
 import { useAIFlowState } from "../../../../features/editor-v3/hooks/useAIFlowState";
 import { useFileActions } from "../../../../features/editor-v3/hooks/useFileActions";
 import { useEditorState } from "../../../../features/editor-v3/hooks/useEditorState";
+import { editorV3Ru } from "../../../../features/editor-v3/services/i18n-ru";
 import { AI_CONTEXT_MODE_OPTIONS, EDITOR_MODEL_OPTIONS } from "../../../../features/editor-v3/services/constants";
 import type { AIContextMode, AIFlowStatus } from "../../../../features/editor-v3/types/ai";
 import type { DomainSummaryResponse } from "../../../../features/editor-v3/types/editor";
@@ -153,16 +154,7 @@ function injectRuntimeAssets(indexHtml: string, styleContent: string, scriptCont
   return html;
 }
 
-const AI_FLOW_STATUS_LABELS: Record<AIFlowStatus, string> = {
-  idle: "Ожидание",
-  validating: "Проверка",
-  sending: "Отправка",
-  parsing: "Обработка",
-  ready: "Готово к применению",
-  applying: "Применение",
-  done: "Завершено",
-  error: "Ошибка",
-};
+const AI_FLOW_STATUS_LABELS: Record<AIFlowStatus, string> = editorV3Ru.flowStatusLabels;
 
 const getFlowToneClass = (status: AIFlowStatus) => {
   if (status === "error") return "border-rose-300 bg-rose-50 text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-300";
@@ -179,6 +171,7 @@ export default function DomainEditorPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const domainId = params?.id as string;
+  const t = editorV3Ru;
 
   const requestedPath = searchParams.get("path") || "";
   const requestedLineRaw = searchParams.get("line") || "";
@@ -1309,7 +1302,7 @@ export default function DomainEditorPage() {
               disabled={readOnly}
               className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
             >
-              <FiPlus /> File
+              <FiPlus /> {t.sidebar.file}
             </button>
             <button
               type="button"
@@ -1317,7 +1310,7 @@ export default function DomainEditorPage() {
               disabled={readOnly}
               className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
             >
-              <FiFolder /> Folder
+              <FiFolder /> {t.sidebar.folder}
             </button>
             <button
               type="button"
@@ -1325,7 +1318,7 @@ export default function DomainEditorPage() {
               disabled={readOnly || !selection}
               className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
             >
-              <FiEdit3 /> Rename
+              <FiEdit3 /> {t.sidebar.rename}
             </button>
             <button
               type="button"
@@ -1333,15 +1326,16 @@ export default function DomainEditorPage() {
               disabled={readOnly || !selection}
               className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
             >
-              <FiMove /> Move
+              <FiMove /> {t.sidebar.move}
             </button>
             <button
               type="button"
               onClick={onDelete}
               disabled={readOnly || !selection}
+              title={t.tooltips.deleteDanger}
               className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-xs font-semibold text-red-700 disabled:opacity-50 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200"
             >
-              <FiTrash2 /> Delete
+              <FiTrash2 /> {t.sidebar.delete}
             </button>
             <button
               type="button"
@@ -1349,7 +1343,7 @@ export default function DomainEditorPage() {
               disabled={readOnly}
               className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
             >
-              <FiUpload /> Upload
+              <FiUpload /> {t.sidebar.upload}
             </button>
             <input
               ref={fileInputRef}
@@ -1514,7 +1508,7 @@ export default function DomainEditorPage() {
                     : "border-slate-200 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 }`}
               >
-                AI Studio: изменить текущий файл
+                {t.tabs.editCurrentFile}
               </button>
               <button
                 type="button"
@@ -1525,7 +1519,7 @@ export default function DomainEditorPage() {
                     : "border-slate-200 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 }`}
               >
-                AI Studio: создать страницу
+                {t.tabs.createPage}
               </button>
             </div>
 
@@ -1612,7 +1606,7 @@ export default function DomainEditorPage() {
                     disabled={aiBusy || suggestLocked || !selection?.selectedPath || !aiInstruction.trim()}
                     className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
                   >
-                    <FiWind /> {suggestLocked ? "Выполняется..." : "Сгенерировать предложение"}
+                    <FiWind /> {suggestLocked ? t.actions.generating : t.actions.generateSuggestion}
                   </button>
                   <button
                     type="button"
@@ -1620,7 +1614,7 @@ export default function DomainEditorPage() {
                     disabled={!aiOutput || aiApplyPathMismatch || suggestLocked}
                     className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   >
-                    Применить в буфер
+                    {t.actions.applyToEditor}
                   </button>
                   <button
                     type="button"
@@ -1628,12 +1622,12 @@ export default function DomainEditorPage() {
                     disabled={aiSuggestContextBusy || suggestContextLocked || !selection?.selectedPath}
                     className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   >
-                    {suggestContextLocked ? "Контекст..." : "Контекст запроса"}
+                    {suggestContextLocked ? t.actions.loadingContext : t.actions.requestContext}
                   </button>
                 </div>
                 {(suggestLocked || suggestContextLocked) && (
                   <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                    {suggestLocked ? lockReason(suggestLockKey) || "Выполняется..." : lockReason(suggestContextLockKey)}
+                    {suggestLocked ? lockReason(suggestLockKey) || t.actions.generating : lockReason(suggestContextLockKey)}
                   </div>
                 )}
                 {aiSuggestFlow.flow.status !== "idle" && (
@@ -1641,7 +1635,7 @@ export default function DomainEditorPage() {
                     className={`rounded-lg border px-3 py-2 text-[11px] ${getFlowToneClass(aiSuggestFlow.flow.status)}`}
                   >
                     <div className="font-semibold">
-                      AI Suggest: {AI_FLOW_STATUS_LABELS[aiSuggestFlow.flow.status]}
+                      {t.flowTitles.suggest}: {AI_FLOW_STATUS_LABELS[aiSuggestFlow.flow.status]}
                     </div>
                     <div>{aiSuggestFlow.flow.message || "Выполняем операцию..."}</div>
                     {aiSuggestFlow.flow.error ? <div className="mt-1">Причина: {aiSuggestFlow.flow.error}</div> : null}
@@ -1681,7 +1675,7 @@ export default function DomainEditorPage() {
                             : "border-slate-200 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                         }`}
                       >
-                        Diff
+                        {t.actions.compare}
                       </button>
                       <button
                         type="button"
@@ -1719,10 +1713,10 @@ export default function DomainEditorPage() {
                 >
                   <summary className="cursor-pointer font-semibold text-slate-700 dark:text-slate-200">Диагностика</summary>
                   <div className="mt-2 space-y-1 text-slate-600 dark:text-slate-300">
-                    <div>Источник промпта: {aiSuggestMeta?.source || "unknown"}</div>
+                    <div>Источник промпта: {aiSuggestMeta?.source || t.diagnostics.unknown}</div>
                     <div>Предупреждений: {aiSuggestMeta?.warnings?.length || 0}</div>
-                    <div>Token usage: {aiSuggestMeta?.tokenUsage ? JSON.stringify(aiSuggestMeta.tokenUsage) : "n/a"}</div>
-                    {aiSuggestMeta?.warnings?.length ? <div>Warnings: {aiSuggestMeta.warnings.join(" | ")}</div> : null}
+                    <div>Использование токенов: {aiSuggestMeta?.tokenUsage ? JSON.stringify(aiSuggestMeta.tokenUsage) : t.diagnostics.tokenUsageNA}</div>
+                    {aiSuggestMeta?.warnings?.length ? <div>{t.diagnostics.warningsLabel}: {aiSuggestMeta.warnings.join(" | ")}</div> : null}
                     {aiSuggestContextDebug ? (
                       <textarea
                         readOnly
@@ -1820,15 +1814,16 @@ export default function DomainEditorPage() {
                     disabled={aiCreateBusy || createLocked || !aiCreateInstruction.trim() || !aiCreatePath.trim()}
                     className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
                   >
-                    <FiWind /> {createLocked ? "Выполняется..." : "Сгенерировать пакет файлов"}
+                    <FiWind /> {createLocked ? t.actions.generating : t.actions.generateFiles}
                   </button>
                   <button
                     type="button"
                     onClick={onApplyCreatedFiles}
                     disabled={aiCreateFiles.length === 0 || createLocked || aiCreateBusy}
+                    title={t.tooltips.applySelectedDanger}
                     className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   >
-                    Применить план
+                    {t.actions.applySelected}
                   </button>
                   <button
                     type="button"
@@ -1836,12 +1831,12 @@ export default function DomainEditorPage() {
                     disabled={aiCreateContextBusy || createContextLocked || !aiCreatePath.trim()}
                     className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   >
-                    {createContextLocked ? "Контекст..." : "Контекст запроса"}
+                    {createContextLocked ? t.actions.loadingContext : t.actions.requestContext}
                   </button>
                 </div>
                 {(createLocked || createContextLocked) && (
                   <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                    {createLocked ? lockReason(createLockKey) || "Выполняется..." : lockReason(createContextLockKey)}
+                    {createLocked ? lockReason(createLockKey) || t.actions.generating : lockReason(createContextLockKey)}
                   </div>
                 )}
                 {aiCreateFlow.flow.status !== "idle" && (
@@ -1849,7 +1844,7 @@ export default function DomainEditorPage() {
                     className={`rounded-lg border px-3 py-2 text-[11px] ${getFlowToneClass(aiCreateFlow.flow.status)}`}
                   >
                     <div className="font-semibold">
-                      AI Create Page: {AI_FLOW_STATUS_LABELS[aiCreateFlow.flow.status]}
+                      {t.flowTitles.createPage}: {AI_FLOW_STATUS_LABELS[aiCreateFlow.flow.status]}
                     </div>
                     <div>{aiCreateFlow.flow.message || "Выполняем операцию..."}</div>
                     {aiCreateFlow.flow.error ? <div className="mt-1">Причина: {aiCreateFlow.flow.error}</div> : null}
@@ -1930,7 +1925,7 @@ export default function DomainEditorPage() {
                                       disabled={readOnly}
                                       className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
                                     >
-                                      Upload
+                                      {t.actions.upload}
                                     </button>
                                     <button
                                       type="button"
@@ -1938,18 +1933,19 @@ export default function DomainEditorPage() {
                                       disabled={
                                         Boolean(aiCreateAssetBusyPath) || isLocked(assetLockKey(asset.path)) || !asset.prompt
                                       }
+                                      title={t.tooltips.regenerateAsset}
                                       className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
                                     >
                                       {aiCreateAssetBusyPath === asset.path || isLocked(assetLockKey(asset.path))
-                                        ? "Генерация..."
-                                        : "Регенерировать"}
+                                        ? t.actions.regeneratingAsset
+                                        : t.actions.regenerateAsset}
                                     </button>
                                     <button
                                       type="button"
                                       onClick={() => onToggleSkipAsset(asset.path)}
                                       className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
                                     >
-                                      {skipped ? "Вернуть" : "Skip"}
+                                      {skipped ? t.actions.restore : t.actions.skip}
                                     </button>
                                     <button
                                       type="button"
@@ -1957,7 +1953,7 @@ export default function DomainEditorPage() {
                                       disabled={!asset.prompt}
                                       className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
                                     >
-                                      Copy prompt
+                                      {t.actions.copyPrompt}
                                     </button>
                                   </div>
                                 </td>
@@ -1968,14 +1964,14 @@ export default function DomainEditorPage() {
                       </table>
                     </div>
                     <div className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
-                      Изображения из манифеста не применяются автоматически как бинарные файлы. Добавьте их через Upload или пометьте Skip.
+                      Изображения из манифеста не применяются автоматически как бинарные файлы. Добавьте их через {t.actions.upload} или пометьте как {t.actions.skip.toLowerCase()}.
                     </div>
                     {aiAssetFlow.flow.status !== "idle" && (
                       <div
                         className={`mt-2 rounded-lg border px-2 py-1.5 text-[11px] ${getFlowToneClass(aiAssetFlow.flow.status)}`}
                       >
                         <div className="font-semibold">
-                          AI Regenerate Asset: {AI_FLOW_STATUS_LABELS[aiAssetFlow.flow.status]}
+                          {t.flowTitles.regenerateAsset}: {AI_FLOW_STATUS_LABELS[aiAssetFlow.flow.status]}
                         </div>
                         <div>{aiAssetFlow.flow.message || "Выполняем операцию..."}</div>
                         {aiAssetFlow.flow.error ? <div className="mt-1">Причина: {aiAssetFlow.flow.error}</div> : null}
@@ -2005,14 +2001,14 @@ export default function DomainEditorPage() {
                                 disabled={readOnly}
                                 className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
                               >
-                                Upload
+                                {t.actions.upload}
                               </button>
                               <button
                                 type="button"
                                 onClick={() => onToggleSkipAsset(pathValue)}
                                 className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
                               >
-                                {skipped ? "Вернуть" : "Skip"}
+                                {skipped ? t.actions.restore : t.actions.skip}
                               </button>
                             </div>
                           </div>
@@ -2065,11 +2061,12 @@ export default function DomainEditorPage() {
                                   <select
                                     value={aiCreateApplyPlan[file.path] || (exists ? "skip" : "create")}
                                     onChange={(e) => onSetCreatePlan(file.path, e.target.value as AIPageApplyAction)}
+                                    title={(aiCreateApplyPlan[file.path] || (exists ? "skip" : "create")) === "overwrite" ? t.tooltips.overwriteAction : undefined}
                                     className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs dark:border-slate-700 dark:bg-slate-800"
                                   >
-                                    <option value="create">create</option>
-                                    <option value="overwrite">overwrite</option>
-                                    <option value="skip">skip</option>
+                                    <option value="create">{t.applyPlan.create}</option>
+                                    <option value="overwrite">{t.applyPlan.overwrite}</option>
+                                    <option value="skip">{t.applyPlan.skip}</option>
                                   </select>
                                 </td>
                               </tr>
@@ -2091,7 +2088,7 @@ export default function DomainEditorPage() {
                                 : "border-slate-200 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                             }`}
                           >
-                            Diff
+                            {t.actions.compare}
                           </button>
                           <button
                             type="button"
@@ -2102,7 +2099,7 @@ export default function DomainEditorPage() {
                                 : "border-slate-200 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                             }`}
                           >
-                            Preview
+                            {t.actions.preview}
                           </button>
                           <button
                             type="button"
@@ -2133,7 +2130,7 @@ export default function DomainEditorPage() {
                             />
                           ) : (
                             <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-300">
-                              Preview доступен только для HTML-файлов.
+                              {t.hints.previewOnlyForHTML}
                             </div>
                           ))}
                         {aiCreateView === "code" && (
@@ -2156,10 +2153,10 @@ export default function DomainEditorPage() {
                 >
                   <summary className="cursor-pointer font-semibold text-slate-700 dark:text-slate-200">Диагностика</summary>
                   <div className="mt-2 space-y-1 text-slate-600 dark:text-slate-300">
-                    <div>Источник промпта: {aiCreateMeta?.source || "unknown"}</div>
+                    <div>Источник промпта: {aiCreateMeta?.source || t.diagnostics.unknown}</div>
                     <div>Предупреждений: {aiCreateMeta?.warnings?.length || 0}</div>
-                    <div>Token usage: {aiCreateMeta?.tokenUsage ? JSON.stringify(aiCreateMeta.tokenUsage) : "n/a"}</div>
-                    {aiCreateMeta?.warnings?.length ? <div>Warnings: {aiCreateMeta.warnings.join(" | ")}</div> : null}
+                    <div>Использование токенов: {aiCreateMeta?.tokenUsage ? JSON.stringify(aiCreateMeta.tokenUsage) : t.diagnostics.tokenUsageNA}</div>
+                    {aiCreateMeta?.warnings?.length ? <div>{t.diagnostics.warningsLabel}: {aiCreateMeta.warnings.join(" | ")}</div> : null}
                     {aiCreateContextDebug ? (
                       <textarea
                         readOnly
