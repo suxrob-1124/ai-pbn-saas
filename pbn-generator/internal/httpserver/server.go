@@ -3150,13 +3150,7 @@ func (s *Server) handleDomainEditorActions(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		systemPrompt, promptSource, modelFromPrompt := s.resolveEditorPrompt(r.Context(), domain.ID, project.ID, "editor_asset_regenerate", defaultEditorAssetRegeneratePrompt())
-		selectedModel := strings.TrimSpace(body.Model)
-		if selectedModel == "" {
-			selectedModel = modelFromPrompt
-		}
-		if selectedModel == "" {
-			selectedModel = "gemini-2.5-flash-image"
-		}
+		selectedModel := normalizeImageGenerationModel(strings.TrimSpace(body.Model), modelFromPrompt)
 		taskConstraints := fmt.Sprintf("operation=regenerate_asset\ncontext_mode=%s\nasset_path=%s\nasset_mime_type=%s\nlanguage=%s\nkeyword=%s",
 			contextMode,
 			cleanPath,
@@ -3190,22 +3184,68 @@ func (s *Server) handleDomainEditorActions(w http.ResponseWriter, r *http.Reques
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
 		}
-		detectedMime := detectMimeType(cleanPath, imageBytes)
+		detectedMime := strings.ToLower(strings.TrimSpace(http.DetectContentType(imageBytes)))
+		if !isImageMime(detectedMime) {
+			detectedMime = detectMimeType(cleanPath, imageBytes)
+		}
+		regenWarnings := []string{"asset regenerated via AI image model"}
+		wantsWebP := strings.EqualFold(filepath.Ext(cleanPath), ".webp") || strings.EqualFold(baseMimeType(desiredMime), "image/webp")
+		if wantsWebP && !strings.EqualFold(baseMimeType(detectedMime), "image/webp") {
+			converted, convErr := convertToWebP(imageBytes)
+			if convErr != nil {
+				writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+					"error":             "ai_image_invalid_payload",
+					"message":           fmt.Sprintf("webp conversion failed: %v", convErr),
+					"context_pack_meta": contextMeta,
+				})
+				return
+			}
+			imageBytes = converted
+			detectedMime = "image/webp"
+			regenWarnings = append(regenWarnings, "image converted to webp")
+		}
 		if err := validateMimeType(cleanPath, detectedMime, desiredMime); err != nil {
-			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-				"error":             "ai_image_invalid_format",
-				"message":           err.Error(),
-				"context_pack_meta": contextMeta,
-			})
-			return
+			if isImageMime(desiredMime) && isImageMime(detectedMime) {
+				regenWarnings = append(regenWarnings, fmt.Sprintf("image mime adjusted: requested %s, got %s", baseMimeType(desiredMime), baseMimeType(detectedMime)))
+			} else {
+				writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+					"error":             "ai_image_invalid_format",
+					"message":           err.Error(),
+					"context_pack_meta": contextMeta,
+				})
+				return
+			}
 		}
 		if err := validateUploadSecurity(cleanPath, detectedMime, imageBytes); err != nil {
-			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-				"error":             "ai_image_invalid_payload",
-				"message":           err.Error(),
-				"context_pack_meta": contextMeta,
-			})
-			return
+			if isImageMime(detectedMime) {
+				if ext := imageExtByMime(detectedMime); ext != "" {
+					altPath := strings.TrimSuffix(cleanPath, filepath.Ext(cleanPath)) + ext
+					if altErr := validateUploadSecurity(altPath, detectedMime, imageBytes); altErr == nil {
+						regenWarnings = append(regenWarnings, fmt.Sprintf("image payload validated as %s (path extension differs)", baseMimeType(detectedMime)))
+					} else {
+						writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+							"error":             "ai_image_invalid_payload",
+							"message":           err.Error(),
+							"context_pack_meta": contextMeta,
+						})
+						return
+					}
+				} else {
+					writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+						"error":             "ai_image_invalid_payload",
+						"message":           err.Error(),
+						"context_pack_meta": contextMeta,
+					})
+					return
+				}
+			} else {
+				writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+					"error":             "ai_image_invalid_payload",
+					"message":           err.Error(),
+					"context_pack_meta": contextMeta,
+				})
+				return
+			}
 		}
 
 		domainDir, err := domainFilesDir(domain.URL)
@@ -3262,11 +3302,9 @@ func (s *Server) handleDomainEditorActions(w http.ResponseWriter, r *http.Reques
 				ContentAfterHash: sql.NullString{String: hex.EncodeToString(hash[:]), Valid: true},
 			})
 			writeJSON(w, http.StatusOK, map[string]any{
-				"status": "regenerated",
-				"file":   toFileDTO(domain, file),
-				"warnings": []string{
-					"asset regenerated via AI image model",
-				},
+				"status":   "regenerated",
+				"file":     toFileDTO(domain, file),
+				"warnings": regenWarnings,
 				"prompt_trace": map[string]any{
 					"resolved_source": promptSource,
 					"model":           selectedModel,
@@ -3304,7 +3342,7 @@ func (s *Server) handleDomainEditorActions(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusOK, map[string]any{
 			"status":   "regenerated",
 			"file":     toFileDTO(domain, *updated),
-			"warnings": []string{"asset regenerated via AI image model"},
+			"warnings": regenWarnings,
 			"prompt_trace": map[string]any{
 				"resolved_source": promptSource,
 				"model":           selectedModel,
@@ -8175,26 +8213,26 @@ type indexCheckStatsDTO struct {
 }
 
 type llmUsageEventDTO struct {
-	ID               string   `json:"id"`
+	ID               string    `json:"id"`
 	CreatedAt        time.Time `json:"created_at"`
-	Provider         string   `json:"provider"`
-	Operation        string   `json:"operation"`
-	Stage            *string  `json:"stage,omitempty"`
-	Model            string   `json:"model"`
-	Status           string   `json:"status"`
-	RequesterEmail   string   `json:"requester_email"`
-	KeyOwnerEmail    *string  `json:"key_owner_email,omitempty"`
-	KeyType          *string  `json:"key_type,omitempty"`
-	ProjectID        *string  `json:"project_id,omitempty"`
-	DomainID         *string  `json:"domain_id,omitempty"`
-	GenerationID     *string  `json:"generation_id,omitempty"`
-	LinkTaskID       *string  `json:"link_task_id,omitempty"`
-	FilePath         *string  `json:"file_path,omitempty"`
-	PromptTokens     *int64   `json:"prompt_tokens,omitempty"`
-	CompletionTokens *int64   `json:"completion_tokens,omitempty"`
-	TotalTokens      *int64   `json:"total_tokens,omitempty"`
-	TokenSource      string   `json:"token_source"`
-	EstimatedCostUSD *float64 `json:"estimated_cost_usd,omitempty"`
+	Provider         string    `json:"provider"`
+	Operation        string    `json:"operation"`
+	Stage            *string   `json:"stage,omitempty"`
+	Model            string    `json:"model"`
+	Status           string    `json:"status"`
+	RequesterEmail   string    `json:"requester_email"`
+	KeyOwnerEmail    *string   `json:"key_owner_email,omitempty"`
+	KeyType          *string   `json:"key_type,omitempty"`
+	ProjectID        *string   `json:"project_id,omitempty"`
+	DomainID         *string   `json:"domain_id,omitempty"`
+	GenerationID     *string   `json:"generation_id,omitempty"`
+	LinkTaskID       *string   `json:"link_task_id,omitempty"`
+	FilePath         *string   `json:"file_path,omitempty"`
+	PromptTokens     *int64    `json:"prompt_tokens,omitempty"`
+	CompletionTokens *int64    `json:"completion_tokens,omitempty"`
+	TotalTokens      *int64    `json:"total_tokens,omitempty"`
+	TokenSource      string    `json:"token_source"`
+	EstimatedCostUSD *float64  `json:"estimated_cost_usd,omitempty"`
 }
 
 type llmUsageListDTO struct {
@@ -8210,9 +8248,9 @@ type llmUsageBucketDTO struct {
 }
 
 type llmUsageStatsDTO struct {
-	TotalRequests int               `json:"total_requests"`
-	TotalTokens   int64             `json:"total_tokens"`
-	TotalCostUSD  float64           `json:"total_cost_usd"`
+	TotalRequests int                 `json:"total_requests"`
+	TotalTokens   int64               `json:"total_tokens"`
+	TotalCostUSD  float64             `json:"total_cost_usd"`
 	ByDay         []llmUsageBucketDTO `json:"by_day"`
 	ByModel       []llmUsageBucketDTO `json:"by_model"`
 	ByOperation   []llmUsageBucketDTO `json:"by_operation"`
@@ -8220,16 +8258,16 @@ type llmUsageStatsDTO struct {
 }
 
 type llmPricingDTO struct {
-	ID                string     `json:"id"`
-	Provider          string     `json:"provider"`
-	Model             string     `json:"model"`
-	InputUSDPerMillion float64    `json:"input_usd_per_million"`
-	OutputUSDPerMillion float64   `json:"output_usd_per_million"`
-	ActiveFrom        time.Time  `json:"active_from"`
-	ActiveTo          *time.Time `json:"active_to,omitempty"`
-	IsActive          bool       `json:"is_active"`
-	UpdatedBy         string     `json:"updated_by"`
-	UpdatedAt         time.Time  `json:"updated_at"`
+	ID                  string     `json:"id"`
+	Provider            string     `json:"provider"`
+	Model               string     `json:"model"`
+	InputUSDPerMillion  float64    `json:"input_usd_per_million"`
+	OutputUSDPerMillion float64    `json:"output_usd_per_million"`
+	ActiveFrom          time.Time  `json:"active_from"`
+	ActiveTo            *time.Time `json:"active_to,omitempty"`
+	IsActive            bool       `json:"is_active"`
+	UpdatedBy           string     `json:"updated_by"`
+	UpdatedAt           time.Time  `json:"updated_at"`
 }
 
 type generationDTO struct {
@@ -8745,15 +8783,15 @@ func toLLMUsageStatsDTO(stats sqlstore.LLMUsageStats) llmUsageStatsDTO {
 
 func toLLMPricingDTO(item sqlstore.LLMModelPricing) llmPricingDTO {
 	dto := llmPricingDTO{
-		ID:                 item.ID,
-		Provider:           item.Provider,
-		Model:              item.Model,
-		InputUSDPerMillion: item.InputUSDPerMillion,
+		ID:                  item.ID,
+		Provider:            item.Provider,
+		Model:               item.Model,
+		InputUSDPerMillion:  item.InputUSDPerMillion,
 		OutputUSDPerMillion: item.OutputUSDPerMillion,
-		ActiveFrom:         item.ActiveFrom,
-		IsActive:           item.IsActive,
-		UpdatedBy:          item.UpdatedBy,
-		UpdatedAt:          item.UpdatedAt,
+		ActiveFrom:          item.ActiveFrom,
+		IsActive:            item.IsActive,
+		UpdatedBy:           item.UpdatedBy,
+		UpdatedAt:           item.UpdatedAt,
 	}
 	if item.ActiveTo.Valid {
 		v := item.ActiveTo.Time
@@ -10150,6 +10188,23 @@ func isImageMime(mimeType string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(baseMimeType(mimeType))), "image/")
 }
 
+func imageExtByMime(mimeType string) string {
+	switch strings.ToLower(strings.TrimSpace(baseMimeType(mimeType))) {
+	case "image/png":
+		return ".png"
+	case "image/jpeg":
+		return ".jpg"
+	case "image/gif":
+		return ".gif"
+	case "image/webp":
+		return ".webp"
+	case "image/svg+xml":
+		return ".svg"
+	default:
+		return ""
+	}
+}
+
 func validateUploadSecurity(relPath, mimeType string, content []byte) error {
 	if err := validateUploadPathPolicy(relPath); err != nil {
 		return err
@@ -10863,7 +10918,7 @@ func (s *Server) generateEditorImage(ctx context.Context, requesterEmail, ownerE
 		RequestTimeout:  s.cfg.GeminiRequestTimeout,
 		RateLimitPerMin: s.cfg.GeminiRateLimitPerMin,
 	})
-	selectedModel := strings.TrimSpace(model)
+	selectedModel := normalizeImageGenerationModel(strings.TrimSpace(model))
 	imageBytes, err := client.GenerateImage(ctx, prompt, selectedModel)
 	reqs := client.GetRequests()
 	var req llm.LLMRequest
@@ -10917,6 +10972,32 @@ func (s *Server) generateEditorImage(ctx context.Context, requesterEmail, ownerE
 		tokenUsage["output_price_usd_per_million"] = outputPrice.Float64
 	}
 	return imageBytes, tokenUsage, nil
+}
+
+func isImageGenerationModel(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	if model == "" {
+		return false
+	}
+	switch model {
+	case "gemini-2.5-flash-image":
+		return true
+	default:
+		return strings.Contains(model, "image")
+	}
+}
+
+func normalizeImageGenerationModel(candidates ...string) string {
+	for _, candidate := range candidates {
+		model := strings.TrimSpace(candidate)
+		if model == "" {
+			continue
+		}
+		if isImageGenerationModel(model) {
+			return model
+		}
+	}
+	return "gemini-2.5-flash-image"
 }
 
 func (s *Server) logEditorLLMUsageEvent(

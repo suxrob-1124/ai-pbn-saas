@@ -9,7 +9,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 COPY . .
-RUN CGO_ENABLED=0 go build -o /bin/authserver ./cmd/authserver && \
+RUN CGO_ENABLED=1 go build -o /bin/authserver ./cmd/authserver && \
     CGO_ENABLED=0 go build -o /bin/migrate ./cmd/migrate && \
     CGO_ENABLED=0 go build -o /bin/healthcheck ./cmd/healthcheck && \
     CGO_ENABLED=0 go build -o /bin/scheduler ./cmd/scheduler && \
