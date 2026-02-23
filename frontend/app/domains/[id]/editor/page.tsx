@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import {
   FiArrowLeft,
   FiCode,
@@ -91,16 +91,43 @@ const normalizeRelativeSitePath = (baseFilePath: string, refValue: string) => {
 };
 
 const extractLocalAssetRefsFromHTML = (html: string) => {
+  const isLikelyAssetHref = (value: string) => {
+    const clean = value.split("#")[0].split("?")[0].trim().toLowerCase();
+    if (!clean || clean === "/" || clean.endsWith("/")) return false;
+    return /\.(css|js|mjs|cjs|png|jpe?g|gif|webp|svg|ico|bmp|avif|webm|mp4|mp3|wav|ogg|woff2?|ttf|otf|eot|json|xml|txt|pdf|webmanifest)$/i.test(
+      clean
+    );
+  };
   const refs = new Set<string>();
-  const re = /\b(?:src|href)\s*=\s*["']([^"']+)["']/gi;
+  const re = /\b(src|href)\s*=\s*["']([^"']+)["']/gi;
   let match: RegExpExecArray | null;
   while ((match = re.exec(html)) !== null) {
-    const value = (match[1] || "").trim();
+    const attr = (match[1] || "").trim().toLowerCase();
+    const value = (match[2] || "").trim();
     if (!value) continue;
     if (/^(data:|mailto:|tel:|javascript:|https?:|#)/i.test(value)) continue;
+    if (attr === "href" && !isLikelyAssetHref(value)) continue;
     refs.add(value);
   }
   return Array.from(refs);
+};
+
+const normalizeGeneratedHtmlResourcePaths = (filePath: string, html: string) => {
+  if (!html || !filePath.toLowerCase().endsWith(".html")) return html;
+  return html.replace(/\b(src|href)\s*=\s*["']([^"']+)["']/gi, (full, attr, rawValue: string) => {
+    const value = (rawValue || "").trim();
+    if (!value) return full;
+    if (/^(data:|mailto:|tel:|javascript:|https?:|#)/i.test(value)) return full;
+    if (!value.startsWith("./") && !value.startsWith("../")) return full;
+    const [pathAndQuery, hashPart = ""] = value.split("#");
+    const [pathPart = "", queryPart = ""] = pathAndQuery.split("?");
+    const normalized = normalizeRelativeSitePath(filePath, pathPart);
+    if (!normalized) return full;
+    const querySuffix = queryPart ? `?${queryPart}` : "";
+    const hashSuffix = hashPart ? `#${hashPart}` : "";
+    const nextValue = `/${normalized}${querySuffix}${hashSuffix}`;
+    return `${attr}="${nextValue}"`;
+  });
 };
 
 const encodePath = (value: string) =>
@@ -116,12 +143,13 @@ function rewriteHtmlAssetRefs(html: string, domainId: string) {
     const value = rawValue.trim();
     if (!value || value.startsWith("#")) return full;
     if (/^(data:|mailto:|tel:|javascript:|https?:)/i.test(value)) return full;
-    const normalized = value.replace(/^\.\//, "").replace(/^\//, "");
-    if (!normalized) return full;
-    const [pathPart, hashPart = ""] = normalized.split("#");
-    const [purePath, queryPart = ""] = pathPart.split("?");
-    if (!purePath) return full;
-    const encodedPath = purePath
+    const noDotPrefix = value.replace(/^\.\//, "");
+    const [pathAndQuery, hashPart = ""] = noDotPrefix.split("#");
+    const [pathPartRaw, queryPart = ""] = pathAndQuery.split("?");
+    const pathPart = pathPartRaw.trim();
+    const normalized = pathPart.replace(/^\/+/, "");
+    const effectivePath = normalized || "index.html";
+    const encodedPath = effectivePath
       .split("/")
       .filter(Boolean)
       .map((part) => encodeURIComponent(part))
@@ -274,6 +302,7 @@ export default function DomainEditorPage() {
   const [aiImageFormat, setAiImageFormat] = useState<"webp" | "png">("webp");
   const [aiImageResult, setAiImageResult] = useState<AIAssetGenerationResultDTO | null>(null);
   const [aiImageDiagnosticsOpen, setAiImageDiagnosticsOpen] = useState(false);
+  const [previewViewport, setPreviewViewport] = useState<"desktop" | "tablet" | "mobile">("desktop");
   const [overwriteConfirmed, setOverwriteConfirmed] = useState(false);
   const aiSuggestFlow = useAIFlowState();
   const aiCreateFlow = useAIFlowState();
@@ -286,7 +315,69 @@ export default function DomainEditorPage() {
   } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const assetUploadInputRef = useRef<HTMLInputElement | null>(null);
+  const editorPreviewRef = useRef<HTMLIFrameElement | null>(null);
+  const aiCreatePreviewRef = useRef<HTMLIFrameElement | null>(null);
+  const previewGuardToastAtRef = useRef(0);
   const [assetUploadTargetPath, setAssetUploadTargetPath] = useState("");
+
+  const showPreviewNavigationBlockedToast = useCallback(() => {
+    const now = Date.now();
+    if (now - previewGuardToastAtRef.current < 1200) return;
+    previewGuardToastAtRef.current = now;
+    showToast({
+      type: "error",
+      title: "Переход в preview отключён",
+      message: "Ссылки внутри предпросмотра заблокированы, чтобы не ломать редактор.",
+    });
+  }, []);
+
+  const bindPreviewNavigationGuard = useCallback((iframe: HTMLIFrameElement | null) => {
+    if (!iframe) return;
+    const doc = iframe.contentDocument;
+    if (!doc) return;
+    if ((doc as unknown as { __editorPreviewGuardBound?: boolean }).__editorPreviewGuardBound) return;
+    (doc as unknown as { __editorPreviewGuardBound?: boolean }).__editorPreviewGuardBound = true;
+
+    doc.addEventListener(
+      "click",
+      (event) => {
+        const target = event.target as HTMLElement | null;
+        if (!target) return;
+        const anchor = target.closest("a[href]") as HTMLAnchorElement | null;
+        if (!anchor) return;
+        const href = (anchor.getAttribute("href") || "").trim();
+        if (!href) return;
+        if (href.startsWith("#")) {
+          event.preventDefault();
+          event.stopPropagation();
+          const anchorId = href.slice(1).trim();
+          if (!anchorId) return;
+          const escapedId = (window as any).CSS?.escape ? (window as any).CSS.escape(anchorId) : anchorId;
+          const targetEl =
+            doc.getElementById(anchorId) ||
+            doc.querySelector(`[id="${escapedId}"]`) ||
+            doc.querySelector(`[name="${escapedId}"]`);
+          if (targetEl && "scrollIntoView" in targetEl) {
+            (targetEl as HTMLElement).scrollIntoView({ behavior: "smooth", block: "start" });
+          }
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        showPreviewNavigationBlockedToast();
+      },
+      true
+    );
+    doc.addEventListener(
+      "submit",
+      (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        showPreviewNavigationBlockedToast();
+      },
+      true
+    );
+  }, [showPreviewNavigationBlockedToast]);
 
   const currentFile = useMemo(
     () => files.find((item) => item.path === selection?.selectedPath),
@@ -314,6 +405,10 @@ export default function DomainEditorPage() {
     if (/\.(webp|png)$/i.test(raw)) return raw;
     return `${raw}.${aiImageFormat}`;
   }, [aiImageFormat, aiImageTargetPath]);
+  const effectiveAiImageModel = useMemo(() => {
+    const selected = aiImageModel.trim();
+    return selected || "gemini-2.5-flash-image";
+  }, [aiImageModel]);
   const suggestLockKey = `ai-suggest:${selection?.selectedPath || "__none__"}`;
   const suggestContextLockKey = "ai-context:suggest";
   const createLockKey = `ai-create-page:${aiCreatePath.trim() || "__empty__"}`;
@@ -433,6 +528,10 @@ export default function DomainEditorPage() {
     () => unresolvedMissingAssets.filter((pathValue) => !aiCreateAssetPathSet.has(pathValue)),
     [aiCreateAssetPathSet, unresolvedMissingAssets]
   );
+  const firstUnresolvedManifestAssetPath = useMemo(
+    () => unresolvedMissingAssets.find((pathValue) => aiCreateAssetPathSet.has(pathValue)) || "",
+    [aiCreateAssetPathSet, unresolvedMissingAssets]
+  );
   const applyBlockedByAssetIssues = assetValidationIssues.length > 0;
   const applyNeedsOverwriteConfirm = aiCreatePlanSummary.overwrite > 0 && !overwriteConfirmed;
   const canApplyCreatePlan =
@@ -455,6 +554,30 @@ export default function DomainEditorPage() {
   useEffect(() => {
     setOverwriteConfirmed(false);
   }, [aiCreateApplyPlan, aiCreateFiles]);
+
+  useEffect(() => {
+    if (!firstUnresolvedManifestAssetPath) return;
+    const shouldPrefillPath =
+      !aiImageTargetPath.trim() ||
+      aiImageTargetPath.trim() === "assets/generated-image.webp" ||
+      !aiCreateAssetPathSet.has(aiImageTargetPath.trim());
+    if (!shouldPrefillPath) return;
+    const manifestAsset = aiCreateAssets.find((item) => item.path === firstUnresolvedManifestAssetPath);
+    setAiImageTargetPath(firstUnresolvedManifestAssetPath);
+    if (manifestAsset?.alt && !aiImageAlt.trim()) {
+      setAiImageAlt(manifestAsset.alt);
+    }
+    if (manifestAsset?.prompt && !aiImagePrompt.trim()) {
+      setAiImagePrompt(manifestAsset.prompt);
+    }
+  }, [
+    aiCreateAssetPathSet,
+    aiCreateAssets,
+    aiImageAlt,
+    aiImagePrompt,
+    aiImageTargetPath,
+    firstUnresolvedManifestAssetPath,
+  ]);
 
   const updatePathQuery = (pathValue: string) => {
     const query = new URLSearchParams(searchParams.toString());
@@ -934,7 +1057,15 @@ export default function DomainEditorPage() {
             context_files: selectedContextFiles(aiCreateContextMode, aiCreateContextSelectedFiles),
           });
           aiCreateFlow.setStatus("parsing", "Обрабатываем пакет файлов");
-          const generatedFiles = Array.isArray(result.files) ? result.files : [];
+          const generatedFilesRaw = Array.isArray(result.files) ? result.files : [];
+          const generatedFiles = generatedFilesRaw.map((file) => {
+            if (!file?.path) return file;
+            if (!file.path.toLowerCase().endsWith(".html")) return file;
+            return {
+              ...file,
+              content: normalizeGeneratedHtmlResourcePaths(file.path, file.content || ""),
+            };
+          });
           const generatedAssets = Array.isArray(result.assets) ? result.assets : [];
           if (generatedFiles.length === 0) {
             aiCreateFlow.fail("empty files", "AI не вернул файлов для применения");
@@ -1106,7 +1237,7 @@ export default function DomainEditorPage() {
             path: asset.path,
             prompt: promptValue,
             mime_type: asset.mime_type || undefined,
-            model: aiCreateModel.trim() || undefined,
+            model: effectiveAiImageModel,
             context_mode: aiCreateContextMode,
             context_files: selectedContextFiles(aiCreateContextMode, aiCreateContextSelectedFiles),
           });
@@ -1395,6 +1526,12 @@ export default function DomainEditorPage() {
     domainId,
   ]);
 
+  const previewViewportClass = useMemo(() => {
+    if (previewViewport === "mobile") return "mx-auto w-full max-w-[390px]";
+    if (previewViewport === "tablet") return "mx-auto w-full max-w-[820px]";
+    return "w-full";
+  }, [previewViewport]);
+
   const rawImageURL = useMemo(() => {
     if (!selection || !currentFile || !currentFile.mimeType.toLowerCase().startsWith("image/")) return "";
     return `${apiBase()}/api/domains/${domainId}/files/${encodePath(selection.selectedPath)}?raw=1`;
@@ -1650,12 +1787,44 @@ export default function DomainEditorPage() {
               )}
 
               {previewMode === "preview" && (
-                <iframe
-                  title="editor-preview"
-                  sandbox="allow-same-origin allow-scripts"
-                  srcDoc={previewSrcDoc}
-                  className="h-[62vh] w-full rounded-lg border border-slate-200 dark:border-slate-700"
-                />
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Якорные ссылки работают в пределах preview. Остальная навигация ограничена для безопасности редактора.
+                    </div>
+                    <div className="inline-flex rounded-lg border border-slate-200 p-1 text-[11px] dark:border-slate-700">
+                      <button
+                        type="button"
+                        onClick={() => setPreviewViewport("desktop")}
+                        className={`rounded px-2 py-1 ${previewViewport === "desktop" ? "bg-indigo-600 text-white" : "text-slate-600 dark:text-slate-300"}`}
+                      >
+                        Desktop
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPreviewViewport("tablet")}
+                        className={`rounded px-2 py-1 ${previewViewport === "tablet" ? "bg-indigo-600 text-white" : "text-slate-600 dark:text-slate-300"}`}
+                      >
+                        Tablet
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPreviewViewport("mobile")}
+                        className={`rounded px-2 py-1 ${previewViewport === "mobile" ? "bg-indigo-600 text-white" : "text-slate-600 dark:text-slate-300"}`}
+                      >
+                        Mobile
+                      </button>
+                    </div>
+                  </div>
+                  <iframe
+                    ref={editorPreviewRef}
+                    title="editor-preview"
+                    sandbox="allow-same-origin allow-scripts"
+                    srcDoc={previewSrcDoc}
+                    onLoad={() => bindPreviewNavigationGuard(editorPreviewRef.current)}
+                    className={`h-[62vh] rounded-lg border border-slate-200 dark:border-slate-700 ${previewViewportClass}`}
+                  />
+                </div>
               )}
             </div>
           )}
@@ -1834,7 +2003,7 @@ export default function DomainEditorPage() {
                   </div>
                 )}
 
-                {aiOutput && (
+                {aiOutput && !aiApplyPathMismatch && (
                   <>
                     <div className="flex items-center gap-2">
                       <button
@@ -2110,6 +2279,9 @@ export default function DomainEditorPage() {
                     >
                       <FiWind /> {imageGenerateLocked ? t.actions.generating : t.imagePanel.generate}
                     </button>
+                    <span className="inline-flex items-center rounded border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] text-slate-600 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-300">
+                      Модель для изображений: <span className="ml-1 font-mono font-semibold">{effectiveAiImageModel}</span>
+                    </span>
                     {imageGenerateLocked && (
                       <span className="text-[11px] text-slate-500 dark:text-slate-400">
                         {lockReason(imageGenerateLockKey) || "Генерация изображения"}
@@ -2504,12 +2676,39 @@ export default function DomainEditorPage() {
                         )}
                         {aiCreateView === "preview" &&
                           (aiCreatePreviewFile.path.toLowerCase().endsWith(".html") ? (
-                            <iframe
-                              title="ai-create-preview"
-                              sandbox="allow-same-origin allow-scripts"
-                              srcDoc={aiCreatePreviewSrcDoc}
-                              className="h-[56vh] w-full rounded-lg border border-slate-200 dark:border-slate-700"
-                            />
+                            <div className="space-y-2">
+                              <div className="inline-flex rounded-lg border border-slate-200 p-1 text-[11px] dark:border-slate-700">
+                                <button
+                                  type="button"
+                                  onClick={() => setPreviewViewport("desktop")}
+                                  className={`rounded px-2 py-1 ${previewViewport === "desktop" ? "bg-indigo-600 text-white" : "text-slate-600 dark:text-slate-300"}`}
+                                >
+                                  Desktop
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setPreviewViewport("tablet")}
+                                  className={`rounded px-2 py-1 ${previewViewport === "tablet" ? "bg-indigo-600 text-white" : "text-slate-600 dark:text-slate-300"}`}
+                                >
+                                  Tablet
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setPreviewViewport("mobile")}
+                                  className={`rounded px-2 py-1 ${previewViewport === "mobile" ? "bg-indigo-600 text-white" : "text-slate-600 dark:text-slate-300"}`}
+                                >
+                                  Mobile
+                                </button>
+                              </div>
+                              <iframe
+                                ref={aiCreatePreviewRef}
+                                title="ai-create-preview"
+                                sandbox="allow-same-origin allow-scripts"
+                                srcDoc={aiCreatePreviewSrcDoc}
+                                onLoad={() => bindPreviewNavigationGuard(aiCreatePreviewRef.current)}
+                                className={`h-[56vh] rounded-lg border border-slate-200 dark:border-slate-700 ${previewViewportClass}`}
+                              />
+                            </div>
                           ) : (
                             <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-300">
                               {t.hints.previewOnlyForHTML}
@@ -2517,8 +2716,20 @@ export default function DomainEditorPage() {
                           ))}
                         {aiCreateView === "code" && (
                           <textarea
-                            readOnly
                             value={aiCreatePreviewFile.content || ""}
+                            onChange={(e) => {
+                              const nextContent = e.target.value;
+                              setAiCreateFiles((prev) =>
+                                prev.map((item) =>
+                                  item.path === aiCreatePreviewFile.path
+                                    ? {
+                                        ...item,
+                                        content: nextContent,
+                                      }
+                                    : item
+                                )
+                              );
+                            }}
                             rows={12}
                             className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 font-mono text-[11px] dark:border-slate-700 dark:bg-slate-800"
                           />

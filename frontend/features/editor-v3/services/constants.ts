@@ -13,9 +13,8 @@ export const EDITOR_MODEL_OPTIONS: EditorModelOption[] = [
 ];
 
 export const EDITOR_IMAGE_MODEL_OPTIONS: EditorModelOption[] = [
-  { value: "", label: `По умолчанию (${defaultModel})` },
+  { value: "", label: "По умолчанию (gemini-2.5-flash-image)" },
   { value: "gemini-2.5-flash-image", label: "gemini-2.5-flash-image" },
-  { value: "gemini-2.5-flash", label: "gemini-2.5-flash" },
 ];
 
 export const AI_CONTEXT_MODE_OPTIONS: AIContextModeOption[] = [

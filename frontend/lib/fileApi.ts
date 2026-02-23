@@ -407,7 +407,7 @@ export async function aiRegenerateAsset(
 
 const normalizeAssetGenerationStatus = (value?: string): AIAssetGenerationStatus => {
   const normalized = (value || "").trim().toLowerCase();
-  if (normalized === "ok" || normalized === "success" || normalized === "generated") return "ok";
+  if (normalized === "ok" || normalized === "success" || normalized === "generated" || normalized === "regenerated") return "ok";
   if (normalized === "broken") return "broken";
   if (normalized === "missing") return "missing";
   return "error";
