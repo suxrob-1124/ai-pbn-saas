@@ -35,6 +35,7 @@ import { Badge } from "../../../components/Badge";
 import { getDomainLinkStatusMeta, hasInsertedLink, isLinkTaskInProgress } from "../../../lib/linkTaskStatus";
 import { DOMAIN_PROJECT_CTA, getGenerationStatusMeta, getLinkActionLabel } from "../../../features/domain-project/services/statusCta";
 import { useProjectAsyncActions } from "../../../features/domain-project/hooks/useProjectAsyncActions";
+import { ActionFlowBanner } from "../../../features/domain-project/components/ActionFlowBanner";
 
 type Project = {
   id: string;
@@ -1007,7 +1008,7 @@ export default function ProjectDetailPage() {
     }
   };
 
-  const { runGeneration, runLinkTask, removeLinkTask, deleteDomain } = useProjectAsyncActions({
+  const { runGeneration, runLinkTask, removeLinkTask, deleteDomain, generationFlow, linkFlow } = useProjectAsyncActions({
     projectId,
     project,
     domains,
@@ -1138,6 +1139,10 @@ export default function ProjectDetailPage() {
           </div>
         </div>
         {error && <div className="text-red-500 text-sm mt-2">{error}</div>}
+        <div className="mt-3 space-y-2">
+          <ActionFlowBanner title="Операции доменов" flow={generationFlow} />
+          <ActionFlowBanner title="Операции ссылок" flow={linkFlow} />
+        </div>
         
         {/* Индикатор API ключа */}
         {project && (

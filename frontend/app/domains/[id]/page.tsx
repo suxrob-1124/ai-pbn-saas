@@ -17,6 +17,7 @@ import { AuditReport } from "../../../components/AuditReport";
 import { Badge } from "../../../components/Badge";
 import { DOMAIN_PROJECT_CTA, getGenerationStatusMeta, getLinkActionLabel, getMainGenerationActionLabel } from "../../../features/domain-project/services/statusCta";
 import { useDomainAsyncActions } from "../../../features/domain-project/hooks/useDomainAsyncActions";
+import { ActionFlowBanner } from "../../../features/domain-project/components/ActionFlowBanner";
 
 type Domain = {
   id: string;
@@ -243,7 +244,9 @@ export default function DomainPage() {
     deleteGeneration,
     pauseGeneration,
     resumeGeneration,
-    cancelGeneration
+    cancelGeneration,
+    generationFlow,
+    linkFlow
   } = useDomainAsyncActions({
     id,
     kw,
@@ -587,6 +590,10 @@ export default function DomainPage() {
           </div>
         </div>
         {error && <div className="mt-2 text-red-500 text-sm">{error}</div>}
+        <div className="mt-3 space-y-2">
+          <ActionFlowBanner title="Генерация" flow={generationFlow} />
+          <ActionFlowBanner title="Ссылки" flow={linkFlow} />
+        </div>
       </div>
 
       <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow">

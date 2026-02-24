@@ -3,6 +3,7 @@ import { authFetch, del, patch } from "../../../lib/http";
 import { showToast } from "../../../lib/toastStore";
 import { useActionLocks } from "../../editor-v3/hooks/useActionLocks";
 import { isLinkTaskInProgress } from "../../../lib/linkTaskStatus";
+import { useFlowState } from "./useFlowState";
 
 type DomainLite = {
   url?: string;
@@ -78,11 +79,15 @@ export function useDomainAsyncActions({
   setLinkTasks
 }: UseDomainAsyncActionsParams) {
   const { runLocked } = useActionLocks();
+  const generationFlowState = useFlowState();
+  const linkFlowState = useFlowState();
 
   const triggerGeneration = async (forceStep?: string) => {
     if (!id) return;
+    generationFlowState.validating("Проверяем параметры запуска генерации");
     if (!kw.trim()) {
       setError("Сначала задайте ключевое слово");
+      generationFlowState.fail("Ключевое слово не заполнено");
       return;
     }
     const latestGen = latestAttempt || gens[0];
@@ -95,6 +100,7 @@ export function useDomainAsyncActions({
     await runLocked(
       `domain:${id}:generation:${forceStep || "main"}`,
       async () => {
+        generationFlowState.sending(forceStep ? `Запускаем генерацию с этапа ${forceStep}` : "Запускаем генерацию");
         setError(null);
         setLoading(true);
         setGens((prev) => {
@@ -115,9 +121,11 @@ export function useDomainAsyncActions({
             body: payload ? JSON.stringify(payload) : undefined
           });
           await load(true);
+          generationFlowState.done("Задача генерации отправлена в очередь");
         } catch (err: any) {
           const msg = err?.message || "Не удалось запустить генерацию";
           setError(msg);
+          generationFlowState.fail("Не удалось запустить генерацию", err);
           throw err;
         } finally {
           setLoading(false);
@@ -148,9 +156,11 @@ export function useDomainAsyncActions({
 
   const runLinkTask = async () => {
     if (!id) return;
+    linkFlowState.validating("Проверяем настройки ссылки");
     await runLocked(
       `domain:${id}:link:run`,
       async () => {
+        linkFlowState.sending("Запускаем добавление ссылки");
         setLinkTasksError(null);
         setLinkNotice(null);
         const domainLinkStatus = domain?.link_status_effective || domain?.link_status;
@@ -163,6 +173,7 @@ export function useDomainAsyncActions({
             title: "Задача уже выполняется",
             message: "Дождитесь завершения текущей задачи по ссылке."
           });
+          linkFlowState.fail("Уже есть выполняющаяся задача по ссылке");
           return;
         }
         if (!linkAnchor.trim() || !linkAcceptor.trim()) {
@@ -172,6 +183,7 @@ export function useDomainAsyncActions({
             title: "Ссылка не настроена",
             message: "Заполните анкор и акцептор перед запуском."
           });
+          linkFlowState.fail("Анкор или акцептор не заполнены");
           return;
         }
         setLinkTasksLoading(true);
@@ -184,6 +196,7 @@ export function useDomainAsyncActions({
             message: domain?.url || undefined
           });
           await load(true);
+          linkFlowState.done("Добавление ссылки запущено");
         } catch (err: any) {
           const msg = err?.message || "Не удалось запустить добавление ссылки";
           setLinkTasksError(msg);
@@ -192,6 +205,7 @@ export function useDomainAsyncActions({
             title: "Ошибка запуска",
             message: msg
           });
+          linkFlowState.fail("Не удалось запустить добавление ссылки", err);
         } finally {
           setLinkTasksLoading(false);
         }
@@ -202,9 +216,11 @@ export function useDomainAsyncActions({
 
   const removeLinkTask = async () => {
     if (!id) return;
+    linkFlowState.validating("Проверяем возможность удаления ссылки");
     await runLocked(
       `domain:${id}:link:remove`,
       async () => {
+        linkFlowState.sending("Запускаем удаление ссылки");
         const domainLinkStatus = domain?.link_status_effective || domain?.link_status;
         const linkInProgressNow =
           isLinkTaskInProgress(domainLinkStatus) ||
@@ -215,6 +231,7 @@ export function useDomainAsyncActions({
             title: "Задача уже выполняется",
             message: "Дождитесь завершения текущей задачи по ссылке."
           });
+          linkFlowState.fail("Уже есть выполняющаяся задача по ссылке");
           return;
         }
         if (!canRemoveLink) {
@@ -223,6 +240,7 @@ export function useDomainAsyncActions({
             title: "Удалять нечего",
             message: "Ссылка на сайте не найдена."
           });
+          linkFlowState.fail("Ссылка для удаления не найдена");
           return;
         }
         if (!confirm("Удалить ссылку с сайта?")) return;
@@ -238,6 +256,7 @@ export function useDomainAsyncActions({
             message: domain?.url || undefined
           });
           await load(true);
+          linkFlowState.done("Удаление ссылки запущено");
         } catch (err: any) {
           const msg = err?.message || "Не удалось запустить удаление ссылки";
           setLinkTasksError(msg);
@@ -246,6 +265,7 @@ export function useDomainAsyncActions({
             title: "Ошибка удаления",
             message: msg
           });
+          linkFlowState.fail("Не удалось запустить удаление ссылки", err);
         } finally {
           setLinkTasksLoading(false);
         }
@@ -256,6 +276,7 @@ export function useDomainAsyncActions({
 
   const refreshLinkTasks = async () => {
     if (!id) return;
+    linkFlowState.sending("Обновляем список задач по ссылкам");
     await runLocked(
       `domain:${id}:link:refresh`,
       async () => {
@@ -266,8 +287,10 @@ export function useDomainAsyncActions({
           const list = Array.isArray(tasks) ? tasks : [];
           list.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
           setLinkTasks(list);
+          linkFlowState.done("Список задач по ссылкам обновлён");
         } catch (err: any) {
           setLinkTasksError(err?.message || "Не удалось загрузить задачи ссылок");
+          linkFlowState.fail("Не удалось обновить список задач по ссылкам", err);
         } finally {
           setLinkTasksLoading(false);
         }
@@ -278,6 +301,7 @@ export function useDomainAsyncActions({
 
   const deleteGeneration = async (genId: string) => {
     if (!confirm("Удалить этот запуск?")) return;
+    generationFlowState.sending("Удаляем запуск генерации");
     await runLocked(
       `generation:${genId}:delete`,
       async () => {
@@ -286,8 +310,10 @@ export function useDomainAsyncActions({
         try {
           await del(`/api/generations/${genId}`);
           await load(true);
+          generationFlowState.done("Запуск удалён");
         } catch (err: any) {
           setError(err?.message || "Не удалось удалить запуск");
+          generationFlowState.fail("Не удалось удалить запуск", err);
         } finally {
           setLoading(false);
         }
@@ -298,6 +324,7 @@ export function useDomainAsyncActions({
 
   const pauseGeneration = async (genId: string) => {
     if (!confirm("Приостановить выполнение задачи?")) return;
+    generationFlowState.sending("Отправляем запрос на паузу");
     await runLocked(
       `generation:${genId}:pause`,
       async () => {
@@ -306,8 +333,10 @@ export function useDomainAsyncActions({
         try {
           await patch(`/api/generations/${genId}`, { action: "pause" });
           await load(true);
+          generationFlowState.done("Запрос на паузу отправлен");
         } catch (err: any) {
           setError(err?.message || "Не удалось приостановить задачу");
+          generationFlowState.fail("Не удалось приостановить задачу", err);
         } finally {
           setLoading(false);
         }
@@ -317,6 +346,7 @@ export function useDomainAsyncActions({
   };
 
   const resumeGeneration = async (genId: string) => {
+    generationFlowState.sending("Возобновляем выполнение задачи");
     await runLocked(
       `generation:${genId}:resume`,
       async () => {
@@ -325,8 +355,10 @@ export function useDomainAsyncActions({
         try {
           await patch(`/api/generations/${genId}`, { action: "resume" });
           await load(true);
+          generationFlowState.done("Задача возобновлена");
         } catch (err: any) {
           setError(err?.message || "Не удалось возобновить задачу");
+          generationFlowState.fail("Не удалось возобновить задачу", err);
         } finally {
           setLoading(false);
         }
@@ -337,6 +369,7 @@ export function useDomainAsyncActions({
 
   const cancelGeneration = async (genId: string) => {
     if (!confirm("Отменить выполнение задачи?")) return;
+    generationFlowState.sending("Отправляем запрос на отмену");
     await runLocked(
       `generation:${genId}:cancel`,
       async () => {
@@ -345,8 +378,10 @@ export function useDomainAsyncActions({
         try {
           await patch(`/api/generations/${genId}`, { action: "cancel" });
           await load(true);
+          generationFlowState.done("Запрос на отмену отправлен");
         } catch (err: any) {
           setError(err?.message || "Не удалось отменить задачу");
+          generationFlowState.fail("Не удалось отменить задачу", err);
         } finally {
           setLoading(false);
         }
@@ -364,6 +399,8 @@ export function useDomainAsyncActions({
     deleteGeneration,
     pauseGeneration,
     resumeGeneration,
-    cancelGeneration
+    cancelGeneration,
+    generationFlow: generationFlowState.flow,
+    linkFlow: linkFlowState.flow
   };
 }
