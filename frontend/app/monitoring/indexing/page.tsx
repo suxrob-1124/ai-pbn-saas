@@ -12,6 +12,12 @@ import { useAuthGuard } from "../../../lib/useAuth";
 import { authFetchCached, invalidateAuthCache } from "../../../lib/http";
 import { useDebouncedValue } from "../../../lib/useDebouncedValue";
 import { showToast } from "../../../lib/toastStore";
+import { PaginationControls } from "../../../features/queue-monitoring/components/PaginationControls";
+import {
+  readPositiveIntParam,
+  setOptionalNumberParam,
+  setOptionalParam
+} from "../../../features/queue-monitoring/services/queryParams";
 import {
   listAdmin,
   listAdminCalendar,
@@ -96,12 +102,10 @@ function IndexingMonitoringContent() {
   const debouncedSearch = useDebouncedValue(search, SEARCH_DEBOUNCE_MS);
   const [sort, setSort] = useState<IndexCheckSort>(() => parseSortParam(searchParams.get("sort")));
   const [page, setPage] = useState(() => {
-    const initial = Number(searchParams.get("page") || 1);
-    return Number.isFinite(initial) && initial > 0 ? initial : 1;
+    return readPositiveIntParam(searchParams, "page", 1);
   });
   const [limit, setLimit] = useState(() => {
-    const initial = Number(searchParams.get("limit") || DEFAULT_LIMIT);
-    return Number.isFinite(initial) && initial > 0 ? initial : DEFAULT_LIMIT;
+    return readPositiveIntParam(searchParams, "limit", DEFAULT_LIMIT);
   });
 
   const [history, setHistory] = useState<Record<string, IndexCheckHistoryDTO[]>>({});
@@ -258,10 +262,8 @@ function IndexingMonitoringContent() {
     const domainParam = searchParams.get("domainId") || "";
     const indexedParam = (searchParams.get("isIndexed") || "all") as "all" | "true" | "false";
     const sortParam = parseSortParam(searchParams.get("sort"));
-    const pageParam = Number(searchParams.get("page") || 1);
-    const nextPage = Number.isFinite(pageParam) && pageParam > 0 ? pageParam : 1;
-    const limitParam = Number(searchParams.get("limit") || DEFAULT_LIMIT);
-    const nextLimit = Number.isFinite(limitParam) && limitParam > 0 ? limitParam : DEFAULT_LIMIT;
+    const nextPage = readPositiveIntParam(searchParams, "page", 1);
+    const nextLimit = readPositiveIntParam(searchParams, "limit", DEFAULT_LIMIT);
 
     if (!sameStatusList(statusParam, statusFilter)) {
       setStatusFilter(statusParam);
@@ -299,46 +301,18 @@ function IndexingMonitoringContent() {
     } else {
       params.set("status", statusFilter.join(","));
     }
-    if (debouncedSearch.trim()) {
-      params.set("search", debouncedSearch.trim());
-    } else {
-      params.delete("search");
-    }
+    setOptionalParam(params, "search", debouncedSearch, "");
     if (indexedFilter === "all") {
       params.delete("isIndexed");
     } else {
       params.set("isIndexed", indexedFilter);
     }
-    if (dateFrom) {
-      params.set("from", dateFrom);
-    } else {
-      params.delete("from");
-    }
-    if (dateTo) {
-      params.set("to", dateTo);
-    } else {
-      params.delete("to");
-    }
-    if (domainScope) {
-      params.set("domainId", domainScope);
-    } else {
-      params.delete("domainId");
-    }
-    if (page > 1) {
-      params.set("page", String(page));
-    } else {
-      params.delete("page");
-    }
-    if (limit !== DEFAULT_LIMIT) {
-      params.set("limit", String(limit));
-    } else {
-      params.delete("limit");
-    }
-    if (sortParam && sortParam !== DEFAULT_SORT_PARAM) {
-      params.set("sort", sortParam);
-    } else {
-      params.delete("sort");
-    }
+    setOptionalParam(params, "from", dateFrom, "");
+    setOptionalParam(params, "to", dateTo, "");
+    setOptionalParam(params, "domainId", domainScope, "");
+    setOptionalNumberParam(params, "page", page, 1);
+    setOptionalNumberParam(params, "limit", limit, DEFAULT_LIMIT);
+    setOptionalParam(params, "sort", sortParam, DEFAULT_SORT_PARAM);
     const nextQuery = params.toString();
     const currentQuery = searchParams.toString();
     if (nextQuery !== currentQuery) {
@@ -722,47 +696,38 @@ function IndexingMonitoringContent() {
               onSortChange={handleSortChange}
               onRunNow={isAdmin && !projectId ? handleAdminRunNow : undefined}
             />
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500 dark:text-slate-400">
-              <div>
-                Страница {pageLabel} из {totalPages}
-              </div>
-              <div className="flex items-center gap-2">
-                <span>Размер страницы</span>
-                <select
-                  value={limit}
-                  onChange={(e) => {
-                    const next = Number(e.target.value) || DEFAULT_LIMIT;
-                    setLimit(next);
-                    setPage(1);
-                  }}
-                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs dark:border-slate-800 dark:bg-slate-950"
-                  disabled={loading}
-                >
-                  {[10, 20, 50, 100].map((size) => (
-                    <option key={size} value={size}>
-                      {size}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  disabled={loading || page <= 1}
-                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                >
-                  Назад
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPage((p) => p + 1)}
-                  disabled={loading || !hasNextPage}
-                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                >
-                  Вперед
-                </button>
-              </div>
+            <div className="mt-4">
+              <PaginationControls
+                page={page}
+                hasNext={hasNextPage}
+                onPrev={() => setPage((p) => Math.max(1, p - 1))}
+                onNext={() => setPage((p) => p + 1)}
+                prevDisabled={loading}
+                nextDisabled={loading}
+                nextLabel="Вперед"
+                pageLabel={`Страница ${pageLabel} из ${totalPages}`}
+                middleSlot={
+                  <>
+                    <span>Размер страницы</span>
+                    <select
+                      value={limit}
+                      onChange={(e) => {
+                        const next = Number(e.target.value) || DEFAULT_LIMIT;
+                        setLimit(next);
+                        setPage(1);
+                      }}
+                      className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs dark:border-slate-800 dark:bg-slate-950"
+                      disabled={loading}
+                    >
+                      {[10, 20, 50, 100].map((size) => (
+                        <option key={size} value={size}>
+                          {size}
+                        </option>
+                      ))}
+                    </select>
+                  </>
+                }
+              />
             </div>
           </div>
           <div className="space-y-2">

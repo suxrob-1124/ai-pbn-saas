@@ -11,6 +11,7 @@ import { showToast } from "../../lib/toastStore";
 import type { LinkTaskDTO } from "../../types/linkTasks";
 import { Badge } from "../../components/Badge";
 import { getLinkTaskStatusMeta, isLinkTaskInProgress, normalizeLinkTaskStatus } from "../../lib/linkTaskStatus";
+import { PaginationControls } from "../../features/queue-monitoring/components/PaginationControls";
 
 type Generation = {
   id: string;
@@ -409,25 +410,12 @@ function QueuePageContent() {
         </div>
         )}
         {filtered.length > 0 && (
-          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-            <span>Страница {genPage}</span>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setGenPage((p) => Math.max(1, p - 1))}
-                disabled={genPage <= 1}
-                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              >
-                Назад
-              </button>
-              <button
-                onClick={() => setGenPage((p) => p + 1)}
-                disabled={!genHasNext}
-                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              >
-                Вперёд
-              </button>
-            </div>
-          </div>
+          <PaginationControls
+            page={genPage}
+            hasNext={genHasNext}
+            onPrev={() => setGenPage((p) => Math.max(1, p - 1))}
+            onNext={() => setGenPage((p) => p + 1)}
+          />
         )}
       </div>
       )}
@@ -541,25 +529,12 @@ function QueuePageContent() {
           </div>
         )}
         {filteredLinks.length > 0 && (
-          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-            <span>Страница {linkPage}</span>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setLinkPage((p) => Math.max(1, p - 1))}
-                disabled={linkPage <= 1}
-                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              >
-                Назад
-              </button>
-              <button
-                onClick={() => setLinkPage((p) => p + 1)}
-                disabled={!linkHasNext}
-                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              >
-                Вперёд
-              </button>
-            </div>
-          </div>
+          <PaginationControls
+            page={linkPage}
+            hasNext={linkHasNext}
+            onPrev={() => setLinkPage((p) => Math.max(1, p - 1))}
+            onNext={() => setLinkPage((p) => p + 1)}
+          />
         )}
       </div>
       )}

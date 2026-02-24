@@ -449,6 +449,24 @@
 3. Убрать расхождения в статусах между страницами.
 4. Привести тексты и термины к одной русской локализации.
 
+### Wave 3 status (W3.1, 24.02.2026)
+
+1. `completed` — shared queue/filter/pagination primitives:
+- добавлены общие компоненты `FilterSelect`, `FilterDateInput`, `PaginationControls`.
+- примитивы подключены в `/queue`, `/projects/[id]/queue`, `/monitoring/indexing`.
+
+2. `completed` — query-string helper utilities:
+- добавлен общий модуль `queryParams` для чтения/записи query-параметров (`page/limit/search/sort/date`).
+- локальные дубли parse/set логики в monitoring-странице сокращены.
+
+3. `verification`:
+- `npx tsc --noEmit` — green.
+- verify: `project-queue`, `project-queue-active-filters`, `project-queue-history`, `project-queue-link-normalization`,
+  `index-monitoring-ui`, `index-table`, `index-checks-pagination`, `schedule-ui`, `schedule-list`, `schedule-form` — green.
+
+4. `leftovers`:
+- в `Wave 3` остаются унификация disable/guard-паттерна для всех queue операций и финальное выравнивание терминологии статусов во всех queue/schedule/monitoring экранах.
+
 ### Wave 4 — Backend HTTP слой целиком
 1. Распилить монолитные handler-файлы по доменным модулям.
 2. Вынести общие parse/validate/respond утилиты.
