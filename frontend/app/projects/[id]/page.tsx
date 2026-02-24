@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { UrlObject } from "url";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { authFetch, authFetchCached, post, patch, del } from "../../../lib/http";
@@ -33,6 +33,7 @@ import { PromptOverridesPanel } from "../../../components/PromptOverridesPanel";
 import type { ScheduleFormValue } from "../../../lib/scheduleFormValidation";
 import { Badge } from "../../../components/Badge";
 import { getDomainLinkStatusMeta, hasInsertedLink, isLinkTaskInProgress } from "../../../lib/linkTaskStatus";
+import { DOMAIN_PROJECT_CTA, getGenerationStatusMeta, getLinkActionLabel } from "../../../features/domain-project/services/statusCta";
 
 type Project = {
   id: string;
@@ -1464,7 +1465,7 @@ export default function ProjectDetailPage() {
                     </Link>
                     <StatusBadge status={d.status} />
                     <Badge
-                      label={`Попытка: ${d.status}`}
+                      label={`Попытка: ${getGenerationStatusMeta(d.status).text}`}
                       tone={["processing", "pending", "pause_requested", "cancelling"].includes((d.status || "").toLowerCase()) ? "amber" : "slate"}
                       className="text-[11px]"
                     />
@@ -1501,14 +1502,14 @@ export default function ProjectDetailPage() {
                     className="hidden sm:inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   >
                     <FiLink />
-                    {linkInProgress ? "В работе..." : hasActiveLink ? "Обновить ссылку" : "Добавить ссылку"}
+                    {getLinkActionLabel(hasActiveLink, linkInProgress, true)}
                   </button>
                   <button
                     onClick={() => runLinkTask(d.id)}
                     disabled={loading || linkLoadingId === d.id || linkInProgress}
                     className="inline-flex sm:hidden items-center justify-center rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                    title={linkInProgress ? "Задача в работе" : hasActiveLink ? "Обновить ссылку" : "Добавить ссылку"}
-                    aria-label={linkInProgress ? "Задача в работе" : hasActiveLink ? "Обновить ссылку" : "Добавить ссылку"}
+                    title={linkInProgress ? DOMAIN_PROJECT_CTA.linkTaskInProgressShort : getLinkActionLabel(hasActiveLink, linkInProgress, true)}
+                    aria-label={linkInProgress ? DOMAIN_PROJECT_CTA.linkTaskInProgressShort : getLinkActionLabel(hasActiveLink, linkInProgress, true)}
                   >
                     <FiLink />
                   </button>
@@ -1520,14 +1521,14 @@ export default function ProjectDetailPage() {
                         className="hidden sm:inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
                       >
                         <FiTrash2 />
-                        Удалить ссылку
+                        {DOMAIN_PROJECT_CTA.linkRemove}
                       </button>
                       <button
                         onClick={() => removeLinkTask(d.id)}
                         disabled={loading || linkLoadingId === d.id}
                         className="inline-flex sm:hidden items-center justify-center rounded-lg border border-red-200 bg-white px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
-                        title="Удалить ссылку"
-                        aria-label="Удалить ссылку"
+                        title={DOMAIN_PROJECT_CTA.linkRemove}
+                        aria-label={DOMAIN_PROJECT_CTA.linkRemove}
                       >
                         <FiTrash2 />
                       </button>
@@ -1549,13 +1550,13 @@ export default function ProjectDetailPage() {
                     onClick={() => loadGens(d.id)}
                     className="hidden sm:inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   >
-                    <FiList /> Запуски {openRuns[d.id] && gens[d.id] && `(${gens[d.id].length})`}
+                    <FiList /> {DOMAIN_PROJECT_CTA.runs} {openRuns[d.id] && gens[d.id] && `(${gens[d.id].length})`}
                   </button>
                   <button
                     onClick={() => loadGens(d.id)}
                     className="inline-flex sm:hidden items-center justify-center rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                    title={`Запуски ${openRuns[d.id] && gens[d.id] ? `(${gens[d.id].length})` : ""}`}
-                    aria-label="Запуски"
+                    title={`${DOMAIN_PROJECT_CTA.runs} ${openRuns[d.id] && gens[d.id] ? `(${gens[d.id].length})` : ""}`}
+                    aria-label={DOMAIN_PROJECT_CTA.runs}
                   >
                     <FiList />
                   </button>
@@ -2178,23 +2179,20 @@ function RunsList({ runs }: { runs: Generation[] }) {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, { text: string; tone: "slate" | "amber" | "green" | "yellow" | "orange" | "red"; icon: ReactNode }> = {
-    waiting: { text: "Ожидает генерацию", tone: "slate", icon: <FiClock /> },
-    processing: { text: "Генерация", tone: "amber", icon: <FiPlay /> },
-    published: { text: "Опубликован", tone: "green", icon: <FiPlay /> },
-    draft: { text: "Черновик", tone: "slate", icon: <FiPauseCircle /> },
-    active: { text: "Активен", tone: "green", icon: <FiPlay /> },
-    paused: { text: "Приостановлено", tone: "slate", icon: <FiPauseCircle /> },
-    pause_requested: { text: "Пауза запрошена", tone: "yellow", icon: <FiPauseCircle /> },
-    cancelling: { text: "Отмена...", tone: "orange", icon: <FiPauseCircle /> },
-    cancelled: { text: "Отменено", tone: "red", icon: <FiPauseCircle /> },
-    pending: { text: "В очереди", tone: "amber", icon: <FiClock /> },
-    success: { text: "Готово", tone: "green", icon: <FiCheck /> },
-    error: { text: "Ошибка", tone: "red", icon: <FiPauseCircle /> },
-    running: { text: "В работе", tone: "amber", icon: <FiPlay /> },
-  };
-  const cfg = map[status] || { text: status, tone: "slate" as const, icon: <FiPauseCircle /> };
-  return <Badge label={cfg.text} tone={cfg.tone} icon={cfg.icon} className="text-xs" />;
+  const meta = getGenerationStatusMeta(status);
+  const icon =
+    meta.icon === "play"
+      ? <FiPlay />
+      : meta.icon === "pause"
+        ? <FiPauseCircle />
+        : meta.icon === "check"
+          ? <FiCheck />
+          : meta.icon === "alert"
+            ? <FiPauseCircle />
+            : meta.icon === "x"
+              ? <FiX />
+              : <FiClock />;
+  return <Badge label={meta.text} tone={meta.tone} icon={icon} className="text-xs" />;
 }
 
 function LinkStatusBadge({

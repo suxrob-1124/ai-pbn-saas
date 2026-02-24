@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import type { UrlObject } from "url";
@@ -15,6 +15,7 @@ import { computeDisplayProgress } from "../../../lib/pipelineProgress";
 import { getLinkTaskStatusMeta, hasInsertedLink, isLinkTaskInProgress, normalizeLinkTaskStatus } from "../../../lib/linkTaskStatus";
 import { AuditReport } from "../../../components/AuditReport";
 import { Badge } from "../../../components/Badge";
+import { DOMAIN_PROJECT_CTA, getGenerationStatusMeta, getLinkActionLabel, getMainGenerationActionLabel } from "../../../features/domain-project/services/statusCta";
 
 type Domain = {
   id: string;
@@ -445,7 +446,7 @@ export default function DomainPage() {
   const latestSuccessDetail = latestSuccess?.id ? generationDetails[latestSuccess.id] : undefined;
   const latestDisplayProgress = currentAttempt ? computeDisplayProgress(latestAttemptDetail?.artifacts, currentAttempt.progress, currentAttempt.status) : 0;
   const isRegenerate = Boolean(currentAttempt && currentAttempt.status === "success");
-  const mainButtonText = !currentAttempt ? "Запустить генерацию" : isRegenerate ? "Перегенерировать всё" : "Продолжить генерацию";
+  const mainButtonText = getMainGenerationActionLabel(Boolean(currentAttempt), isRegenerate);
   const mainButtonIcon = isRegenerate ? <FiRefreshCw /> : <FiPlay />;
   const mainButtonDisabled = loading || Boolean(currentAttempt && activeStatusesList.includes(currentAttempt.status));
   const visibleLinkTasks = showAllLinkTasks ? linkTasks : linkTasks.slice(0, 2);
@@ -458,7 +459,7 @@ export default function DomainPage() {
     isLinkTaskInProgress(domainLinkStatus) ||
     linkTasks.some((task) => isLinkTaskInProgress(task.status));
   const canRemoveLink = (hasActiveLink || hasLinkInTasks) && !linkInProgress;
-  const linkActionLabel = linkInProgress ? "Задача в работе..." : hasActiveLink ? "Обновить ссылку" : "Добавить ссылку";
+  const linkActionLabel = getLinkActionLabel(hasActiveLink, linkInProgress);
   const latestArtifacts = useMemo<Record<string, any> | null>(() => {
     if (latestSuccessDetail?.artifacts && typeof latestSuccessDetail.artifacts === "object") {
       return latestSuccessDetail.artifacts;
@@ -707,7 +708,7 @@ export default function DomainPage() {
                     disabled={loading}
                     className="inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-white px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700 dark:bg-slate-800 dark:text-emerald-300 disabled:opacity-50"
                   >
-                    <FiPlay /> Возобновить
+                    <FiPlay /> {DOMAIN_PROJECT_CTA.generationResume}
                   </button>
                 )}
                 {(currentAttempt.status === "pending" || currentAttempt.status === "processing" || currentAttempt.status === "pause_requested" || currentAttempt.status === "cancelling") && (
@@ -718,7 +719,7 @@ export default function DomainPage() {
                         disabled={loading || currentAttempt.status === "pause_requested"}
                         className="inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm font-semibold text-amber-700 hover:bg-amber-50 dark:border-amber-700 dark:bg-slate-800 dark:text-amber-300 disabled:opacity-50"
                       >
-                        <FiPause /> {currentAttempt.status === "pause_requested" ? "Пауза запрошена..." : "Пауза"}
+                        <FiPause /> {currentAttempt.status === "pause_requested" ? DOMAIN_PROJECT_CTA.generationPauseRequested : DOMAIN_PROJECT_CTA.generationPause}
                       </button>
                     )}
                     <button
@@ -726,7 +727,7 @@ export default function DomainPage() {
                       disabled={loading || currentAttempt.status === "cancelling"}
                       className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 dark:border-red-700 dark:bg-slate-800 dark:text-red-300 disabled:opacity-50"
                     >
-                      <FiX /> {currentAttempt.status === "cancelling" ? "Отмена..." : "Отменить"}
+                      <FiX /> {currentAttempt.status === "cancelling" ? DOMAIN_PROJECT_CTA.generationCancelling : DOMAIN_PROJECT_CTA.generationCancel}
                     </button>
                   </>
                 )}
@@ -736,7 +737,7 @@ export default function DomainPage() {
                     disabled={loading}
                     className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 dark:border-red-700 dark:bg-slate-800 dark:text-red-300 disabled:opacity-50"
                   >
-                    <FiX /> Отменить
+                    <FiX /> {DOMAIN_PROJECT_CTA.generationCancel}
                   </button>
                 )}
               </>
@@ -944,7 +945,7 @@ export default function DomainPage() {
                 disabled={linkTasksLoading}
                 className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
               >
-                <FiTrash2 /> Удалить ссылку
+                <FiTrash2 /> {DOMAIN_PROJECT_CTA.linkRemove}
               </button>
             ) : (
               <>
@@ -1642,18 +1643,20 @@ function formatBytes(value?: number): string {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, { text: string; tone: "amber" | "yellow" | "slate" | "orange" | "red" | "green"; icon: ReactNode }> = {
-    pending: { text: "В очереди", tone: "amber", icon: <FiClock /> },
-    processing: { text: "В работе", tone: "amber", icon: <FiPlay /> },
-    pause_requested: { text: "Пауза запрошена", tone: "yellow", icon: <FiPause /> },
-    paused: { text: "Приостановлено", tone: "slate", icon: <FiPause /> },
-    cancelling: { text: "Отмена...", tone: "orange", icon: <FiX /> },
-    cancelled: { text: "Отменено", tone: "red", icon: <FiX /> },
-    success: { text: "Готово", tone: "green", icon: <FiCheck /> },
-    error: { text: "Ошибка", tone: "red", icon: <FiAlertTriangle /> },
-  };
-  const cfg = map[status] || { text: status, tone: "slate" as const, icon: <FiClock /> };
-  return <Badge label={cfg.text} tone={cfg.tone} icon={cfg.icon} className="text-xs" />;
+  const meta = getGenerationStatusMeta(status);
+  const icon =
+    meta.icon === "play"
+      ? <FiPlay />
+      : meta.icon === "pause"
+        ? <FiPause />
+        : meta.icon === "check"
+          ? <FiCheck />
+          : meta.icon === "alert"
+            ? <FiAlertTriangle />
+            : meta.icon === "x"
+              ? <FiX />
+              : <FiClock />;
+  return <Badge label={meta.text} tone={meta.tone} icon={icon} className="text-xs" />;
 }
 
 function LinkTaskStatusBadge({ status }: { status: string }) {
