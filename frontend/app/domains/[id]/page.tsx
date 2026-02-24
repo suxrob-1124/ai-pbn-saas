@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import type { UrlObject } from "url";
-import { apiBase, authFetch, authFetchCached, patch, del } from "../../../lib/http";
+import { apiBase, authFetch, authFetchCached, patch } from "../../../lib/http";
 import { showToast } from "../../../lib/toastStore";
 import { useAuthGuard } from "../../../lib/useAuth";
 import { FiClock, FiPlay, FiCheck, FiAlertTriangle, FiRefreshCw, FiTrash2, FiPause, FiX, FiInfo, FiEdit3, FiCode, FiDownload } from "react-icons/fi";
@@ -16,6 +16,7 @@ import { getLinkTaskStatusMeta, hasInsertedLink, isLinkTaskInProgress, normalize
 import { AuditReport } from "../../../components/AuditReport";
 import { Badge } from "../../../components/Badge";
 import { DOMAIN_PROJECT_CTA, getGenerationStatusMeta, getLinkActionLabel, getMainGenerationActionLabel } from "../../../features/domain-project/services/statusCta";
+import { useDomainAsyncActions } from "../../../features/domain-project/hooks/useDomainAsyncActions";
 
 type Domain = {
   id: string;
@@ -213,233 +214,6 @@ export default function DomainPage() {
     }
   };
 
-  const runLinkTask = async () => {
-    if (!id) return;
-    setLinkTasksError(null);
-    setLinkNotice(null);
-    const domainLinkStatus = domain?.link_status_effective || domain?.link_status;
-    const linkInProgressNow =
-      isLinkTaskInProgress(domainLinkStatus) ||
-      linkTasks.some((task) => isLinkTaskInProgress(task.status));
-    if (linkInProgressNow) {
-      showToast({
-        type: "error",
-        title: "Задача уже выполняется",
-        message: "Дождитесь завершения текущей задачи по ссылке."
-      });
-      return;
-    }
-    if (!linkAnchor.trim() || !linkAcceptor.trim()) {
-      setLinkTasksError("Заполните анкор и акцептор");
-      showToast({
-        type: "error",
-        title: "Ссылка не настроена",
-        message: "Заполните анкор и акцептор перед запуском."
-      });
-      return;
-    }
-    setLinkTasksLoading(true);
-    try {
-      await authFetch(`/api/domains/${id}/link/run`, { method: "POST" });
-      setLinkNotice("Запуск добавления ссылки инициирован");
-      showToast({
-        type: "success",
-        title: "Добавление ссылки запущено",
-        message: domain?.url || undefined
-      });
-      await load(true);
-    } catch (err: any) {
-      const msg = err?.message || "Не удалось запустить добавление ссылки";
-      setLinkTasksError(msg);
-      showToast({
-        type: "error",
-        title: "Ошибка запуска",
-        message: msg
-      });
-    } finally {
-      setLinkTasksLoading(false);
-    }
-  };
-
-  const removeLinkTask = async () => {
-    if (!id) return;
-    const domainLinkStatus = domain?.link_status_effective || domain?.link_status;
-    const linkInProgressNow =
-      isLinkTaskInProgress(domainLinkStatus) ||
-      linkTasks.some((task) => isLinkTaskInProgress(task.status));
-    if (linkInProgressNow) {
-      showToast({
-        type: "error",
-        title: "Задача уже выполняется",
-        message: "Дождитесь завершения текущей задачи по ссылке."
-      });
-      return;
-    }
-    if (!canRemoveLink) {
-      showToast({
-        type: "error",
-        title: "Удалять нечего",
-        message: "Ссылка на сайте не найдена."
-      });
-      return;
-    }
-    if (!confirm("Удалить ссылку с сайта?")) return;
-    setLinkTasksError(null);
-    setLinkNotice(null);
-    setLinkTasksLoading(true);
-    try {
-      await authFetch(`/api/domains/${id}/link/remove`, { method: "POST" });
-      setLinkNotice("Запуск удаления ссылки инициирован");
-      showToast({
-        type: "success",
-        title: "Удаление ссылки запущено",
-        message: domain?.url || undefined
-      });
-      await load(true);
-    } catch (err: any) {
-      const msg = err?.message || "Не удалось запустить удаление ссылки";
-      setLinkTasksError(msg);
-      showToast({
-        type: "error",
-        title: "Ошибка удаления",
-        message: msg
-      });
-    } finally {
-      setLinkTasksLoading(false);
-    }
-  };
-
-  const refreshLinkTasks = async () => {
-    if (!id) return;
-    setLinkTasksLoading(true);
-    setLinkTasksError(null);
-    try {
-      const tasks = await authFetch<LinkTask[]>(`/api/domains/${id}/links`);
-      const list = Array.isArray(tasks) ? tasks : [];
-      list.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-      setLinkTasks(list);
-    } catch (err: any) {
-      setLinkTasksError(err?.message || "Не удалось загрузить задачи ссылок");
-    } finally {
-      setLinkTasksLoading(false);
-    }
-  };
-
-  const triggerGeneration = async (forceStep?: string) => {
-    if (!id) return;
-    if (!kw.trim()) {
-      setError("Сначала задайте ключевое слово");
-      return;
-    }
-    const latestGen = latestAttempt || gens[0];
-    if (!forceStep && latestGen?.status === "success") {
-      if (!confirm("Генерация уже завершена. Запустить заново?")) {
-        return;
-      }
-    }
-    setError(null);
-    setLoading(true);
-    setGens((prev) => {
-      if (prev.length === 0) {
-        return prev;
-      }
-      const updated = [...prev];
-      updated[0] = { ...updated[0], status: "processing", progress: 0 };
-      return updated;
-    });
-    setLatestAttempt((prev) => (prev ? { ...prev, status: "processing", progress: 0 } : prev));
-    try {
-      const payload = forceStep ? { force_step: forceStep } : undefined;
-      const headers = payload ? { "Content-Type": "application/json" } : undefined;
-      await authFetch(`/api/domains/${id}/generate`, {
-        method: "POST",
-        headers,
-        body: payload ? JSON.stringify(payload) : undefined
-      });
-      await load(true);
-    } catch (err: any) {
-      const msg = err?.message || "Не удалось запустить генерацию";
-      setError(msg);
-      throw err;
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleMainAction = async () => {
-    try {
-      await triggerGeneration();
-    } catch {
-      // Ошибка уже показана
-    }
-  };
-
-  const handleForceStep = async (stepId: string) => {
-    setPipelineStepInFlight(stepId);
-    try {
-      await triggerGeneration(stepId);
-    } catch {
-      // Ошибка обработана внутри triggerGeneration
-    } finally {
-      setPipelineStepInFlight(null);
-    }
-  };
-
-  const deleteGeneration = async (genId: string) => {
-    if (!confirm("Удалить этот запуск?")) return;
-    setLoading(true);
-    setError(null);
-    try {
-      await del(`/api/generations/${genId}`);
-      await load(true);
-    } catch (err: any) {
-      setError(err?.message || "Не удалось удалить запуск");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const pauseGeneration = async (genId: string) => {
-    if (!confirm("Приостановить выполнение задачи?")) return;
-    setLoading(true);
-    setError(null);
-    try {
-      await patch(`/api/generations/${genId}`, { action: "pause" });
-      await load(true);
-    } catch (err: any) {
-      setError(err?.message || "Не удалось приостановить задачу");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const resumeGeneration = async (genId: string) => {
-    setLoading(true);
-    setError(null);
-    try {
-      await patch(`/api/generations/${genId}`, { action: "resume" });
-      await load(true);
-    } catch (err: any) {
-      setError(err?.message || "Не удалось возобновить задачу");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const cancelGeneration = async (genId: string) => {
-    if (!confirm("Отменить выполнение задачи?")) return;
-    setLoading(true);
-    setError(null);
-    try {
-      await patch(`/api/generations/${genId}`, { action: "cancel" });
-      await load(true);
-    } catch (err: any) {
-      setError(err?.message || "Не удалось отменить задачу");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const activeStatusesList = ["pending", "processing", "pause_requested", "cancelling"];
   const currentAttempt = latestAttempt || gens[0] || null;
   const latestAttemptDetail = currentAttempt?.id ? generationDetails[currentAttempt.id] : undefined;
@@ -460,6 +234,37 @@ export default function DomainPage() {
     linkTasks.some((task) => isLinkTaskInProgress(task.status));
   const canRemoveLink = (hasActiveLink || hasLinkInTasks) && !linkInProgress;
   const linkActionLabel = getLinkActionLabel(hasActiveLink, linkInProgress);
+  const {
+    runLinkTask,
+    removeLinkTask,
+    refreshLinkTasks,
+    handleMainAction,
+    handleForceStep,
+    deleteGeneration,
+    pauseGeneration,
+    resumeGeneration,
+    cancelGeneration
+  } = useDomainAsyncActions({
+    id,
+    kw,
+    domain,
+    gens,
+    latestAttempt,
+    linkTasks,
+    linkAnchor,
+    linkAcceptor,
+    canRemoveLink,
+    load,
+    setLoading,
+    setError,
+    setGens,
+    setLatestAttempt,
+    setPipelineStepInFlight,
+    setLinkTasksLoading,
+    setLinkTasksError,
+    setLinkNotice,
+    setLinkTasks
+  });
   const latestArtifacts = useMemo<Record<string, any> | null>(() => {
     if (latestSuccessDetail?.artifacts && typeof latestSuccessDetail.artifacts === "object") {
       return latestSuccessDetail.artifacts;

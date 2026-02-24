@@ -34,6 +34,7 @@ import type { ScheduleFormValue } from "../../../lib/scheduleFormValidation";
 import { Badge } from "../../../components/Badge";
 import { getDomainLinkStatusMeta, hasInsertedLink, isLinkTaskInProgress } from "../../../lib/linkTaskStatus";
 import { DOMAIN_PROJECT_CTA, getGenerationStatusMeta, getLinkActionLabel } from "../../../features/domain-project/services/statusCta";
+import { useProjectAsyncActions } from "../../../features/domain-project/hooks/useProjectAsyncActions";
 
 type Project = {
   id: string;
@@ -956,39 +957,6 @@ export default function ProjectDetailPage() {
     }
   };
 
-  const runGeneration = async (id: string) => {
-    const domain = domains.find((d) => d.id === id);
-    if (!(keywordEdits[id] || "").trim() && !(domain?.main_keyword || "").trim()) {
-      setError("Сначала задайте ключевое слово");
-      return;
-    }
-    if (domain?.status === "processing" || domain?.status === "pending") {
-      setError("У этого домена уже есть запущенная генерация");
-      return;
-    }
-    // Проверяем наличие API ключа у владельца проекта
-    if (project && project.ownerHasApiKey === false) {
-      setError("API ключ не настроен у владельца проекта. Настройте ключ в профиле для запуска генерации.");
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    try {
-      await post(`/api/domains/${id}/generate`);
-      await load(true);
-    } catch (err: any) {
-      const errMsg = err?.message || "Не удалось запустить генерацию";
-      // Улучшаем сообщение об ошибке, если это связано с API ключом
-      if (errMsg.includes("API key") || errMsg.includes("api key")) {
-        setError(`${errMsg} Настройте API ключ в профиле.`);
-      } else {
-        setError(errMsg);
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const updateKeyword = async (id: string) => {
     setLoading(true);
     setError(null);
@@ -1039,120 +1007,18 @@ export default function ProjectDetailPage() {
     }
   };
 
-  const deleteDomain = async (id: string) => {
-    if (!confirm("Удалить домен?")) return;
-    setLoading(true);
-    setError(null);
-    try {
-      await del(`/api/domains/${id}`);
-      await load(true);
-    } catch (err: any) {
-      setError(err?.message || "Не удалось удалить домен");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const runLinkTask = async (id: string) => {
-    const domain = domainById[id];
-    if (!domain) return;
-    const linkStatus = effectiveDomainLinkStatus(domain);
-    const hasActiveLink = hasInsertedLink(linkStatus);
-    if (isLinkTaskInProgress(linkStatus)) {
-      showToast({
-        type: "error",
-        title: "Задача уже выполняется",
-        message: "Дождитесь завершения текущей задачи по ссылке."
-      });
-      return;
-    }
-    const anchor = (domain.link_anchor_text || "").trim();
-    const acceptor = (domain.link_acceptor_url || "").trim();
-    const draft = linkEdits[id] || { anchor, acceptor };
-    const draftAnchor = (draft.anchor || "").trim();
-    const draftAcceptor = (draft.acceptor || "").trim();
-    if (draftAnchor !== anchor || draftAcceptor !== acceptor) {
-      showToast({
-        type: "error",
-        title: "Сначала сохраните ссылку",
-        message: "В полях есть несохранённые изменения."
-      });
-      return;
-    }
-    if (!anchor || !acceptor) {
-      showToast({
-        type: "error",
-        title: "Ссылка не настроена",
-        message: "Заполните анкор и акцептор в настройках домена."
-      });
-      return;
-    }
-    setLinkLoadingId(id);
-    try {
-      await post(`/api/domains/${id}/link/run`);
-      showToast({
-        type: "success",
-        title: hasActiveLink ? "Ссылка обновляется" : "Ссылка добавляется",
-        message: domain.url
-      });
-      await load(true);
-    } catch (err: any) {
-      showToast({
-        type: "error",
-        title: "Не удалось запустить ссылку",
-        message: err?.message || "Попробуйте позже"
-      });
-    } finally {
-      setLinkLoadingId(null);
-    }
-  };
-
-  const removeLinkTask = async (id: string) => {
-    const domain = domainById[id];
-    if (!domain) return;
-    const linkStatus = effectiveDomainLinkStatus(domain);
-    const canRemoveLink = hasInsertedLink(linkStatus) && !isLinkTaskInProgress(linkStatus);
-    const anchor = (domain.link_anchor_text || "").trim();
-    const acceptor = (domain.link_acceptor_url || "").trim();
-    const draft = linkEdits[id] || { anchor, acceptor };
-    const draftAnchor = (draft.anchor || "").trim();
-    const draftAcceptor = (draft.acceptor || "").trim();
-    if (draftAnchor !== anchor || draftAcceptor !== acceptor) {
-      showToast({
-        type: "error",
-        title: "Сначала сохраните ссылку",
-        message: "В полях есть несохранённые изменения."
-      });
-      return;
-    }
-    if (!canRemoveLink) {
-      showToast({
-        type: "error",
-        title: "Удалять нечего",
-        message: "Ссылка на сайте не найдена."
-      });
-      return;
-    }
-    if (!confirm(`Удалить ссылку с сайта ${domain.url}?`)) return;
-    setLinkLoadingId(id);
-    try {
-      await post(`/api/domains/${id}/link/remove`);
-      showToast({
-        type: "success",
-        title: "Ссылка удаляется",
-        message: domain.url
-      });
-      await load(true);
-    } catch (err: any) {
-      showToast({
-        type: "error",
-        title: "Не удалось удалить ссылку",
-        message: err?.message || "Попробуйте позже"
-      });
-    } finally {
-      setLinkLoadingId(null);
-    }
-  };
+  const { runGeneration, runLinkTask, removeLinkTask, deleteDomain } = useProjectAsyncActions({
+    projectId,
+    project,
+    domains,
+    domainById,
+    keywordEdits,
+    linkEdits,
+    setLoading,
+    setError,
+    setLinkLoadingId,
+    load
+  });
 
   const deleteProject = async () => {
     if (!confirm("Удалить проект и все его домены?")) return;
