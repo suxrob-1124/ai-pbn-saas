@@ -238,6 +238,34 @@
 2. Typed errors и унифицированный sanitizer.
 3. Регрессионные тесты + smoke.
 
+### Статус выполнения R4 (обновлено)
+
+1. `R4.1` завершен:
+- AI-хендлеры editor вынесены из `server.go` в `editor_ai_handlers.go`.
+
+2. `R4.2` завершен:
+- file-хендлеры editor вынесены из `server.go` в `editor_file_handlers.go`.
+- роуты и контракты API сохранены.
+
+3. `R4.3` завершен:
+- добавлен `editor_errors.go` с типизированными кодами ошибок и единым `writeEditorError(...)`.
+- editor endpoints возвращают консистентный `code/message/details` (additive, без ломки ключевых статус-кодов).
+
+4. `R4.4` завершен:
+- добавлен `editor_sanitizer.go` с общими sanitize/safety util-функциями.
+- дубли path/AI-cleanup/payload validation в editor handlers убраны.
+
+5. `R4.5` завершен:
+- backend проверки пройдены:
+  `go test ./internal/httpserver ./internal/store/sqlstore ./cmd/worker`
+- frontend проверки пройдены:
+  `npx tsc --noEmit`,
+  `verify:file-editor-route`,
+  `verify:ai-editor-panel`,
+  `verify:ai-create-page-wizard`,
+  `verify:ai-asset-resolution-actions`,
+  `verify:ai-apply-plan-safety`.
+
 ---
 
 ## 7) Definition of Done
