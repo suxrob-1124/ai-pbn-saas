@@ -2388,11 +2388,11 @@ func (s *Server) handleDomainEditorActions(w http.ResponseWriter, r *http.Reques
 		}
 		cleanTarget, err := sanitizeFilePath(targetPath)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid target_path")
+			writeEditorError(w, http.StatusBadRequest, editorErrInvalidFormat, "invalid target_path", nil)
 			return
 		}
 		if err := validateEditorPath(cleanTarget); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeEditorError(w, http.StatusBadRequest, editorErrForbiddenPath, err.Error(), nil)
 			return
 		}
 		contextMode := normalizeEditorContextMode(r.URL.Query().Get("context_mode"))
@@ -2405,7 +2405,7 @@ func (s *Server) handleDomainEditorActions(w http.ResponseWriter, r *http.Reques
 		}
 		packPrompt, meta, err := s.buildEditorContextPack(r.Context(), domain, cleanTarget, "", contextFiles, contextMode)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "could not build context pack")
+			writeEditorContextPackError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{

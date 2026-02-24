@@ -276,13 +276,13 @@ func (s *Server) handleDomainEditorAICreatePage(w http.ResponseWriter, r *http.R
 		ContextFiles []string `json:"context_files"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid body")
+		writeEditorError(w, http.StatusBadRequest, editorErrInvalidFormat, "invalid body", nil)
 		return
 	}
 	instruction := strings.TrimSpace(body.Instruction)
 	targetPath := strings.TrimSpace(body.TargetPath)
 	if instruction == "" || targetPath == "" {
-		writeError(w, http.StatusBadRequest, "instruction and target_path are required")
+		writeEditorError(w, http.StatusBadRequest, editorErrInvalidFormat, "instruction and target_path are required", nil)
 		return
 	}
 	if !strings.HasSuffix(strings.ToLower(targetPath), ".html") {
@@ -290,17 +290,17 @@ func (s *Server) handleDomainEditorAICreatePage(w http.ResponseWriter, r *http.R
 	}
 	cleanTarget, err := sanitizeFilePath(targetPath)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid target_path")
+		writeEditorError(w, http.StatusBadRequest, editorErrInvalidFormat, "invalid target_path", nil)
 		return
 	}
 	if err := validateEditorPath(cleanTarget); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeEditorError(w, http.StatusBadRequest, editorErrForbiddenPath, err.Error(), nil)
 		return
 	}
 	contextMode := normalizeEditorContextMode(body.ContextMode)
 	siteContext, contextMeta, err := s.buildEditorContextPack(r.Context(), domain, cleanTarget, "", body.ContextFiles, contextMode)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not build context pack")
+		writeEditorContextPackError(w, err)
 		return
 	}
 	systemPrompt, promptSource, modelFromPrompt := s.resolveEditorPrompt(r.Context(), domain.ID, project.ID, "editor_page_create", defaultEditorPagePrompt())
@@ -342,7 +342,7 @@ func (s *Server) handleDomainEditorAICreatePage(w http.ResponseWriter, r *http.R
 		prompt,
 	)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+		writeEditorError(w, http.StatusBadGateway, editorErrInvalidFormat, err.Error(), nil)
 		return
 	}
 	repairCount := 0
@@ -371,15 +371,15 @@ func (s *Server) handleDomainEditorAICreatePage(w http.ResponseWriter, r *http.R
 			repairPrompt,
 		)
 		if err != nil {
-			writeError(w, http.StatusBadGateway, err.Error())
+			writeEditorError(w, http.StatusBadGateway, editorErrInvalidFormat, err.Error(), map[string]any{
+				"repair_attempts": repairCount,
+			})
 			return
 		}
 		repairCount++
 	}
 	if parseErr != nil {
-		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-			"error":             "ai_response_invalid_format",
-			"message":           "AI returned invalid JSON format after repair attempts",
+		writeEditorError(w, http.StatusUnprocessableEntity, editorErrInvalidFormat, "AI returned invalid JSON format after repair attempts", map[string]any{
 			"repair_attempts":   repairCount,
 			"context_pack_meta": contextMeta,
 		})
@@ -387,9 +387,7 @@ func (s *Server) handleDomainEditorAICreatePage(w http.ResponseWriter, r *http.R
 	}
 	outFiles, outAssets, warnings := normalizeEditorPageSuggestionPayload(parsed)
 	if len(outFiles) == 0 {
-		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-			"error":             "ai_response_invalid_format",
-			"message":           "no valid files after validation",
+		writeEditorError(w, http.StatusUnprocessableEntity, editorErrInvalidFormat, "no valid files after validation", map[string]any{
 			"warnings":          warnings,
 			"context_pack_meta": contextMeta,
 		})
@@ -429,20 +427,20 @@ func (s *Server) handleDomainEditorAIRegenerateAsset(w http.ResponseWriter, r *h
 		ContextFiles []string `json:"context_files"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid body")
+		writeEditorError(w, http.StatusBadRequest, editorErrInvalidFormat, "invalid body", nil)
 		return
 	}
 	cleanPath, err := sanitizeFilePath(strings.TrimSpace(body.Path))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid path")
+		writeEditorError(w, http.StatusBadRequest, editorErrInvalidFormat, "invalid path", nil)
 		return
 	}
 	if err := validateEditorPath(cleanPath); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeEditorError(w, http.StatusBadRequest, editorErrForbiddenPath, err.Error(), nil)
 		return
 	}
 	if err := validateUploadPathPolicy(cleanPath); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeEditorError(w, http.StatusBadRequest, editorErrForbiddenPath, err.Error(), nil)
 		return
 	}
 	desiredMime := strings.TrimSpace(body.MimeType)
@@ -450,7 +448,7 @@ func (s *Server) handleDomainEditorAIRegenerateAsset(w http.ResponseWriter, r *h
 		desiredMime = detectMimeType(cleanPath, nil)
 	}
 	if !isImagePath(cleanPath) && !isImageMime(desiredMime) {
-		writeError(w, http.StatusBadRequest, "asset path/mime must be image/*")
+		writeEditorError(w, http.StatusBadRequest, editorErrInvalidFormat, "asset path/mime must be image/*", nil)
 		return
 	}
 	promptInstruction := strings.TrimSpace(body.Prompt)
@@ -458,13 +456,13 @@ func (s *Server) handleDomainEditorAIRegenerateAsset(w http.ResponseWriter, r *h
 		promptInstruction = strings.TrimSpace(body.Instruction)
 	}
 	if promptInstruction == "" {
-		writeError(w, http.StatusBadRequest, "prompt is required")
+		writeEditorError(w, http.StatusBadRequest, editorErrInvalidFormat, "prompt is required", nil)
 		return
 	}
 	contextMode := normalizeEditorContextMode(body.ContextMode)
 	siteContext, contextMeta, err := s.buildEditorContextPack(r.Context(), domain, "index.html", cleanPath, body.ContextFiles, contextMode)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not build context pack")
+		writeEditorContextPackError(w, err)
 		return
 	}
 	systemPrompt, promptSource, modelFromPrompt := s.resolveEditorPrompt(r.Context(), domain.ID, project.ID, "editor_asset_regenerate", defaultEditorAssetRegeneratePrompt())
@@ -499,7 +497,7 @@ func (s *Server) handleDomainEditorAIRegenerateAsset(w http.ResponseWriter, r *h
 		prompt,
 	)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+		writeEditorError(w, http.StatusBadGateway, editorErrImageGenerationFail, err.Error(), nil)
 		return
 	}
 	detectedMime := strings.ToLower(strings.TrimSpace(http.DetectContentType(imageBytes)))
@@ -511,9 +509,7 @@ func (s *Server) handleDomainEditorAIRegenerateAsset(w http.ResponseWriter, r *h
 	if wantsWebP && !strings.EqualFold(baseMimeType(detectedMime), "image/webp") {
 		converted, convErr := convertToWebP(imageBytes)
 		if convErr != nil {
-			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-				"error":             "ai_image_invalid_payload",
-				"message":           fmt.Sprintf("webp conversion failed: %v", convErr),
+			writeEditorError(w, http.StatusUnprocessableEntity, editorErrAssetValidationFail, fmt.Sprintf("webp conversion failed: %v", convErr), map[string]any{
 				"context_pack_meta": contextMeta,
 			})
 			return
@@ -526,9 +522,7 @@ func (s *Server) handleDomainEditorAIRegenerateAsset(w http.ResponseWriter, r *h
 		if isImageMime(desiredMime) && isImageMime(detectedMime) {
 			regenWarnings = append(regenWarnings, fmt.Sprintf("image mime adjusted: requested %s, got %s", baseMimeType(desiredMime), baseMimeType(detectedMime)))
 		} else {
-			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-				"error":             "ai_image_invalid_format",
-				"message":           err.Error(),
+			writeEditorError(w, http.StatusUnprocessableEntity, editorErrAssetValidationFail, err.Error(), map[string]any{
 				"context_pack_meta": contextMeta,
 			})
 			return
@@ -541,25 +535,19 @@ func (s *Server) handleDomainEditorAIRegenerateAsset(w http.ResponseWriter, r *h
 				if altErr := validateUploadSecurity(altPath, detectedMime, imageBytes); altErr == nil {
 					regenWarnings = append(regenWarnings, fmt.Sprintf("image payload validated as %s (path extension differs)", baseMimeType(detectedMime)))
 				} else {
-					writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-						"error":             "ai_image_invalid_payload",
-						"message":           err.Error(),
+					writeEditorError(w, http.StatusUnprocessableEntity, editorErrAssetValidationFail, err.Error(), map[string]any{
 						"context_pack_meta": contextMeta,
 					})
 					return
 				}
 			} else {
-				writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-					"error":             "ai_image_invalid_payload",
-					"message":           err.Error(),
+				writeEditorError(w, http.StatusUnprocessableEntity, editorErrAssetValidationFail, err.Error(), map[string]any{
 					"context_pack_meta": contextMeta,
 				})
 				return
 			}
 		} else {
-			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-				"error":             "ai_image_invalid_payload",
-				"message":           err.Error(),
+			writeEditorError(w, http.StatusUnprocessableEntity, editorErrAssetValidationFail, err.Error(), map[string]any{
 				"context_pack_meta": contextMeta,
 			})
 			return
@@ -684,12 +672,12 @@ func (s *Server) handleDomainEditorAISuggest(w http.ResponseWriter, r *http.Requ
 		ContextMode  string   `json:"context_mode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid body")
+		writeEditorError(w, http.StatusBadRequest, editorErrInvalidFormat, "invalid body", nil)
 		return
 	}
 	instruction := strings.TrimSpace(body.Instruction)
 	if instruction == "" {
-		writeError(w, http.StatusBadRequest, "instruction is required")
+		writeEditorError(w, http.StatusBadRequest, editorErrInvalidFormat, "instruction is required", nil)
 		return
 	}
 	content, mimeType, err := s.readDomainFileContent(r.Context(), domain, relPath)
@@ -704,7 +692,7 @@ func (s *Server) handleDomainEditorAISuggest(w http.ResponseWriter, r *http.Requ
 	contextMode := normalizeEditorContextMode(body.ContextMode)
 	siteContext, contextMeta, err := s.buildEditorContextPack(r.Context(), domain, relPath, relPath, body.ContextFiles, contextMode)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not build context pack")
+		writeEditorContextPackError(w, err)
 		return
 	}
 	systemPrompt, promptSource, modelFromPrompt := s.resolveEditorPrompt(r.Context(), domain.ID, project.ID, "editor_file_edit", defaultEditorFilePrompt())
@@ -742,7 +730,7 @@ func (s *Server) handleDomainEditorAISuggest(w http.ResponseWriter, r *http.Requ
 		prompt,
 	)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+		writeEditorError(w, http.StatusBadGateway, editorErrInvalidFormat, err.Error(), nil)
 		return
 	}
 	suggested, warnings := sanitizeAISuggestContent(suggestedRaw, content)
