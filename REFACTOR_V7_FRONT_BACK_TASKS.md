@@ -270,21 +270,57 @@
 
 ## 7) Definition of Done
 
-1. `editor/page.tsx` не содержит "монолитную лапшу", логика разнесена по модулям.
-2. Невозможно многократно спамить тяжелые AI-действия.
-3. Пользователь всегда видит понятный статус выполнения AI-операции.
-4. Генерация изображений работает отдельным и прозрачным контуром.
-5. Кнопки и поля локализованы и названы по фактическому действию.
-6. Ошибки представлены в пользовательском и диагностическом слоях отдельно.
+1. Структура editor-модуля декомпозирована:
+- file/API/AI логика вынесена из монолитного `server.go` в отдельные файлы (`editor_ai_handlers.go`, `editor_file_handlers.go`, `editor_errors.go`, `editor_sanitizer.go`).
+- frontend editor использует feature-модуль `frontend/features/editor-v3/*` для типов/hooks/сервисов, а не хранит всё в одной странице.
+
+2. Защита от спама и гонок включена и проверяема:
+- повторные клики по тяжелым AI-действиям во время in-flight не запускают дублирующие запросы (single-flight behavior).
+- `Apply`-действия блокируются, пока генерация/валидация не завершена.
+
+3. Статусы AI-операций прозрачны для пользователя:
+- для suggest/create-page/regenerate-asset отображаются понятные состояния (`idle/validating/sending/parsing/ready/error` или эквивалентные UI-тексты).
+- при ошибке пользователь видит человекочитаемое сообщение, техдетали доступны отдельно в `Диагностика`.
+
+4. Контур генерации изображений отделен и стабилен:
+- есть отдельная секция/кнопка генерации изображения и отдельные параметры (путь, промпт, модель, формат).
+- результат генерации возвращается/обрабатывается через типизированный контракт (`status`, `mime`, `size`, `warnings`, `error_code/error_message`).
+- проблемные ассеты не применяются “молча”: перед применением есть явная валидация и резолюция.
+
+5. Локализация и CTA консистентны:
+- ключевые кнопки editor/AI блока на русском и отражают фактическое действие (`Сгенерировать предложение`, `Применить в редактор`, `Сгенерировать файлы`, `Применить выбранное` и т.д.).
+- в базовом UX нет критичного смешения ru/en для основных действий.
+
+6. Ошибки editor endpoints унифицированы:
+- editor scope возвращает консистентный payload ошибки: `code`, `message`, `details?` (additive без ломки статусов).
+- фронт может опираться на `code` для сценариев обработки.
+
+7. Обязательная верификация релизного состояния:
+- backend:
+  `go test ./internal/httpserver ./internal/store/sqlstore ./cmd/worker`
+- frontend:
+  `npx tsc --noEmit`
+  `npm run -s verify:file-editor-route`
+  `npm run -s verify:ai-editor-panel`
+  `npm run -s verify:ai-create-page-wizard`
+  `npm run -s verify:ai-asset-resolution-actions`
+  `npm run -s verify:ai-apply-plan-safety`
 
 ---
 
 ## 8) Что убираем из активного списка как устаревшее
 
-1. Старые пункты "добавить базовый editor route" и "включить только v1 file API" — уже реализованы.
-2. Старые задачи без строгого контракта AI create-page (с silent fallback) — отменены.
-3. Старые таски с ручным вводом модели в текстовое поле — заменяются на select-список.
-4. Разрозненные TODO по editor фиксам переносим в этот единый backlog.
+1. `done` — "добавить базовый editor route" и "включить только v1 file API".
+Причина: реализовано и покрыто текущими маршрутами/проверками, повторно в backlog не ставим.
+
+2. `cancelled` — задачи по `AI create-page` с `silent fallback` (запись сырого ответа в файл).
+Причина: это небезопасный паттерн, заменен на strict-contract подход и явную ошибку формата.
+
+3. `migrated` — ручной ввод модели в текстовое поле.
+Причина: переведено в `select`-выбор модели; старые задачи закрываются как перенесенные в новый UX-контур.
+
+4. `migrated` — разрозненные TODO по editor-фиксам из отдельных заметок.
+Причина: источник правды один — этот документ; внешние дубли не поддерживаются как активный план.
 
 ---
 
@@ -306,6 +342,77 @@
 2. Убрать дубли async-логики кнопок (run/retry/relink/generate).
 3. Привести статусы и CTA к единому словарю.
 4. Добавить единые баннеры прогресса/ошибок.
+
+### Wave 2 target map (аудит)
+
+#### Кандидаты на вынос (по размеру/ответственности)
+
+1. `frontend/app/projects/[id]/page.tsx` (`2211` строк)
+- Проблема: смешаны настройки проекта, CRUD доменов, schedule/link-schedule, member management, project errors, queue actions.
+- Вынос:
+  - `frontend/features/domain-project/components/ProjectSettingsPanel.tsx`
+  - `frontend/features/domain-project/components/ProjectDomainsTable.tsx`
+  - `frontend/features/domain-project/components/ProjectMembersPanel.tsx`
+  - `frontend/features/domain-project/components/ProjectSchedulesSection.tsx`
+  - `frontend/features/domain-project/hooks/useProjectPageData.ts`
+  - `frontend/features/domain-project/hooks/useProjectDomainActions.ts`
+  - `frontend/features/domain-project/hooks/useProjectScheduleActions.ts`
+  - `frontend/features/domain-project/services/projectStatusMeta.ts`
+
+2. `frontend/app/domains/[id]/page.tsx` (`1664` строки)
+- Проблема: в одном файле конфиг домена, generation actions, live preview, link tasks, generation details, prompt overrides.
+- Вынос:
+  - `frontend/features/domain-project/components/DomainHeaderActions.tsx`
+  - `frontend/features/domain-project/components/DomainGenerationSection.tsx`
+  - `frontend/features/domain-project/components/DomainLinkTasksSection.tsx`
+  - `frontend/features/domain-project/components/DomainResultSection.tsx`
+  - `frontend/features/domain-project/hooks/useDomainPageData.ts`
+  - `frontend/features/domain-project/hooks/useDomainGenerationActions.ts`
+  - `frontend/features/domain-project/hooks/useDomainLinkActions.ts`
+  - `frontend/features/domain-project/services/domainStatusMeta.ts`
+
+3. `frontend/app/projects/[id]/queue/page.tsx` (`1010` строк)
+- Проблема: в одном файле active/history queue, link queue, фильтры, polling, cleanup/retry/delete actions.
+- Вынос:
+  - `frontend/features/queue-monitoring/components/ProjectQueueActiveTable.tsx`
+  - `frontend/features/queue-monitoring/components/ProjectQueueHistoryTable.tsx`
+  - `frontend/features/queue-monitoring/components/ProjectQueueLinkTasksTable.tsx`
+  - `frontend/features/queue-monitoring/hooks/useProjectQueueData.ts`
+  - `frontend/features/queue-monitoring/hooks/useProjectQueueActions.ts`
+  - `frontend/features/queue-monitoring/services/queueFilters.ts`
+
+#### Дублирующаяся async-логика (что унифицируем в Wave 2)
+
+1. Повторяющиеся fetch/load методы с одинаковой схемой `loading + toast + reload`:
+- `load*`, `run*`, `remove*`, `triggerGeneration`, `deleteGeneration`, `pause/resume/cancel` в `domains/[id]/page.tsx`.
+- `load*`, `addDomain/importDomains`, `runGeneration`, `runLinkTask/removeLinkTask`, schedule handlers в `projects/[id]/page.tsx`.
+- `load/loadHistory/loadLinkTasks`, `handleLinkRetry/Delete`, `handleCleanup/Refresh` в `projects/[id]/queue/page.tsx`.
+
+2. Повторяющиеся guards и маппинги статусов:
+- link status normalization/meta частично централизованы, но дублируются в page-level условной логике.
+- availability rules для кнопок (retry/delete/run/cancel) повторяются в разных страницах.
+
+3. Повторяющиеся query/filter state-машины:
+- `status/date/search/page` фильтры и их синхронизация разнесены по страницам и локальным хукам.
+
+#### Общий словарь статусов/CTA (база для W2.2)
+
+1. Статусы:
+- generation: `waiting|queued|processing|done|error|paused|cancelled`
+- link: `pending|searching|removing|inserted|generated|removed|failed`
+- queue/history: `pending|queued|completed|failed`
+
+2. CTA:
+- генерация: `Запустить`, `Перезапустить с шага`, `Пауза`, `Возобновить`, `Отменить`, `Удалить`
+- ссылки: `Добавить ссылку`, `Удалить ссылку`, `Повторить`, `Удалить задачу`
+- очередь: `Обновить`, `Очистить очередь`, `Открыть`, `Удалить`
+
+#### Порядок выполнения W2.2–W2.5
+
+1. `W2.2` — вынести shared словарь статусов/CTA и action guards для `projects/[id]` + `domains/[id]`.
+2. `W2.3` — вынести async handlers в hooks и подключить single-flight lock для тяжелых действий.
+3. `W2.4` — добавить flow-state индикацию и единые баннеры прогресса/ошибок.
+4. `W2.5` — полный regression pass (`tsc` + verify) и фиксация Wave 2 статуса в этом документе.
 
 ### Wave 3 — Queue / Schedule / Monitoring
 1. Унифицировать таблицы, фильтры, пагинацию и loading/error states.
