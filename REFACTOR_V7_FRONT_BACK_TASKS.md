@@ -414,6 +414,35 @@
 3. `W2.4` — добавить flow-state индикацию и единые баннеры прогресса/ошибок.
 4. `W2.5` — полный regression pass (`tsc` + verify) и фиксация Wave 2 статуса в этом документе.
 
+### Wave 2 status (W2.5, 24.02.2026)
+
+1. `completed` — `W2.2`:
+- status/CTA маппинги для domain/project централизованы в общем модуле.
+- локальные дубли словарей и label/helper логики удалены со страниц.
+
+2. `completed` — `W2.3`:
+- async handlers run/retry/relink/generate вынесены в hooks.
+- для тяжелых действий подключен single-flight guard (повторный клик in-flight не создает дублирующие запросы).
+
+3. `completed` — `W2.4`:
+- добавлены flow-state индикаторы и баннеры прогресса/ошибок для ключевых операций на `/domains/[id]` и `/projects/[id]`.
+- ошибки отображаются в user-friendly слое, диагностические детали остаются вторичным слоем.
+
+4. `completed` — `W2.5` regression:
+- `npx tsc --noEmit` — green.
+- verify (domain/project/editor маршруты) — green:
+`verify:domain-result-block`, `verify:domain-editor-button`, `verify:project-queue`,
+`verify:project-queue-active-filters`, `verify:project-queue-history`,
+`verify:project-queue-link-normalization`, `verify:file-editor-route`,
+`verify:ai-editor-panel`, `verify:ai-create-page-wizard`,
+`verify:ai-asset-resolution-actions`, `verify:ai-apply-plan-safety`.
+
+### Wave 2 leftovers / residual risks
+
+1. Страницы `frontend/app/projects/[id]/page.tsx` и `frontend/app/domains/[id]/page.tsx` все еще большие по объему и требуют дальнейшей компонентной декомпозиции (вне минимального объема W2.2–W2.5).
+2. Выравнивание async/guard паттернов для `frontend/app/projects/[id]/queue/page.tsx` и schedule/monitoring контуров остается в следующей волне (`Wave 3`).
+3. Покрытие verify-скриптами есть, но отсутствует единый e2e-сценарий со смешанными in-flight действиями между несколькими вкладками/ролями пользователя.
+
 ### Wave 3 — Queue / Schedule / Monitoring
 1. Унифицировать таблицы, фильтры, пагинацию и loading/error states.
 2. Ввести общий паттерн disable/guard для операций очереди.
