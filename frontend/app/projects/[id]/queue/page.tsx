@@ -16,53 +16,28 @@ import { canDeleteLinkTask, canRetryLinkTask, getLinkTaskStatusMeta, isLinkTaskI
 import { FilterDateInput } from "../../../../features/queue-monitoring/components/FilterDateInput";
 import { FilterSelect } from "../../../../features/queue-monitoring/components/FilterSelect";
 import { PaginationControls } from "../../../../features/queue-monitoring/components/PaginationControls";
+import {
+  PROJECT_QUEUE_HISTORY_STATUS_LABELS,
+  PROJECT_QUEUE_STATUS_LABELS,
+  QUEUE_LINK_STATUS_LABELS,
+  hasNextPageByPageSize,
+  resolveQueueTab
+} from "../../../../features/queue-monitoring/services/primitives";
 
 const statusOptions = ["all", "pending", "queued"];
-const STATUS_LABELS: Record<string, string> = {
-  all: "Все",
-  pending: "Ожидает",
-  queued: "В очереди"
-};
 const STATUS_FILTER_OPTIONS = statusOptions.map((value) => ({
   value,
-  label: STATUS_LABELS[value] || value
+  label: PROJECT_QUEUE_STATUS_LABELS[value] || value
 }));
-
 const historyStatusOptions = ["all", "completed", "failed"];
-const HISTORY_STATUS_LABELS: Record<string, string> = {
-  all: "Все",
-  completed: "Обработано",
-  failed: "Ошибка"
-};
 const HISTORY_STATUS_FILTER_OPTIONS = historyStatusOptions.map((value) => ({
   value,
-  label: HISTORY_STATUS_LABELS[value] || value
+  label: PROJECT_QUEUE_HISTORY_STATUS_LABELS[value] || value
 }));
-
-const linkStatusOptions = [
-  "all",
-  "pending",
-  "searching",
-  "removing",
-  "inserted",
-  "generated",
-  "removed",
-  "failed"
-];
-
-const LINK_STATUS_LABELS: Record<string, string> = {
-  all: "Все",
-  pending: "Ожидает",
-  searching: "Поиск",
-  removing: "Удаление",
-  inserted: "Вставлено",
-  generated: "Вставлено (ген. текст)",
-  removed: "Удалено",
-  failed: "Ошибка"
-};
+const linkStatusOptions = ["all", "pending", "searching", "removing", "inserted", "generated", "removed", "failed"];
 const LINK_STATUS_FILTER_OPTIONS = linkStatusOptions.map((value) => ({
   value,
-  label: LINK_STATUS_LABELS[value] || value
+  label: QUEUE_LINK_STATUS_LABELS[value] || value
 }));
 
 type Domain = {
@@ -117,8 +92,7 @@ export default function ProjectQueuePage() {
   const [linkSearch, setLinkSearch] = useState("");
   const [linkPage, setLinkPage] = useState(1);
   const linkPageSize = 20;
-  const tabParam = (searchParams.get("tab") || "domains").toLowerCase();
-  const activeTab = tabParam === "links" ? "links" : "domains";
+  const activeTab = resolveQueueTab(searchParams.get("tab"));
 
   useEffect(() => {
     let cancelled = false;
@@ -358,9 +332,9 @@ export default function ProjectQueuePage() {
     setLinkPage(1);
   }, [linkStatusFilter, linkDateFrom, linkDateTo, linkSearch]);
 
-  const genHasNext = items.length === genPageSize;
-  const historyHasNext = historyItems.length === historyPageSize;
-  const linkHasNext = linkTasks.length === linkPageSize;
+  const genHasNext = hasNextPageByPageSize(items.length, genPageSize);
+  const historyHasNext = hasNextPageByPageSize(historyItems.length, historyPageSize);
+  const linkHasNext = hasNextPageByPageSize(linkTasks.length, linkPageSize);
   const visibleItems = filtered;
   const visibleHistoryItems = filteredHistory;
   const visibleLinks = filteredLinks;
@@ -784,7 +758,7 @@ export default function ProjectQueuePage() {
                       <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">
                         {item.processed_at ? new Date(item.processed_at).toLocaleString() : "—"}
                       </td>
-                      <td className="py-3 pr-4">{STATUS_LABELS[item.status] || item.status}</td>
+                      <td className="py-3 pr-4">{PROJECT_QUEUE_STATUS_LABELS[item.status] || item.status}</td>
                       <td className="py-3 pr-4">{item.priority}</td>
                       <td className="py-3 pr-4 text-right">
                         <button
@@ -852,7 +826,7 @@ export default function ProjectQueuePage() {
                       <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">
                         {item.processed_at ? new Date(item.processed_at).toLocaleString() : "—"}
                       </td>
-                      <td className="py-3 pr-4">{HISTORY_STATUS_LABELS[item.status] || item.status}</td>
+                      <td className="py-3 pr-4">{PROJECT_QUEUE_HISTORY_STATUS_LABELS[item.status] || item.status}</td>
                       <td
                         className={`py-3 pr-4 max-w-xs truncate ${item.status === "failed" && item.error_message ? "text-red-500" : "text-slate-500 dark:text-slate-400"}`}
                         title={formatQueueHistoryDetails(item)}

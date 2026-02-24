@@ -12,6 +12,11 @@ import type { LinkTaskDTO } from "../../types/linkTasks";
 import { Badge } from "../../components/Badge";
 import { getLinkTaskStatusMeta, isLinkTaskInProgress, normalizeLinkTaskStatus } from "../../lib/linkTaskStatus";
 import { PaginationControls } from "../../features/queue-monitoring/components/PaginationControls";
+import {
+  QUEUE_LINK_STATUS_LABELS,
+  hasNextPageByPageSize,
+  resolveQueueTab
+} from "../../features/queue-monitoring/services/primitives";
 
 type Generation = {
   id: string;
@@ -52,8 +57,7 @@ function QueuePageContent() {
   const linkPageSize = 20;
   const [linkDomains, setLinkDomains] = useState<Record<string, string>>({});
   const searchParams = useSearchParams();
-  const tabParam = (searchParams.get("tab") || "domains").toLowerCase();
-  const activeTab = tabParam === "links" ? "links" : "domains";
+  const activeTab = resolveQueueTab(searchParams.get("tab"));
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -235,8 +239,8 @@ function QueuePageContent() {
     setLinkPage(1);
   }, [linkFilter, linkSearch]);
 
-  const genHasNext = items.length === genPageSize;
-  const linkHasNext = linkTasks.length === linkPageSize;
+  const genHasNext = hasNextPageByPageSize(items.length, genPageSize);
+  const linkHasNext = hasNextPageByPageSize(linkTasks.length, linkPageSize);
   const visibleGenerations = filtered;
   const visibleLinks = filteredLinks;
   const genIndexBase = (genPage - 1) * genPageSize;
@@ -432,14 +436,14 @@ function QueuePageContent() {
           <span className="text-xs text-slate-500 dark:text-slate-400">Показано: {filteredLinks.length}</span>
         </div>
         <div className="flex flex-wrap gap-2">
-          <FilterButton label="Все" value="all" active={linkFilter === "all"} onClick={() => setLinkFilter("all")} count={linkTasks.length} />
-          <FilterButton label="Ожидает" value="pending" active={linkFilter === "pending"} onClick={() => setLinkFilter("pending")} count={linkCounts["pending"] || 0} />
-          <FilterButton label="Поиск" value="searching" active={linkFilter === "searching"} onClick={() => setLinkFilter("searching")} count={linkCounts["searching"] || 0} />
-          <FilterButton label="Удаление" value="removing" active={linkFilter === "removing"} onClick={() => setLinkFilter("removing")} count={linkCounts["removing"] || 0} />
-          <FilterButton label="Вставлено" value="inserted" active={linkFilter === "inserted"} onClick={() => setLinkFilter("inserted")} count={linkCounts["inserted"] || 0} />
-          <FilterButton label="Вставлено (ген. текст)" value="generated" active={linkFilter === "generated"} onClick={() => setLinkFilter("generated")} count={linkCounts["generated"] || 0} />
-          <FilterButton label="Удалено" value="removed" active={linkFilter === "removed"} onClick={() => setLinkFilter("removed")} count={linkCounts["removed"] || 0} />
-          <FilterButton label="Ошибка" value="failed" active={linkFilter === "failed"} onClick={() => setLinkFilter("failed")} count={linkCounts["failed"] || 0} />
+          <FilterButton label={QUEUE_LINK_STATUS_LABELS.all} value="all" active={linkFilter === "all"} onClick={() => setLinkFilter("all")} count={linkTasks.length} />
+          <FilterButton label={QUEUE_LINK_STATUS_LABELS.pending} value="pending" active={linkFilter === "pending"} onClick={() => setLinkFilter("pending")} count={linkCounts["pending"] || 0} />
+          <FilterButton label={QUEUE_LINK_STATUS_LABELS.searching} value="searching" active={linkFilter === "searching"} onClick={() => setLinkFilter("searching")} count={linkCounts["searching"] || 0} />
+          <FilterButton label={QUEUE_LINK_STATUS_LABELS.removing} value="removing" active={linkFilter === "removing"} onClick={() => setLinkFilter("removing")} count={linkCounts["removing"] || 0} />
+          <FilterButton label={QUEUE_LINK_STATUS_LABELS.inserted} value="inserted" active={linkFilter === "inserted"} onClick={() => setLinkFilter("inserted")} count={linkCounts["inserted"] || 0} />
+          <FilterButton label={QUEUE_LINK_STATUS_LABELS.generated} value="generated" active={linkFilter === "generated"} onClick={() => setLinkFilter("generated")} count={linkCounts["generated"] || 0} />
+          <FilterButton label={QUEUE_LINK_STATUS_LABELS.removed} value="removed" active={linkFilter === "removed"} onClick={() => setLinkFilter("removed")} count={linkCounts["removed"] || 0} />
+          <FilterButton label={QUEUE_LINK_STATUS_LABELS.failed} value="failed" active={linkFilter === "failed"} onClick={() => setLinkFilter("failed")} count={linkCounts["failed"] || 0} />
         </div>
         <input
           type="search"

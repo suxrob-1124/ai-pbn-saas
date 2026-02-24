@@ -5,6 +5,7 @@ import { FiActivity, FiRefreshCw } from "react-icons/fi";
 import { listAdminLLMPricing, listAdminLLMUsageEvents, listAdminLLMUsageStats } from "../../../lib/llmUsageApi";
 import { useAuthGuard } from "../../../lib/useAuth";
 import type { LLMPricingDTO, LLMUsageEventDTO, LLMUsageFilters, LLMUsageStatsDTO } from "../../../types/llmUsage";
+import { getTotalPages } from "../../../features/queue-monitoring/services/primitives";
 
 const DEFAULT_LIMIT = 50;
 
@@ -27,7 +28,7 @@ export default function LLMUsageMonitoringPage() {
   const [domainId, setDomainId] = useState("");
 
   const isAdmin = (me?.role || "").toLowerCase() === "admin";
-  const totalPages = Math.max(1, Math.ceil(total / DEFAULT_LIMIT));
+  const totalPages = getTotalPages(total, DEFAULT_LIMIT);
 
   const filters = useMemo<LLMUsageFilters>(() => {
     const value: LLMUsageFilters = { page, limit: DEFAULT_LIMIT };

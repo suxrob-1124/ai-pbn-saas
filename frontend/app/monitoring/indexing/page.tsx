@@ -19,6 +19,10 @@ import {
   setOptionalParam
 } from "../../../features/queue-monitoring/services/queryParams";
 import {
+  getTotalPages,
+  hasNextPageByTotal
+} from "../../../features/queue-monitoring/services/primitives";
+import {
   listAdmin,
   listAdminCalendar,
   listAdminStats,
@@ -569,8 +573,9 @@ function IndexingMonitoringContent() {
   };
 
   const visibleChecks = checks;
-  const hasNextPage = page * limit < totalChecks;
-  const totalPages = Math.max(1, Math.ceil(totalChecks / limit));
+  // Эквивалент старой формулы: page * limit < totalChecks.
+  const hasNextPage = hasNextPageByTotal(page, limit, totalChecks);
+  const totalPages = getTotalPages(totalChecks, limit);
   const pageLabel = Math.min(page, totalPages);
 
   useEffect(() => {
