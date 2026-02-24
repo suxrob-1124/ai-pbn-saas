@@ -146,7 +146,7 @@ func (s *Server) handleDomainFiles(w http.ResponseWriter, r *http.Request, domai
 				writeEditorError(w, http.StatusBadRequest, editorErrInvalidFormat, "invalid path", nil)
 				return
 			}
-			cleanPath, err := sanitizeFilePath(rawPath)
+			cleanPath, err := normalizeEditorPath(rawPath)
 			if err != nil {
 				writeEditorError(w, http.StatusBadRequest, editorErrInvalidFormat, "invalid path", nil)
 				return
@@ -167,7 +167,7 @@ func (s *Server) handleDomainFiles(w http.ResponseWriter, r *http.Request, domai
 				writeEditorError(w, http.StatusBadRequest, editorErrInvalidFormat, "invalid path", nil)
 				return
 			}
-			cleanPath, err := sanitizeFilePath(rawPath)
+			cleanPath, err := normalizeEditorPath(rawPath)
 			if err != nil {
 				writeEditorError(w, http.StatusBadRequest, editorErrInvalidFormat, "invalid path", nil)
 				return
@@ -188,7 +188,7 @@ func (s *Server) handleDomainFiles(w http.ResponseWriter, r *http.Request, domai
 				writeEditorError(w, http.StatusBadRequest, editorErrInvalidFormat, "invalid path", nil)
 				return
 			}
-			cleanPath, err := sanitizeFilePath(rawPath)
+			cleanPath, err := normalizeEditorPath(rawPath)
 			if err != nil {
 				writeEditorError(w, http.StatusBadRequest, editorErrInvalidFormat, "invalid path", nil)
 				return
@@ -204,7 +204,7 @@ func (s *Server) handleDomainFiles(w http.ResponseWriter, r *http.Request, domai
 			if len(parts) == 2 {
 				rawFirst, err := url.PathUnescape(parts[0])
 				if err == nil {
-					if cleanFirst, serr := sanitizeFilePath(rawFirst); serr == nil {
+					if cleanFirst, serr := normalizeEditorPath(rawFirst); serr == nil {
 						if fileByPath, ferr := s.siteFiles.GetByPath(r.Context(), domain.ID, cleanFirst); ferr == nil && fileByPath != nil {
 							s.handleFileHistoryByPath(w, r, domain.ID, cleanFirst)
 							return
@@ -224,7 +224,7 @@ func (s *Server) handleDomainFiles(w http.ResponseWriter, r *http.Request, domai
 				writeEditorError(w, http.StatusBadRequest, editorErrInvalidFormat, "invalid path", nil)
 				return
 			}
-			cleanPath, err := sanitizeFilePath(rawPath)
+			cleanPath, err := normalizeEditorPath(rawPath)
 			if err != nil {
 				writeEditorError(w, http.StatusBadRequest, editorErrInvalidFormat, "invalid path", nil)
 				return
@@ -245,7 +245,7 @@ func (s *Server) handleDomainFiles(w http.ResponseWriter, r *http.Request, domai
 				writeEditorError(w, http.StatusBadRequest, editorErrInvalidFormat, "invalid path", nil)
 				return
 			}
-			cleanPath, err := sanitizeFilePath(rawPath)
+			cleanPath, err := normalizeEditorPath(rawPath)
 			if err != nil {
 				writeEditorError(w, http.StatusBadRequest, editorErrInvalidFormat, "invalid path", nil)
 				return
@@ -260,7 +260,7 @@ func (s *Server) handleDomainFiles(w http.ResponseWriter, r *http.Request, domai
 		writeEditorError(w, http.StatusBadRequest, editorErrInvalidFormat, "invalid path", nil)
 		return
 	}
-	cleanPath, err := sanitizeFilePath(rawPath)
+	cleanPath, err := normalizeEditorPath(rawPath)
 	if err != nil {
 		writeEditorError(w, http.StatusBadRequest, editorErrInvalidFormat, "invalid path", nil)
 		return
@@ -367,16 +367,8 @@ func (s *Server) handleCreateDomainFile(w http.ResponseWriter, r *http.Request, 
 		writeEditorError(w, http.StatusBadRequest, editorErrInvalidFormat, "kind must be file or dir", nil)
 		return
 	}
-	cleanPath, err := sanitizeFilePath(body.Path)
+	cleanPath, err := normalizeEditorWritablePath(body.Path)
 	if err != nil {
-		writeEditorError(w, http.StatusBadRequest, editorErrInvalidFormat, "invalid path", nil)
-		return
-	}
-	if err := validateEditorPath(cleanPath); err != nil {
-		writeEditorError(w, http.StatusBadRequest, editorErrForbiddenPath, err.Error(), nil)
-		return
-	}
-	if err := validateUploadPathPolicy(cleanPath); err != nil {
 		writeEditorError(w, http.StatusBadRequest, editorErrForbiddenPath, err.Error(), nil)
 		return
 	}
@@ -406,12 +398,8 @@ func (s *Server) handleCreateDomainFile(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	newBytes := []byte(body.Content)
-	detected := detectMimeType(cleanPath, newBytes)
-	if err := validateMimeType(cleanPath, detected, strings.TrimSpace(body.MimeType)); err != nil {
-		writeEditorError(w, http.StatusBadRequest, editorErrInvalidFormat, err.Error(), nil)
-		return
-	}
-	if err := validateUploadSecurity(cleanPath, detected, newBytes); err != nil {
+	detected, err := validateEditorMimeAndPayload(cleanPath, strings.TrimSpace(body.MimeType), newBytes)
+	if err != nil {
 		writeEditorError(w, http.StatusBadRequest, editorErrAssetValidationFail, err.Error(), nil)
 		return
 	}
@@ -469,16 +457,8 @@ func (s *Server) handleUploadDomainFile(w http.ResponseWriter, r *http.Request, 
 	if rawPath == "" {
 		rawPath = header.Filename
 	}
-	cleanPath, err := sanitizeFilePath(rawPath)
+	cleanPath, err := normalizeEditorWritablePath(rawPath)
 	if err != nil {
-		writeEditorError(w, http.StatusBadRequest, editorErrInvalidFormat, "invalid path", nil)
-		return
-	}
-	if err := validateEditorPath(cleanPath); err != nil {
-		writeEditorError(w, http.StatusBadRequest, editorErrForbiddenPath, err.Error(), nil)
-		return
-	}
-	if err := validateUploadPathPolicy(cleanPath); err != nil {
 		writeEditorError(w, http.StatusBadRequest, editorErrForbiddenPath, err.Error(), nil)
 		return
 	}
@@ -519,8 +499,8 @@ func (s *Server) handleUploadDomainFile(w http.ResponseWriter, r *http.Request, 
 		writeError(w, http.StatusInternalServerError, "could not save upload")
 		return
 	}
-	detected := detectMimeType(cleanPath, content)
-	if err := validateUploadSecurity(cleanPath, detected, content); err != nil {
+	detected, err := validateEditorMimeAndPayload(cleanPath, "", content)
+	if err != nil {
 		writeEditorError(w, http.StatusBadRequest, editorErrAssetValidationFail, err.Error(), nil)
 		return
 	}
@@ -587,7 +567,7 @@ func (s *Server) handleUpdateFile(w http.ResponseWriter, r *http.Request, domain
 		return
 	}
 	if strings.TrimSpace(body.ExpectedPath) != "" {
-		expectedPath, err := sanitizeFilePath(body.ExpectedPath)
+		expectedPath, err := normalizeEditorPath(body.ExpectedPath)
 		if err != nil {
 			writeEditorError(w, http.StatusBadRequest, editorErrInvalidFormat, "invalid expected_path", nil)
 			return
@@ -711,16 +691,8 @@ func (s *Server) handleMoveFile(w http.ResponseWriter, r *http.Request, domain s
 		writeEditorError(w, http.StatusBadRequest, editorErrInvalidFormat, "op must be move", nil)
 		return
 	}
-	newPath, err := sanitizeFilePath(body.NewPath)
+	newPath, err := normalizeEditorWritablePath(body.NewPath)
 	if err != nil {
-		writeEditorError(w, http.StatusBadRequest, editorErrInvalidFormat, "invalid new_path", nil)
-		return
-	}
-	if err := validateEditorPath(newPath); err != nil {
-		writeEditorError(w, http.StatusBadRequest, editorErrForbiddenPath, err.Error(), nil)
-		return
-	}
-	if err := validateUploadPathPolicy(newPath); err != nil {
 		writeEditorError(w, http.StatusBadRequest, editorErrForbiddenPath, err.Error(), nil)
 		return
 	}

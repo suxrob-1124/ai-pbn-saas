@@ -2386,12 +2386,8 @@ func (s *Server) handleDomainEditorActions(w http.ResponseWriter, r *http.Reques
 		if !strings.HasSuffix(strings.ToLower(targetPath), ".html") {
 			targetPath += ".html"
 		}
-		cleanTarget, err := sanitizeFilePath(targetPath)
+		cleanTarget, err := normalizeEditorProtectedPath(targetPath)
 		if err != nil {
-			writeEditorError(w, http.StatusBadRequest, editorErrInvalidFormat, "invalid target_path", nil)
-			return
-		}
-		if err := validateEditorPath(cleanTarget); err != nil {
 			writeEditorError(w, http.StatusBadRequest, editorErrForbiddenPath, err.Error(), nil)
 			return
 		}

@@ -37,79 +37,6 @@ type editorPageSuggestionPayload struct {
 	Warnings []string               `json:"warnings"`
 }
 
-func normalizeEditorContextMode(raw string) string {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "manual":
-		return "manual"
-	case "hybrid":
-		return "hybrid"
-	default:
-		return "auto"
-	}
-}
-
-func stripMarkdownFences(raw string) string {
-	trimmed := strings.TrimSpace(raw)
-	if strings.HasPrefix(trimmed, "```") {
-		lines := strings.Split(trimmed, "\n")
-		if len(lines) >= 2 {
-			lines = lines[1:]
-		}
-		if len(lines) > 0 && strings.HasPrefix(strings.TrimSpace(lines[len(lines)-1]), "```") {
-			lines = lines[:len(lines)-1]
-		}
-		return strings.TrimSpace(strings.Join(lines, "\n"))
-	}
-	return trimmed
-}
-
-func parseJSONGeneratedFiles(raw string) (editorPageSuggestionPayload, error) {
-	cleaned := stripMarkdownFences(raw)
-	var payload editorPageSuggestionPayload
-	if err := json.Unmarshal([]byte(cleaned), &payload); err != nil {
-		return editorPageSuggestionPayload{}, err
-	}
-	if len(payload.Files) == 0 {
-		return editorPageSuggestionPayload{}, errors.New("empty files array")
-	}
-	return payload, nil
-}
-
-func sanitizeAISuggestContent(raw string, currentContent string) (string, []string) {
-	warnings := make([]string, 0)
-	cleaned := stripMarkdownFences(raw)
-	if cleaned == "" {
-		return currentContent, []string{"AI вернул пустой ответ, применен no-op"}
-	}
-
-	var wrapped struct {
-		Suggested string `json:"suggested_content"`
-		Content   string `json:"content"`
-		Files     []struct {
-			Content string `json:"content"`
-		} `json:"files"`
-	}
-	if json.Unmarshal([]byte(cleaned), &wrapped) == nil {
-		switch {
-		case strings.TrimSpace(wrapped.Suggested) != "":
-			cleaned = strings.TrimSpace(wrapped.Suggested)
-			warnings = append(warnings, "AI вернул JSON-wrapper, извлечено suggested_content")
-		case strings.TrimSpace(wrapped.Content) != "":
-			cleaned = strings.TrimSpace(wrapped.Content)
-			warnings = append(warnings, "AI вернул JSON-wrapper, извлечено content")
-		case len(wrapped.Files) > 0 && strings.TrimSpace(wrapped.Files[0].Content) != "":
-			cleaned = strings.TrimSpace(wrapped.Files[0].Content)
-			warnings = append(warnings, "AI вернул JSON-wrapper, извлечен первый files[].content")
-		}
-	}
-
-	lowered := strings.ToLower(cleaned)
-	if strings.Contains(lowered, "предоставьте содержимое файла") || strings.Contains(lowered, "provide file content") {
-		return currentContent, []string{"AI не смог выполнить изменение без контекста файла, применен no-op"}
-	}
-	return cleaned, warnings
-}
-
 func defaultEditorFilePrompt() string {
 	return `Ты — AI-редактор файлов сайта.
 Верни ТОЛЬКО финальный контент текущего файла, без markdown fence, без JSON, без пояснений.
@@ -185,17 +112,16 @@ func normalizeEditorPageSuggestionPayload(parsed editorPageSuggestionPayload) ([
 	warnings := append([]string(nil), parsed.Warnings...)
 	outFiles := make([]map[string]any, 0, len(parsed.Files))
 	for _, file := range parsed.Files {
-		cleanPath, err := sanitizeFilePath(file.Path)
+		cleanPath, reason, err := normalizeEditorWritablePathWithReason(file.Path)
 		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("invalid path skipped: %s", file.Path))
-			continue
-		}
-		if err := validateEditorPath(cleanPath); err != nil {
-			warnings = append(warnings, fmt.Sprintf("protected path skipped: %s", cleanPath))
-			continue
-		}
-		if err := validateUploadPathPolicy(cleanPath); err != nil {
-			warnings = append(warnings, fmt.Sprintf("blocked file type skipped: %s", cleanPath))
+			switch reason {
+			case "protected":
+				warnings = append(warnings, fmt.Sprintf("protected path skipped: %s", cleanPath))
+			case "blocked":
+				warnings = append(warnings, fmt.Sprintf("blocked file type skipped: %s", cleanPath))
+			default:
+				warnings = append(warnings, fmt.Sprintf("invalid path skipped: %s", file.Path))
+			}
 			continue
 		}
 		content := file.Content
@@ -227,17 +153,16 @@ func normalizeEditorPageSuggestionPayload(parsed editorPageSuggestionPayload) ([
 	}
 	outAssets := make([]map[string]any, 0, len(parsed.Assets))
 	for _, asset := range parsed.Assets {
-		cleanPath, err := sanitizeFilePath(asset.Path)
+		cleanPath, reason, err := normalizeEditorWritablePathWithReason(asset.Path)
 		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("invalid asset path skipped: %s", asset.Path))
-			continue
-		}
-		if err := validateEditorPath(cleanPath); err != nil {
-			warnings = append(warnings, fmt.Sprintf("protected asset path skipped: %s", cleanPath))
-			continue
-		}
-		if err := validateUploadPathPolicy(cleanPath); err != nil {
-			warnings = append(warnings, fmt.Sprintf("blocked asset type skipped: %s", cleanPath))
+			switch reason {
+			case "protected":
+				warnings = append(warnings, fmt.Sprintf("protected asset path skipped: %s", cleanPath))
+			case "blocked":
+				warnings = append(warnings, fmt.Sprintf("blocked asset type skipped: %s", cleanPath))
+			default:
+				warnings = append(warnings, fmt.Sprintf("invalid asset path skipped: %s", asset.Path))
+			}
 			continue
 		}
 		mimeType := strings.TrimSpace(asset.MimeType)
@@ -288,12 +213,8 @@ func (s *Server) handleDomainEditorAICreatePage(w http.ResponseWriter, r *http.R
 	if !strings.HasSuffix(strings.ToLower(targetPath), ".html") {
 		targetPath += ".html"
 	}
-	cleanTarget, err := sanitizeFilePath(targetPath)
+	cleanTarget, err := normalizeEditorProtectedPath(targetPath)
 	if err != nil {
-		writeEditorError(w, http.StatusBadRequest, editorErrInvalidFormat, "invalid target_path", nil)
-		return
-	}
-	if err := validateEditorPath(cleanTarget); err != nil {
 		writeEditorError(w, http.StatusBadRequest, editorErrForbiddenPath, err.Error(), nil)
 		return
 	}
@@ -430,16 +351,8 @@ func (s *Server) handleDomainEditorAIRegenerateAsset(w http.ResponseWriter, r *h
 		writeEditorError(w, http.StatusBadRequest, editorErrInvalidFormat, "invalid body", nil)
 		return
 	}
-	cleanPath, err := sanitizeFilePath(strings.TrimSpace(body.Path))
+	cleanPath, err := normalizeEditorWritablePath(strings.TrimSpace(body.Path))
 	if err != nil {
-		writeEditorError(w, http.StatusBadRequest, editorErrInvalidFormat, "invalid path", nil)
-		return
-	}
-	if err := validateEditorPath(cleanPath); err != nil {
-		writeEditorError(w, http.StatusBadRequest, editorErrForbiddenPath, err.Error(), nil)
-		return
-	}
-	if err := validateUploadPathPolicy(cleanPath); err != nil {
 		writeEditorError(w, http.StatusBadRequest, editorErrForbiddenPath, err.Error(), nil)
 		return
 	}
