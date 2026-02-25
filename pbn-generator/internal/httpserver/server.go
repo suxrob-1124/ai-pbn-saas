@@ -7434,28 +7434,12 @@ func (s *Server) generateEditorSuggestion(ctx context.Context, requesterEmail, o
 	if req.TokenSource == "" {
 		req.TokenSource = "estimated"
 	}
+	inputPrice, outputPrice, estCost := s.resolveLLMPriceSnapshot(ctx, req)
 
 	if err != nil {
-		s.logEditorLLMUsageEvent(ctx, req, requesterEmail, keyMeta, projectID, domainID, operation, stage, filePath)
+		s.logEditorLLMUsageEventWithPricing(ctx, req, requesterEmail, keyMeta, projectID, domainID, operation, stage, filePath, inputPrice, outputPrice, estCost)
 		return "", nil, llm.SanitizeError(err)
 	}
-	var (
-		inputPrice  sql.NullFloat64
-		outputPrice sql.NullFloat64
-		estCost     sql.NullFloat64
-	)
-	if s.modelPricing != nil {
-		at := req.Timestamp
-		if at.IsZero() {
-			at = time.Now().UTC()
-		}
-		if pricing, err := s.modelPricing.GetActiveByModel(ctx, "gemini", req.Model, at); err == nil && pricing != nil {
-			inputPrice = sql.NullFloat64{Float64: pricing.InputUSDPerMillion, Valid: true}
-			outputPrice = sql.NullFloat64{Float64: pricing.OutputUSDPerMillion, Valid: true}
-			estCost = sql.NullFloat64{Float64: estimateLLMCostUSD(req.PromptTokens, req.CompletionTokens, pricing.InputUSDPerMillion, pricing.OutputUSDPerMillion), Valid: true}
-		}
-	}
-
 	s.logEditorLLMUsageEventWithPricing(ctx, req, requesterEmail, keyMeta, projectID, domainID, operation, stage, filePath, inputPrice, outputPrice, estCost)
 
 	tokenUsage := map[string]any{
@@ -7505,26 +7489,11 @@ func (s *Server) generateEditorImage(ctx context.Context, requesterEmail, ownerE
 	if req.TokenSource == "" {
 		req.TokenSource = "estimated"
 	}
+	inputPrice, outputPrice, estCost := s.resolveLLMPriceSnapshot(ctx, req)
 
 	if err != nil {
-		s.logEditorLLMUsageEvent(ctx, req, requesterEmail, keyMeta, projectID, domainID, operation, stage, filePath)
+		s.logEditorLLMUsageEventWithPricing(ctx, req, requesterEmail, keyMeta, projectID, domainID, operation, stage, filePath, inputPrice, outputPrice, estCost)
 		return nil, nil, llm.SanitizeError(err)
-	}
-	var (
-		inputPrice  sql.NullFloat64
-		outputPrice sql.NullFloat64
-		estCost     sql.NullFloat64
-	)
-	if s.modelPricing != nil {
-		at := req.Timestamp
-		if at.IsZero() {
-			at = time.Now().UTC()
-		}
-		if pricing, err := s.modelPricing.GetActiveByModel(ctx, "gemini", req.Model, at); err == nil && pricing != nil {
-			inputPrice = sql.NullFloat64{Float64: pricing.InputUSDPerMillion, Valid: true}
-			outputPrice = sql.NullFloat64{Float64: pricing.OutputUSDPerMillion, Valid: true}
-			estCost = sql.NullFloat64{Float64: estimateLLMCostUSD(req.PromptTokens, req.CompletionTokens, pricing.InputUSDPerMillion, pricing.OutputUSDPerMillion), Valid: true}
-		}
 	}
 	s.logEditorLLMUsageEventWithPricing(ctx, req, requesterEmail, keyMeta, projectID, domainID, operation, stage, filePath, inputPrice, outputPrice, estCost)
 	tokenUsage := map[string]any{
@@ -7559,6 +7528,27 @@ func isImageGenerationModel(model string) bool {
 	default:
 		return strings.Contains(model, "image")
 	}
+}
+
+func (s *Server) resolveLLMPriceSnapshot(ctx context.Context, req llm.LLMRequest) (sql.NullFloat64, sql.NullFloat64, sql.NullFloat64) {
+	if s.modelPricing == nil {
+		return sql.NullFloat64{}, sql.NullFloat64{}, sql.NullFloat64{}
+	}
+	at := req.Timestamp
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	pricing, err := s.modelPricing.GetActiveByModel(ctx, "gemini", req.Model, at)
+	if err != nil || pricing == nil {
+		return sql.NullFloat64{}, sql.NullFloat64{}, sql.NullFloat64{}
+	}
+	inputPrice := sql.NullFloat64{Float64: pricing.InputUSDPerMillion, Valid: true}
+	outputPrice := sql.NullFloat64{Float64: pricing.OutputUSDPerMillion, Valid: true}
+	estCost := sql.NullFloat64{
+		Float64: estimateLLMCostUSD(req.PromptTokens, req.CompletionTokens, pricing.InputUSDPerMillion, pricing.OutputUSDPerMillion),
+		Valid:   true,
+	}
+	return inputPrice, outputPrice, estCost
 }
 
 func normalizeImageGenerationModel(candidates ...string) string {

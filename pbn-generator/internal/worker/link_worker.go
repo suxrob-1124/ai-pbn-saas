@@ -708,6 +708,20 @@ Page context (excerpt):
 	if len(reqs) > 0 {
 		req := reqs[len(reqs)-1]
 		w.logLLMUsage(ctx, req, task, domain, keyOwnerEmail, keyType)
+	} else if err != nil {
+		fallbackErr := llm.SanitizeError(err)
+		fallbackReq := llm.LLMRequest{
+			Stage:       "link_task",
+			Model:       strings.TrimSpace(w.Config.GeminiDefaultModel),
+			TokenSource: "estimated",
+			Timestamp:   time.Now().UTC(),
+		}
+		if fallbackErr != nil {
+			fallbackReq.Error = fallbackErr.Error()
+		} else {
+			fallbackReq.Error = strings.TrimSpace(err.Error())
+		}
+		w.logLLMUsage(ctx, fallbackReq, task, domain, keyOwnerEmail, keyType)
 	}
 	if err != nil {
 		return "", err
