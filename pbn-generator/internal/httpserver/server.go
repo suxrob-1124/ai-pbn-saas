@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -35,6 +36,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/robfig/cron/v3"
 	"go.uber.org/zap"
+	"golang.org/x/net/idna"
 
 	"obzornik-pbn-generator/internal/auth"
 	"obzornik-pbn-generator/internal/config"
@@ -1823,11 +1825,8 @@ func (s *Server) handleProjectDomains(w http.ResponseWriter, r *http.Request, pr
 		}
 		defer r.Body.Close()
 		var body struct {
-			Items []struct {
-				URL     string `json:"url"`
-				Keyword string `json:"keyword"`
-			} `json:"items"`
-			Text string `json:"text"`
+			Items []domainImportItem `json:"items"`
+			Text  string             `json:"text"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid body")
@@ -1837,53 +1836,79 @@ func (s *Server) handleProjectDomains(w http.ResponseWriter, r *http.Request, pr
 			writeError(w, http.StatusBadRequest, "no domains provided")
 			return
 		}
-		records := body.Items
-		if len(records) == 0 {
-			lines := strings.Split(body.Text, "\n")
-			for _, line := range lines {
-				line = strings.TrimSpace(line)
-				if line == "" {
-					continue
-				}
-				url := line
-				kw := ""
-				if strings.Contains(line, ",") {
-					parts := strings.SplitN(line, ",", 2)
-					url = strings.TrimSpace(parts[0])
-					kw = strings.TrimSpace(parts[1])
-				}
-				records = append(records, struct {
-					URL     string `json:"url"`
-					Keyword string `json:"keyword"`
-				}{URL: url, Keyword: kw})
+		records := make([]domainImportItem, 0, len(body.Items))
+		records = append(records, body.Items...)
+		if strings.TrimSpace(body.Text) != "" {
+			parsed, err := parseDomainImportText(body.Text)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
 			}
+			records = append(records, parsed...)
 		}
+		if len(records) == 0 {
+			writeError(w, http.StatusBadRequest, "no domains provided")
+			return
+		}
+
+		_ = s.domains.EnsureDefaultServer(r.Context(), p.UserEmail)
 		created := 0
-		for _, item := range records {
-			cleanURL := sanitizeDomain(item.URL)
-			if cleanURL == "" {
-				continue
+		skipped := 0
+		for idx, item := range records {
+			cleanURL, err := normalizeImportedDomain(item.URL)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid domain at row %d: %s", idx+1, err.Error()))
+				return
 			}
-			_ = s.domains.EnsureDefaultServer(r.Context(), p.UserEmail)
+			serverID := strings.TrimSpace(firstNonEmpty(item.ServerID, item.Server))
+			if serverID == "" {
+				serverID = sqlstore.DefaultServerID
+			}
+			targetCountry := strings.TrimSpace(item.Country)
+			if targetCountry == "" {
+				targetCountry = p.TargetCountry
+			}
+			targetLanguage := strings.TrimSpace(item.Language)
+			if targetLanguage == "" {
+				targetLanguage = p.TargetLanguage
+			}
 			d := sqlstore.Domain{
 				ID:             uuid.NewString(),
 				ProjectID:      projectID,
 				URL:            cleanURL,
 				MainKeyword:    strings.TrimSpace(item.Keyword),
-				TargetCountry:  p.TargetCountry,
-				TargetLanguage: p.TargetLanguage,
-				ServerID:       sqlstore.NullableString(sqlstore.DefaultServerID),
+				TargetCountry:  targetCountry,
+				TargetLanguage: targetLanguage,
+				ServerID:       sqlstore.NullableString(serverID),
 				Status:         "waiting",
 			}
 			if err := s.domains.Create(r.Context(), d); err != nil {
 				if s.logger != nil {
-					s.logger.Warnf("import domain failed: %v", err)
+					s.logger.Warnf("import domain failed (url=%s): %v", cleanURL, err)
 				}
+				skipped++
 				continue
+			}
+			anchor := strings.TrimSpace(firstNonEmpty(item.LinkAnchorText, item.Anchor))
+			acceptor := strings.TrimSpace(firstNonEmpty(item.LinkAcceptorURL, item.Acceptor))
+			if anchor != "" || acceptor != "" {
+				_, err := s.domains.UpdateLinkSettings(
+					r.Context(),
+					d.ID,
+					nullStringFromOptional(&anchor),
+					nullStringFromOptional(&acceptor),
+				)
+				if err != nil && s.logger != nil {
+					s.logger.Warnf("import link settings failed (domain=%s): %v", d.ID, err)
+				}
 			}
 			created++
 		}
-		writeJSON(w, http.StatusCreated, map[string]any{"created": created})
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"created": created,
+			"skipped": skipped,
+			"total":   len(records),
+		})
 		return
 	}
 
@@ -1909,11 +1934,16 @@ func (s *Server) handleProjectDomains(w http.ResponseWriter, r *http.Request, pr
 			writeError(w, http.StatusBadRequest, "invalid body")
 			return
 		}
+		cleanURL, err := normalizeImportedDomain(body.URL)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid domain")
+			return
+		}
 		_ = s.domains.EnsureDefaultServer(r.Context(), p.UserEmail)
 		d := sqlstore.Domain{
 			ID:             uuid.NewString(),
 			ProjectID:      projectID,
-			URL:            sanitizeDomain(body.URL),
+			URL:            cleanURL,
 			MainKeyword:    body.Keyword,
 			TargetCountry:  p.TargetCountry,
 			TargetLanguage: p.TargetLanguage,
@@ -7600,6 +7630,180 @@ func rawJSONOrNil(b []byte) any {
 		return string(b)
 	}
 	return v
+}
+
+type domainImportItem struct {
+	URL             string `json:"url"`
+	Keyword         string `json:"keyword"`
+	Country         string `json:"country"`
+	Language        string `json:"language"`
+	ServerID        string `json:"server_id"`
+	Server          string `json:"server"`
+	LinkAnchorText  string `json:"link_anchor_text"`
+	Anchor          string `json:"anchor"`
+	LinkAcceptorURL string `json:"link_acceptor_url"`
+	Acceptor        string `json:"acceptor"`
+}
+
+func parseDomainImportText(text string) ([]domainImportItem, error) {
+	lines := strings.Split(text, "\n")
+	items := make([]domainImportItem, 0, len(lines))
+	for idx, rawLine := range lines {
+		line := strings.TrimSpace(rawLine)
+		if line == "" {
+			continue
+		}
+		fields, err := parseDomainImportCSVLine(line)
+		if err != nil {
+			return nil, fmt.Errorf("invalid import format at line %d", idx+1)
+		}
+		if len(items) == 0 && domainImportLooksLikeHeader(fields) {
+			continue
+		}
+		item, err := parseDomainImportFields(fields)
+		if err != nil {
+			return nil, fmt.Errorf("invalid import format at line %d: %s", idx+1, err.Error())
+		}
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+func parseDomainImportCSVLine(line string) ([]string, error) {
+	reader := csv.NewReader(strings.NewReader(line))
+	reader.FieldsPerRecord = -1
+	reader.TrimLeadingSpace = true
+	reader.LazyQuotes = true
+	fields, err := reader.Read()
+	if err != nil {
+		return nil, err
+	}
+	for i := range fields {
+		fields[i] = strings.TrimSpace(fields[i])
+	}
+	if len(fields) > 0 {
+		fields[0] = strings.TrimPrefix(fields[0], "\ufeff")
+	}
+	return fields, nil
+}
+
+func parseDomainImportFields(fields []string) (domainImportItem, error) {
+	if len(fields) == 0 {
+		return domainImportItem{}, errors.New("empty line")
+	}
+	if len(fields) > 7 {
+		return domainImportItem{}, errors.New("too many columns")
+	}
+	url := strings.TrimSpace(fields[0])
+	if url == "" {
+		return domainImportItem{}, errors.New("domain is required")
+	}
+	item := domainImportItem{URL: url}
+	if len(fields) > 1 {
+		item.Keyword = strings.TrimSpace(fields[1])
+	}
+	if len(fields) > 2 {
+		item.Country = strings.TrimSpace(fields[2])
+	}
+	if len(fields) > 3 {
+		item.Language = strings.TrimSpace(fields[3])
+	}
+	if len(fields) > 4 {
+		item.ServerID = strings.TrimSpace(fields[4])
+	}
+	if len(fields) > 5 {
+		item.LinkAnchorText = strings.TrimSpace(fields[5])
+	}
+	if len(fields) > 6 {
+		item.LinkAcceptorURL = strings.TrimSpace(fields[6])
+	}
+	return item, nil
+}
+
+func domainImportLooksLikeHeader(fields []string) bool {
+	if len(fields) == 0 {
+		return false
+	}
+	v := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(fields[0], "\ufeff")))
+	return v == "url" || v == "domain"
+}
+
+func normalizeImportedDomain(input string) (string, error) {
+	raw := strings.TrimSpace(input)
+	if raw == "" {
+		return "", errors.New("domain is required")
+	}
+	candidate := raw
+	if strings.HasPrefix(candidate, "//") {
+		candidate = "https:" + candidate
+	} else if !strings.Contains(candidate, "://") {
+		candidate = "https://" + candidate
+	}
+	parsed, err := url.Parse(candidate)
+	if err != nil {
+		return "", errors.New("invalid domain")
+	}
+	if parsed.User != nil {
+		return "", errors.New("invalid domain")
+	}
+	if parsed.Path != "" && parsed.Path != "/" {
+		return "", errors.New("path is not allowed")
+	}
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", errors.New("query is not allowed")
+	}
+	if parsed.Port() != "" {
+		return "", errors.New("port is not allowed")
+	}
+	host := strings.ToLower(strings.TrimSpace(parsed.Hostname()))
+	host = strings.TrimSuffix(host, ".")
+	if host == "" {
+		return "", errors.New("domain is required")
+	}
+	asciiHost, err := idna.Lookup.ToASCII(host)
+	if err != nil {
+		return "", errors.New("invalid domain")
+	}
+	asciiHost = strings.ToLower(strings.TrimSpace(asciiHost))
+	if net.ParseIP(asciiHost) != nil {
+		return "", errors.New("ip address is not allowed")
+	}
+	if !isValidDomainHost(asciiHost) {
+		return "", errors.New("invalid domain")
+	}
+	return asciiHost, nil
+}
+
+func isValidDomainHost(host string) bool {
+	if len(host) == 0 || len(host) > 253 || !strings.Contains(host, ".") {
+		return false
+	}
+	labels := strings.Split(host, ".")
+	for _, label := range labels {
+		if len(label) == 0 || len(label) > 63 {
+			return false
+		}
+		if label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for i := 0; i < len(label); i++ {
+			ch := label[i]
+			if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-' {
+				continue
+			}
+			return false
+		}
+	}
+	return true
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func sanitizeDomain(input string) string {

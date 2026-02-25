@@ -155,12 +155,15 @@ export function ProjectDomainsSection({
         </div>
         <div className="space-y-2">
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            Импорт списком (url[,ключевое слово] на строку). Пример: <code>example.com,casino</code>
+            Импорт по строкам в формате{" "}
+            <code>url[,keyword[,country[,language[,server_id[,anchor[,acceptor]]]]]]</code>. Пример:{" "}
+            <code>example.com,casino,se,sv,seotech-web-media1,"Лучший бонус","https://acceptor.example/page"</code>. Проверка
+            существования домена на сервере `media1` будет добавлена на этапе серверной интеграции.
           </p>
           <textarea
             className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
             rows={4}
-            placeholder="example.com,ключевое слово&#10;example.org"
+            placeholder={"example.com,casino,se,sv,seotech-web-media1,\"Лучший бонус\",\"https://acceptor.example/page\"\nexample.org"}
             value={importText}
             onChange={(e) => onImportTextChange(e.target.value)}
           />

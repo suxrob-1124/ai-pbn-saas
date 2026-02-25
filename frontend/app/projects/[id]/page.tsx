@@ -93,6 +93,164 @@ type ProjectSummary = {
 type ProjectTab = "domains" | "schedules" | "errors" | "settings";
 const PROJECT_TABS: ProjectTab[] = ["domains", "schedules", "errors", "settings"];
 
+type DomainImportPayloadItem = {
+  url: string;
+  keyword?: string;
+  country?: string;
+  language?: string;
+  server_id?: string;
+  link_anchor_text?: string;
+  link_acceptor_url?: string;
+};
+
+type DomainImportValidationError = {
+  line: number;
+  reason: string;
+};
+
+const DOMAIN_IMPORT_MAX_COLUMNS = 7;
+
+const parseImportCsvFields = (line: string): string[] | null => {
+  const fields: string[] = [];
+  let current = "";
+  let inQuotes = false;
+  for (let idx = 0; idx < line.length; idx += 1) {
+    const ch = line[idx];
+    if (ch === "\"") {
+      if (inQuotes && line[idx + 1] === "\"") {
+        current += "\"";
+        idx += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+    if (ch === "," && !inQuotes) {
+      fields.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  if (inQuotes) {
+    return null;
+  }
+  fields.push(current.trim());
+  if (fields.length > 0) {
+    fields[0] = fields[0].replace(/^\uFEFF/, "");
+  }
+  return fields;
+};
+
+const isDomainImportHeader = (fields: string[]) => {
+  const first = (fields[0] || "").trim().toLowerCase();
+  return first === "url" || first === "domain" || first === "домен";
+};
+
+const isValidDomainHost = (host: string) => {
+  if (!host || host.length > 253 || !host.includes(".")) {
+    return false;
+  }
+  const labels = host.split(".");
+  return labels.every((label) => {
+    if (!label || label.length > 63) {
+      return false;
+    }
+    if (label.startsWith("-") || label.endsWith("-")) {
+      return false;
+    }
+    return /^[a-z0-9-]+$/.test(label);
+  });
+};
+
+const normalizeDomainForImport = (raw: string): string | null => {
+  const input = raw.trim();
+  if (!input) {
+    return null;
+  }
+  let candidate = input;
+  if (candidate.startsWith("//")) {
+    candidate = `https:${candidate}`;
+  } else if (!candidate.includes("://")) {
+    candidate = `https://${candidate}`;
+  }
+  try {
+    const parsed = new URL(candidate);
+    if (parsed.pathname && parsed.pathname !== "/") {
+      return null;
+    }
+    if (parsed.search || parsed.hash || parsed.port || parsed.username || parsed.password) {
+      return null;
+    }
+    const host = parsed.hostname.trim().toLowerCase().replace(/\.$/, "");
+    if (!isValidDomainHost(host)) {
+      return null;
+    }
+    return host;
+  } catch {
+    return null;
+  }
+};
+
+const parseDomainImportText = (
+  rawText: string
+): { items: DomainImportPayloadItem[]; errors: DomainImportValidationError[] } => {
+  const items: DomainImportPayloadItem[] = [];
+  const errors: DomainImportValidationError[] = [];
+  const lines = rawText.split(/\r?\n/);
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const lineNo = lineIndex + 1;
+    const line = lines[lineIndex].trim();
+    if (!line) {
+      continue;
+    }
+    const fields = parseImportCsvFields(line);
+    if (!fields) {
+      errors.push({ line: lineNo, reason: "незакрытая кавычка" });
+      continue;
+    }
+    if (items.length === 0 && isDomainImportHeader(fields)) {
+      continue;
+    }
+    if (fields.length === 0 || fields.length > DOMAIN_IMPORT_MAX_COLUMNS) {
+      errors.push({ line: lineNo, reason: "ожидается до 7 колонок" });
+      continue;
+    }
+    const normalizedDomain = normalizeDomainForImport(fields[0] || "");
+    if (!normalizedDomain) {
+      errors.push({ line: lineNo, reason: "некорректный домен" });
+      continue;
+    }
+    const item: DomainImportPayloadItem = { url: normalizedDomain };
+    const keyword = (fields[1] || "").trim();
+    const country = (fields[2] || "").trim();
+    const language = (fields[3] || "").trim();
+    const serverId = (fields[4] || "").trim();
+    const anchor = (fields[5] || "").trim();
+    const acceptor = (fields[6] || "").trim();
+    if (keyword) {
+      item.keyword = keyword;
+    }
+    if (country) {
+      item.country = country;
+    }
+    if (language) {
+      item.language = language;
+    }
+    if (serverId) {
+      item.server_id = serverId;
+    }
+    if (anchor) {
+      item.link_anchor_text = anchor;
+    }
+    if (acceptor) {
+      item.link_acceptor_url = acceptor;
+    }
+    items.push(item);
+  }
+  return { items, errors };
+};
+
 export default function ProjectDetailPage() {
   const { me } = useAuthGuard();
   const params = useParams();
@@ -923,10 +1081,15 @@ export default function ProjectDetailPage() {
 
   const addDomain = async () => {
     if (!url.trim()) return;
+    const normalizedDomain = normalizeDomainForImport(url);
+    if (!normalizedDomain) {
+      setError("Укажите корректный домен (без пути, порта и query).");
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
-      await post(`/api/projects/${projectId}/domains`, { url, keyword, country, language, exclude_domains: exclude });
+      await post(`/api/projects/${projectId}/domains`, { url: normalizedDomain, keyword, country, language, exclude_domains: exclude });
       setUrl("");
       setKeyword("");
       setExclude("");
@@ -940,10 +1103,29 @@ export default function ProjectDetailPage() {
 
   const importDomains = async () => {
     if (!importText.trim()) return;
+    const parsed = parseDomainImportText(importText);
+    if (parsed.errors.length > 0) {
+      const lines = parsed.errors.slice(0, 5).map((entry) => `${entry.line} (${entry.reason})`).join(", ");
+      setError(`Импорт остановлен. Проверьте строки: ${lines}.`);
+      return;
+    }
+    if (parsed.items.length === 0) {
+      setError("Импорт пустой: добавьте хотя бы один корректный домен.");
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
-      await post(`/api/projects/${projectId}/domains/import`, { text: importText });
+      const result = await post<{ created?: number; skipped?: number; total?: number }>(`/api/projects/${projectId}/domains/import`, {
+        items: parsed.items
+      });
+      const created = Number(result?.created ?? parsed.items.length);
+      const skipped = Number(result?.skipped ?? 0);
+      showToast({
+        type: skipped > 0 ? "warning" : "success",
+        title: skipped > 0 ? "Импорт завершен с пропусками" : "Импорт завершен",
+        message: skipped > 0 ? `Создано: ${created}, пропущено: ${skipped}` : `Создано: ${created}`
+      });
       setImportText("");
       await load(true);
     } catch (err: any) {
