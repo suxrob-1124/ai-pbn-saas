@@ -11,7 +11,10 @@ const page = fs.readFileSync(projectUsagePath, "utf8");
 assert.ok(page.includes("LLM Usage проекта"), "Project page must render title");
 assert.ok(page.includes("listProjectLLMUsageEvents"), "Project page must call project events API");
 assert.ok(page.includes("listProjectLLMUsageStats"), "Project page must call project stats API");
-assert.ok(page.includes("Estimated cost (USD)"), "Project page must show cost KPI");
+assert.ok(
+  page.includes("Estimated cost (USD)") || page.includes("Оценочная стоимость (USD)"),
+  "Project page must show cost KPI"
+);
 
 const projectPagePath = path.join(root, "frontend/app/projects/[id]/page.tsx");
 const projectPage = fs.readFileSync(projectPagePath, "utf8");

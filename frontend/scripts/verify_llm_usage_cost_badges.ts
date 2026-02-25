@@ -16,7 +16,10 @@ assert.ok(adminPage.includes("item.token_source !== \"provider\""), "Estimated b
 
 const projectPagePath = path.join(root, "frontend/app/projects/[id]/usage/page.tsx");
 const projectPage = fs.readFileSync(projectPagePath, "utf8");
-assert.ok(projectPage.includes("Estimated cost (USD)"), "Project usage page must include cost KPI");
+assert.ok(
+  projectPage.includes("Estimated cost (USD)") || projectPage.includes("Оценочная стоимость (USD)"),
+  "Project usage page must include cost KPI"
+);
 assert.ok(projectPage.includes("item.estimated_cost_usd"), "Project usage table must display per-event cost");
 
 console.log("OK");
