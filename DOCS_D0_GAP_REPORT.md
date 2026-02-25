@@ -111,6 +111,14 @@
   - минимальный route coverage check (backend vs openapi inventory).
 - Добавить PR checklist для документации.
 
+Реализация D5.1:
+- CI workflow: `.github/workflows/docs-quality.yml`
+- Проверки:
+  - `cd frontend && npm run -s verify:openapi-lint`
+  - `cd frontend && npm run -s verify:docs-links`
+  - `cd frontend && npm run -s verify:openapi-route-coverage`
+- Policy/checklist: `.github/PULL_REQUEST_TEMPLATE.md`
+
 ## 6. Предложенный порядок микро-шагов
 
 1. `[x]` `D1.1` README skeleton rewrite (без OpenAPI правок).
@@ -120,7 +128,7 @@
 5. `[x]` `D2.1` Docs content-layer scaffold.
 6. `[x]` `D2.2` Миграция 2-3 ключевых docs-страниц на новый формат.
 7. `[x]` `D4.1` Расширение сценариев + troubleshooting.
-8. `[ ]` `D5.1` CI checks + policy.
+8. `[x]` `D5.1` CI checks + policy.
 
 ## 7. Критерии завершения блока
 
