@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -15,6 +16,10 @@ type apiErrorEnvelope struct {
 	Details any    `json:"details,omitempty"`
 }
 
+type errorMetaWriter interface {
+	SetErrorMeta(code, message, details string)
+}
+
 func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -26,17 +31,61 @@ func writeError(w http.ResponseWriter, status int, message string) {
 }
 
 func writeErrorWithCode(w http.ResponseWriter, status int, code string, message string, details any) {
+	writeErrorEnvelope(w, status, code, message, details, false)
+}
+
+func writeErrorEnvelope(w http.ResponseWriter, status int, code string, message string, details any, includeDetails bool) {
 	normalizedCode := strings.TrimSpace(code)
 	if normalizedCode == "" {
 		normalizedCode = defaultErrorCode(status)
 	}
+	captureErrorMeta(w, normalizedCode, message, details)
 	payload := apiErrorEnvelope{
 		Error:   message,
 		Code:    normalizedCode,
 		Message: message,
-		Details: details,
+	}
+	if includeDetails {
+		payload.Details = details
 	}
 	writeJSON(w, status, payload)
+}
+
+func captureErrorMeta(w http.ResponseWriter, code, message string, details any) {
+	metaWriter, ok := w.(errorMetaWriter)
+	if !ok {
+		return
+	}
+	metaWriter.SetErrorMeta(strings.TrimSpace(code), strings.TrimSpace(message), sanitizeErrorDetails(details))
+}
+
+func sanitizeErrorDetails(details any) string {
+	const maxLen = 2048
+	if details == nil {
+		return ""
+	}
+	var raw string
+	switch value := details.(type) {
+	case string:
+		raw = value
+	case []byte:
+		raw = string(value)
+	default:
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			raw = fmt.Sprintf("%T", details)
+		} else {
+			raw = string(encoded)
+		}
+	}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if len(raw) > maxLen {
+		return raw[:maxLen] + "...(truncated)"
+	}
+	return raw
 }
 
 func defaultErrorCode(status int) string {

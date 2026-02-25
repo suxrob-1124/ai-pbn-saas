@@ -17,7 +17,7 @@ const (
 )
 
 func writeEditorError(w http.ResponseWriter, status int, code editorErrorCode, message string, details any) {
-	writeErrorWithCode(w, status, string(code), message, details)
+	writeErrorEnvelope(w, status, string(code), message, details, true)
 }
 
 func writeEditorContextPackError(w http.ResponseWriter, err error) {

@@ -7709,12 +7709,30 @@ func requestIDFromContext(ctx context.Context) string {
 
 type statusWriter struct {
 	http.ResponseWriter
-	status int
+	status     int
+	errCode    string
+	errMessage string
+	errDetails string
 }
 
 func (w *statusWriter) WriteHeader(code int) {
 	w.status = code
 	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *statusWriter) SetErrorMeta(code, message, details string) {
+	if trimmedCode := strings.TrimSpace(code); trimmedCode != "" {
+		w.errCode = trimmedCode
+	}
+	if trimmedMessage := strings.TrimSpace(message); trimmedMessage != "" {
+		w.errMessage = trimmedMessage
+	}
+	if trimmedDetails := strings.TrimSpace(details); trimmedDetails != "" {
+		w.errDetails = trimmedDetails
+	}
+	if parent, ok := w.ResponseWriter.(errorMetaWriter); ok {
+		parent.SetErrorMeta(code, message, details)
+	}
 }
 
 func (s *Server) withMetrics(next http.Handler) http.Handler {
@@ -7739,14 +7757,41 @@ func (s *Server) withLogging(next http.Handler) http.Handler {
 		next.ServeHTTP(sw, r)
 		duration := time.Since(start)
 		rid := requestIDFromContext(r.Context())
-		s.logger.Infow("request",
+		baseFields := []any{
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", sw.status,
-			"duration_ms", duration.Seconds()*1000,
+			"duration_ms", duration.Seconds() * 1000,
 			"ip", clientIP(r),
 			"request_id", rid,
-		)
+		}
+		if sw.status >= http.StatusBadRequest {
+			errorCode := strings.TrimSpace(sw.errCode)
+			if errorCode == "" {
+				errorCode = defaultErrorCode(sw.status)
+			}
+			errorMessage := strings.TrimSpace(sw.errMessage)
+			if errorMessage == "" {
+				errorMessage = http.StatusText(sw.status)
+			}
+			errorKind := "client"
+			if sw.status >= http.StatusInternalServerError {
+				errorKind = "server"
+			}
+			baseFields = append(baseFields,
+				"error_code", errorCode,
+				"error_message", errorMessage,
+				"error_kind", errorKind,
+				"error_details", sw.errDetails,
+			)
+			if sw.status >= http.StatusInternalServerError {
+				s.logger.Errorw("request_error", baseFields...)
+				return
+			}
+			s.logger.Warnw("request_error", baseFields...)
+			return
+		}
+		s.logger.Infow("request", baseFields...)
 	})
 }
 
