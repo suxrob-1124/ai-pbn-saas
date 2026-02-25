@@ -4181,7 +4181,9 @@ func (s *Server) handleAdminLLMUsageStats(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "could not aggregate llm usage")
 		return
 	}
-	writeJSON(w, http.StatusOK, toLLMUsageStatsDTO(stats))
+	dto := toLLMUsageStatsDTO(stats)
+	dto = filterLLMUsageStatsDTO(dto, parseLLMUsageGroupBy(r.URL.Query().Get("group_by")))
+	writeJSON(w, http.StatusOK, dto)
 }
 
 func (s *Server) handleAdminLLMPricing(w http.ResponseWriter, r *http.Request) {
@@ -4281,14 +4283,17 @@ func (s *Server) handleProjectLLMUsageEvents(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	project, err := s.authorizeProject(r.Context(), projectID)
+	_, err := s.authorizeProject(r.Context(), projectID)
 	if err != nil {
 		respondAuthzError(w, err, "project not found")
 		return
 	}
-	if !strings.EqualFold(user.Role, "admin") && !strings.EqualFold(project.UserEmail, user.Email) {
-		writeError(w, http.StatusForbidden, "only admin or project owner can view llm usage")
-		return
+	if !strings.EqualFold(user.Role, "admin") {
+		memberRole, roleErr := s.getProjectMemberRole(r.Context(), projectID, user.Email)
+		if roleErr != nil || !hasProjectPermission(user.Role, memberRole, "editor") {
+			writeError(w, http.StatusForbidden, "only admin or project owner/manager can view llm usage")
+			return
+		}
 	}
 	filters := parseLLMUsageFilters(r)
 	filters.ProjectID = &projectID
@@ -4323,14 +4328,17 @@ func (s *Server) handleProjectLLMUsageStats(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	project, err := s.authorizeProject(r.Context(), projectID)
+	_, err := s.authorizeProject(r.Context(), projectID)
 	if err != nil {
 		respondAuthzError(w, err, "project not found")
 		return
 	}
-	if !strings.EqualFold(user.Role, "admin") && !strings.EqualFold(project.UserEmail, user.Email) {
-		writeError(w, http.StatusForbidden, "only admin or project owner can view llm usage")
-		return
+	if !strings.EqualFold(user.Role, "admin") {
+		memberRole, roleErr := s.getProjectMemberRole(r.Context(), projectID, user.Email)
+		if roleErr != nil || !hasProjectPermission(user.Role, memberRole, "editor") {
+			writeError(w, http.StatusForbidden, "only admin or project owner/manager can view llm usage")
+			return
+		}
 	}
 	filters := parseLLMUsageFilters(r)
 	filters.ProjectID = &projectID
@@ -4341,7 +4349,9 @@ func (s *Server) handleProjectLLMUsageStats(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, "could not aggregate llm usage")
 		return
 	}
-	writeJSON(w, http.StatusOK, toLLMUsageStatsDTO(stats))
+	dto := toLLMUsageStatsDTO(stats)
+	dto = filterLLMUsageStatsDTO(dto, parseLLMUsageGroupBy(r.URL.Query().Get("group_by")))
+	writeJSON(w, http.StatusOK, dto)
 }
 
 func (s *Server) handleAdminAuditRuleByCode(w http.ResponseWriter, r *http.Request) {
@@ -6411,6 +6421,61 @@ func parseLLMUsageFilters(r *http.Request) sqlstore.LLMUsageFilters {
 		filters.Status = &v
 	}
 	return filters
+}
+
+type llmUsageGroupBySelection struct {
+	ByDay       bool
+	ByModel     bool
+	ByOperation bool
+	ByUser      bool
+}
+
+func parseLLMUsageGroupBy(raw string) llmUsageGroupBySelection {
+	selection := llmUsageGroupBySelection{
+		ByDay:       true,
+		ByModel:     true,
+		ByOperation: true,
+		ByUser:      true,
+	}
+	raw = strings.TrimSpace(raw)
+	if raw == "" || strings.EqualFold(raw, "all") {
+		return selection
+	}
+	selection = llmUsageGroupBySelection{}
+	for _, part := range strings.Split(raw, ",") {
+		switch strings.ToLower(strings.TrimSpace(part)) {
+		case "all":
+			return llmUsageGroupBySelection{ByDay: true, ByModel: true, ByOperation: true, ByUser: true}
+		case "day":
+			selection.ByDay = true
+		case "model":
+			selection.ByModel = true
+		case "operation":
+			selection.ByOperation = true
+		case "user":
+			selection.ByUser = true
+		}
+	}
+	if !selection.ByDay && !selection.ByModel && !selection.ByOperation && !selection.ByUser {
+		return llmUsageGroupBySelection{ByDay: true, ByModel: true, ByOperation: true, ByUser: true}
+	}
+	return selection
+}
+
+func filterLLMUsageStatsDTO(dto llmUsageStatsDTO, groupBy llmUsageGroupBySelection) llmUsageStatsDTO {
+	if !groupBy.ByDay {
+		dto.ByDay = []llmUsageBucketDTO{}
+	}
+	if !groupBy.ByModel {
+		dto.ByModel = []llmUsageBucketDTO{}
+	}
+	if !groupBy.ByOperation {
+		dto.ByOperation = []llmUsageBucketDTO{}
+	}
+	if !groupBy.ByUser {
+		dto.ByUser = []llmUsageBucketDTO{}
+	}
+	return dto
 }
 
 func parseLLMUsageTime(raw string, startOfDay bool) (time.Time, bool) {
