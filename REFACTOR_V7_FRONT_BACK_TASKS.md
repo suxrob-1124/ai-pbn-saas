@@ -449,23 +449,45 @@
 3. Убрать расхождения в статусах между страницами.
 4. Привести тексты и термины к одной русской локализации.
 
-### Wave 3 status (W3.1, 24.02.2026)
+### Wave 3 status (W3.1–W3.4, 25.02.2026)
 
-1. `completed` — shared queue/filter/pagination primitives:
-- добавлены общие компоненты `FilterSelect`, `FilterDateInput`, `PaginationControls`.
-- примитивы подключены в `/queue`, `/projects/[id]/queue`, `/monitoring/indexing`.
+1. `completed` — `W3.1` shared queue/filter/pagination primitives:
+- общие компоненты `FilterSelect`, `FilterDateInput`, `PaginationControls` используются в queue/schedule/monitoring контурах.
+- примитивы и query helper слой подключены в `/queue`, `/projects/[id]/queue`, `/monitoring/indexing`.
 
-2. `completed` — query-string helper utilities:
-- добавлен общий модуль `queryParams` для чтения/записи query-параметров (`page/limit/search/sort/date`).
-- локальные дубли parse/set логики в monitoring-странице сокращены.
+2. `completed` — `W3.2` action guard parity:
+- disable/guard причины унифицированы через общий `actionGuards` слой.
+- правила `run/retry/delete/cancel` выровнены между queue/schedule экранами без изменений backend-контрактов.
 
-3. `verification`:
-- `npx tsc --noEmit` — green.
-- verify: `project-queue`, `project-queue-active-filters`, `project-queue-history`, `project-queue-link-normalization`,
-  `index-monitoring-ui`, `index-table`, `index-checks-pagination`, `schedule-ui`, `schedule-list`, `schedule-form` — green.
+3. `completed` — `W3.3` status normalization + RU parity:
+- добавлен общий слой `frontend/features/queue-monitoring/services/statusMeta.ts`.
+- локальные status mapping-дубли убраны из queue/schedule/monitoring UI.
+- основные статусы/бейджи/фильтры приведены к единому русскому словарю и нормализации legacy-статусов.
 
-4. `leftovers`:
-- в `Wave 3` остаются унификация disable/guard-паттерна для всех queue операций и финальное выравнивание терминологии статусов во всех queue/schedule/monitoring экранах.
+4. `completed` — `W3.4` regression + docs sync:
+- без фич, только стабилизация и синхронизация плана.
+- подтверждено green:
+  - `npx tsc --noEmit`
+  - `verify:project-queue`
+  - `verify:project-queue-active-filters`
+  - `verify:project-queue-history`
+  - `verify:project-queue-link-normalization`
+  - `verify:schedule-ui`
+  - `verify:schedule-list`
+  - `verify:schedule-form`
+  - `verify:index-monitoring-ui`
+  - `verify:index-monitoring-dashboard`
+  - `verify:index-table`
+  - `verify:index-checks-pagination`
+  - `verify:index-stats`
+  - `verify:failed-checks-alert`
+  - `verify:link-status-consistency`
+
+### Wave 3 leftovers / residual risks
+
+1. В queue/schedule/monitoring остаются крупные page-level компоненты (`/queue`, `/projects/[id]/queue`, `/monitoring/indexing`) — нужна дальнейшая декомпозиция (вне Wave 3).
+2. Нет единого e2e-сценария для конкурентных in-flight действий (несколько вкладок/ролей/параллельные операции).
+3. Для редких неизвестных/кастомных статусов сохранен fallback-показ raw-значения; при расширении backend-статусов потребуется обновление словаря `statusMeta`.
 
 ### Wave 4 — Backend HTTP слой целиком
 1. Распилить монолитные handler-файлы по доменным модулям.
