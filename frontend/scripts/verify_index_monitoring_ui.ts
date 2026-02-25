@@ -14,12 +14,18 @@ assert.ok(
 );
 
 const projectPage = read("frontend/app/projects/[id]/page.tsx");
+const projectHeaderSection = read("frontend/features/domain-project/components/ProjectHeaderActionsSection.tsx");
+const projectDomainsSection = read("frontend/features/domain-project/components/ProjectDomainsSection.tsx");
 assert.ok(
-  projectPage.includes("Индексация"),
+  projectPage.includes("Индексация") ||
+    projectHeaderSection.includes("Индексация") ||
+    projectDomainsSection.includes("Проверки индексации"),
   "Project domains must include Индексация link label"
 );
 assert.ok(
-  projectPage.includes("/monitoring/indexing"),
+  projectPage.includes("/monitoring/indexing") ||
+    projectHeaderSection.includes("/monitoring/indexing") ||
+    projectDomainsSection.includes("/monitoring/indexing"),
   "Project domains must link to monitoring indexing"
 );
 

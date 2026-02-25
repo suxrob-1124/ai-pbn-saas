@@ -18,27 +18,32 @@ import { FilterSelect } from "../../../../features/queue-monitoring/components/F
 import { PaginationControls } from "../../../../features/queue-monitoring/components/PaginationControls";
 import { canDelete, canRetry, canRun } from "../../../../features/queue-monitoring/services/actionGuards";
 import {
-  PROJECT_QUEUE_HISTORY_STATUS_LABELS,
-  PROJECT_QUEUE_STATUS_LABELS,
-  QUEUE_LINK_STATUS_LABELS,
   hasNextPageByPageSize,
   resolveQueueTab
 } from "../../../../features/queue-monitoring/services/primitives";
+import {
+  LINK_QUEUE_FILTER_KEYS,
+  getLinkQueueStatusLabel,
+  getProjectQueueActiveStatusLabel,
+  getProjectQueueHistoryStatusLabel,
+  normalizeProjectQueueActiveStatus,
+  normalizeProjectQueueHistoryStatus
+} from "../../../../features/queue-monitoring/services/statusMeta";
 
 const statusOptions = ["all", "pending", "queued"];
 const STATUS_FILTER_OPTIONS = statusOptions.map((value) => ({
   value,
-  label: PROJECT_QUEUE_STATUS_LABELS[value] || value
+  label: getProjectQueueActiveStatusLabel(value)
 }));
 const historyStatusOptions = ["all", "completed", "failed"];
 const HISTORY_STATUS_FILTER_OPTIONS = historyStatusOptions.map((value) => ({
   value,
-  label: PROJECT_QUEUE_HISTORY_STATUS_LABELS[value] || value
+  label: getProjectQueueHistoryStatusLabel(value)
 }));
-const linkStatusOptions = ["all", "pending", "searching", "removing", "inserted", "generated", "removed", "failed"];
+const linkStatusOptions = [...LINK_QUEUE_FILTER_KEYS];
 const LINK_STATUS_FILTER_OPTIONS = linkStatusOptions.map((value) => ({
   value,
-  label: QUEUE_LINK_STATUS_LABELS[value] || value
+  label: getLinkQueueStatusLabel(value)
 }));
 
 type Domain = {
@@ -254,7 +259,8 @@ export default function ProjectQueuePage() {
     const toDate = dateTo ? new Date(`${dateTo}T23:59:59`) : null;
     const term = search.trim().toLowerCase();
     return items.filter((item) => {
-      if (statusFilter !== "all" && item.status !== statusFilter) {
+      const normalizedStatus = normalizeProjectQueueActiveStatus(item.status) || item.status;
+      if (statusFilter !== "all" && normalizedStatus !== statusFilter) {
         return false;
       }
       const scheduled = new Date(item.scheduled_for);
@@ -302,7 +308,8 @@ export default function ProjectQueuePage() {
     const toDate = historyDateTo ? new Date(`${historyDateTo}T23:59:59`) : null;
     const term = historySearch.trim().toLowerCase();
     return historyItems.filter((item) => {
-      if (historyStatusFilter !== "all" && item.status !== historyStatusFilter) {
+      const normalizedStatus = normalizeProjectQueueHistoryStatus(item.status) || item.status;
+      if (historyStatusFilter !== "all" && normalizedStatus !== historyStatusFilter) {
         return false;
       }
       const scheduled = new Date(item.scheduled_for);
@@ -768,7 +775,7 @@ export default function ProjectQueuePage() {
                       <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">
                         {item.processed_at ? new Date(item.processed_at).toLocaleString() : "—"}
                       </td>
-                      <td className="py-3 pr-4">{PROJECT_QUEUE_STATUS_LABELS[item.status] || item.status}</td>
+                      <td className="py-3 pr-4">{getProjectQueueActiveStatusLabel(item.status)}</td>
                       <td className="py-3 pr-4">{item.priority}</td>
                       <td className="py-3 pr-4 text-right">
                         <button
@@ -837,7 +844,7 @@ export default function ProjectQueuePage() {
                       <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">
                         {item.processed_at ? new Date(item.processed_at).toLocaleString() : "—"}
                       </td>
-                      <td className="py-3 pr-4">{PROJECT_QUEUE_HISTORY_STATUS_LABELS[item.status] || item.status}</td>
+                      <td className="py-3 pr-4">{getProjectQueueHistoryStatusLabel(item.status)}</td>
                       <td
                         className={`py-3 pr-4 max-w-xs truncate ${item.status === "failed" && item.error_message ? "text-red-500" : "text-slate-500 dark:text-slate-400"}`}
                         title={formatQueueHistoryDetails(item)}

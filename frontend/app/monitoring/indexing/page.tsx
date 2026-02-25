@@ -24,6 +24,10 @@ import {
   hasNextPageByTotal
 } from "../../../features/queue-monitoring/services/primitives";
 import {
+  getIndexCheckStatusMeta,
+  normalizeIndexCheckStatusList
+} from "../../../features/queue-monitoring/services/statusMeta";
+import {
   listAdmin,
   listAdminCalendar,
   listAdminStats,
@@ -382,10 +386,11 @@ function IndexingMonitoringContent() {
       if (domainScope) {
         const result = await runManual(domainScope);
         if (result.run_now_enqueued === false) {
+          const pendingLabel = getIndexCheckStatusMeta("pending").label;
           showToast({
             type: "warning",
-            title: "Проверка поставлена в pending",
-            message: result.run_now_error || "Immediate enqueue не удался, обработка пойдет по плановому циклу."
+            title: `Проверка поставлена в статус «${pendingLabel}»`,
+            message: result.run_now_error || "Немедленная постановка в очередь не удалась, обработка продолжится по плановому циклу."
           });
         }
       } else if (projectId) {
@@ -509,10 +514,11 @@ function IndexingMonitoringContent() {
         invalidateAuthCache("index-checks/calendar");
         const result = await runAdminManual(domainId);
         if (result.run_now_enqueued === false) {
+          const pendingLabel = getIndexCheckStatusMeta("pending").label;
           showToast({
             type: "warning",
-            title: "Проверка поставлена в pending",
-            message: result.run_now_error || "Immediate enqueue не удался, обработка пойдет по плановому циклу."
+            title: `Проверка поставлена в статус «${pendingLabel}»`,
+            message: result.run_now_error || "Немедленная постановка в очередь не удалась, обработка продолжится по плановому циклу."
           });
         }
         await Promise.all([loadChecks(), loadStats(), loadCalendar(), loadFailed()]);
@@ -548,7 +554,7 @@ function IndexingMonitoringContent() {
   );
 
   const applyFilters = (next: IndexFiltersValue) => {
-    setStatusFilter(normalizeStatusList(next.statuses));
+    setStatusFilter(normalizeIndexCheckStatusList(next.statuses));
     setDateFrom(next.from);
     setDateTo(next.to);
     setDomainFilter(next.domainId);
@@ -796,12 +802,7 @@ function parseStatusParam(raw: string | null): IndexCheckStatus[] {
   if (!raw) {
     return [];
   }
-  return normalizeStatusList(raw.split(",") as IndexCheckStatus[]);
-}
-
-function normalizeStatusList(statuses: IndexCheckStatus[]): IndexCheckStatus[] {
-  const trimmed = statuses.map((item) => item.trim()).filter(Boolean);
-  return Array.from(new Set(trimmed));
+  return normalizeIndexCheckStatusList(raw.split(",") as IndexCheckStatus[]);
 }
 
 const SORT_KEYS: IndexCheckSortKey[] = [

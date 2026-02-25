@@ -2,6 +2,7 @@
 
 import { FiAlertTriangle, FiRefreshCw } from "react-icons/fi";
 import type { IndexCheckDTO } from "../types/indexChecks";
+import { getIndexCheckStatusMeta } from "../features/queue-monitoring/services/statusMeta";
 
 export type FailedChecksAlertProps = {
   checks?: IndexCheckDTO[];
@@ -21,10 +22,12 @@ export function FailedChecksAlert({
   onRefresh,
   onViewDetails
 }: FailedChecksAlertProps) {
+  const failedMeta = getIndexCheckStatusMeta("failed_investigation");
+
   if (loading) {
     return (
       <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-700/50 dark:bg-amber-900/20 dark:text-amber-200">
-        Загрузка failed_investigation...
+        Загрузка проблемных проверок...
       </div>
     );
   }
@@ -46,7 +49,7 @@ export function FailedChecksAlert({
     <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-700/50 dark:bg-amber-900/20 dark:text-amber-200">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2 font-semibold">
-          <FiAlertTriangle /> failed_investigation: {count}
+          <FiAlertTriangle /> {failedMeta.label}: {count}
         </div>
         <div className="flex items-center gap-2">
           {onViewDetails && (
@@ -55,7 +58,7 @@ export function FailedChecksAlert({
               onClick={onViewDetails}
               className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-white/60 px-2 py-0.5 text-[11px] font-semibold text-amber-800 hover:bg-white"
             >
-              View Details
+              Показать детали
             </button>
           )}
           {onRefresh && (

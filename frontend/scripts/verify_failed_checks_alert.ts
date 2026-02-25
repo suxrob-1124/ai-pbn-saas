@@ -7,7 +7,7 @@ const filePath = path.join(root, "frontend/components/FailedChecksAlert.tsx");
 assert.ok(fs.existsSync(filePath), "FailedChecksAlert component must exist");
 
 const content = fs.readFileSync(filePath, "utf8");
-assert.ok(content.includes("View Details"), "FailedChecksAlert must include View Details button");
-assert.ok(content.includes("failed_investigation"), "FailedChecksAlert must mention failed_investigation");
+assert.ok(content.includes("Показать детали"), "FailedChecksAlert must include russian details button");
+assert.ok(content.includes("getIndexCheckStatusMeta"), "FailedChecksAlert must use shared status meta");
 
 console.log("OK");

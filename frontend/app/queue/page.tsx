@@ -10,14 +10,24 @@ import { deleteLinkTask, listLinkTasks, retryLinkTask } from "../../lib/linkTask
 import { showToast } from "../../lib/toastStore";
 import type { LinkTaskDTO } from "../../types/linkTasks";
 import { Badge } from "../../components/Badge";
-import { getLinkTaskStatusMeta, isLinkTaskInProgress, normalizeLinkTaskStatus } from "../../lib/linkTaskStatus";
+import { getLinkTaskStatusMeta, isLinkTaskInProgress, type LinkTaskCanonicalStatus } from "../../lib/linkTaskStatus";
 import { PaginationControls } from "../../features/queue-monitoring/components/PaginationControls";
 import { canDelete, canRetry, canRun } from "../../features/queue-monitoring/services/actionGuards";
 import {
-  QUEUE_LINK_STATUS_LABELS,
   hasNextPageByPageSize,
   resolveQueueTab
 } from "../../features/queue-monitoring/services/primitives";
+import {
+  GLOBAL_GENERATION_FILTER_KEYS,
+  LINK_QUEUE_FILTER_KEYS,
+  getGenerationFilterLabel,
+  getGenerationStatusMeta,
+  getLinkQueueStatusLabel,
+  normalizeGenerationStatusForFilter,
+  normalizeLinkQueueStatus,
+  type GlobalGenerationFilterKey,
+  type StatusIcon
+} from "../../features/queue-monitoring/services/statusMeta";
 
 type Generation = {
   id: string;
@@ -44,7 +54,7 @@ function QueuePageContent() {
   const [items, setItems] = useState<Generation[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useState("all");
+  const [filter, setFilter] = useState<GlobalGenerationFilterKey>("all");
   const [search, setSearch] = useState("");
   const [genPage, setGenPage] = useState(1);
   const genPageSize = 20;
@@ -52,7 +62,7 @@ function QueuePageContent() {
   const [linkTasks, setLinkTasks] = useState<LinkTaskDTO[]>([]);
   const [linkLoading, setLinkLoading] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
-  const [linkFilter, setLinkFilter] = useState("all");
+  const [linkFilter, setLinkFilter] = useState<"all" | LinkTaskCanonicalStatus>("all");
   const [linkSearch, setLinkSearch] = useState("");
   const [linkPage, setLinkPage] = useState(1);
   const linkPageSize = 20;
@@ -189,7 +199,8 @@ function QueuePageContent() {
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
     return items.filter((i) => {
-      if (filter !== "all" && i.status !== filter) {
+      const normalizedStatus = normalizeGenerationStatusForFilter(i.status);
+      if (filter !== "all" && normalizedStatus !== filter) {
         return false;
       }
       if (!term) {
@@ -203,7 +214,11 @@ function QueuePageContent() {
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
     for (const i of items) {
-      c[i.status] = (c[i.status] || 0) + 1;
+      const key = normalizeGenerationStatusForFilter(i.status);
+      if (!key) {
+        continue;
+      }
+      c[key] = (c[key] || 0) + 1;
     }
     return c;
   }, [items]);
@@ -211,7 +226,7 @@ function QueuePageContent() {
   const filteredLinks = useMemo(() => {
     const term = linkSearch.trim().toLowerCase();
     return linkTasks.filter((task) => {
-      const normalizedStatus = normalizeLinkTaskStatus(task.status) || task.status;
+      const normalizedStatus = normalizeLinkQueueStatus(task.status) || (task.status || "").trim().toLowerCase();
       if (linkFilter !== "all" && normalizedStatus !== linkFilter) {
         return false;
       }
@@ -226,7 +241,7 @@ function QueuePageContent() {
   const linkCounts = useMemo(() => {
     const c: Record<string, number> = {};
     for (const t of linkTasks) {
-      const normalizedStatus = normalizeLinkTaskStatus(t.status) || t.status;
+      const normalizedStatus = normalizeLinkQueueStatus(t.status) || (t.status || "").trim().toLowerCase();
       c[normalizedStatus] = (c[normalizedStatus] || 0) + 1;
     }
     return c;
@@ -353,11 +368,16 @@ function QueuePageContent() {
           <span className="text-xs text-slate-500 dark:text-slate-400">Показано: {filtered.length}</span>
         </div>
         <div className="flex flex-wrap gap-2">
-          <FilterButton label="Все" value="all" active={filter === "all"} onClick={() => setFilter("all")} count={items.length} />
-          <FilterButton label="В очереди" value="pending" active={filter === "pending"} onClick={() => setFilter("pending")} count={counts["pending"] || 0} />
-          <FilterButton label="В работе" value="processing" active={filter === "processing"} onClick={() => setFilter("processing")} count={counts["processing"] || 0} />
-          <FilterButton label="Готово" value="success" active={filter === "success"} onClick={() => setFilter("success")} count={counts["success"] || 0} />
-          <FilterButton label="Ошибка" value="error" active={filter === "error"} onClick={() => setFilter("error")} count={counts["error"] || 0} />
+          {GLOBAL_GENERATION_FILTER_KEYS.map((value) => (
+            <FilterButton
+              key={value}
+              label={getGenerationFilterLabel(value)}
+              value={value}
+              active={filter === value}
+              onClick={() => setFilter(value)}
+              count={value === "all" ? items.length : counts[value] || 0}
+            />
+          ))}
         </div>
         <input
           type="search"
@@ -439,14 +459,16 @@ function QueuePageContent() {
           <span className="text-xs text-slate-500 dark:text-slate-400">Показано: {filteredLinks.length}</span>
         </div>
         <div className="flex flex-wrap gap-2">
-          <FilterButton label={QUEUE_LINK_STATUS_LABELS.all} value="all" active={linkFilter === "all"} onClick={() => setLinkFilter("all")} count={linkTasks.length} />
-          <FilterButton label={QUEUE_LINK_STATUS_LABELS.pending} value="pending" active={linkFilter === "pending"} onClick={() => setLinkFilter("pending")} count={linkCounts["pending"] || 0} />
-          <FilterButton label={QUEUE_LINK_STATUS_LABELS.searching} value="searching" active={linkFilter === "searching"} onClick={() => setLinkFilter("searching")} count={linkCounts["searching"] || 0} />
-          <FilterButton label={QUEUE_LINK_STATUS_LABELS.removing} value="removing" active={linkFilter === "removing"} onClick={() => setLinkFilter("removing")} count={linkCounts["removing"] || 0} />
-          <FilterButton label={QUEUE_LINK_STATUS_LABELS.inserted} value="inserted" active={linkFilter === "inserted"} onClick={() => setLinkFilter("inserted")} count={linkCounts["inserted"] || 0} />
-          <FilterButton label={QUEUE_LINK_STATUS_LABELS.generated} value="generated" active={linkFilter === "generated"} onClick={() => setLinkFilter("generated")} count={linkCounts["generated"] || 0} />
-          <FilterButton label={QUEUE_LINK_STATUS_LABELS.removed} value="removed" active={linkFilter === "removed"} onClick={() => setLinkFilter("removed")} count={linkCounts["removed"] || 0} />
-          <FilterButton label={QUEUE_LINK_STATUS_LABELS.failed} value="failed" active={linkFilter === "failed"} onClick={() => setLinkFilter("failed")} count={linkCounts["failed"] || 0} />
+          {LINK_QUEUE_FILTER_KEYS.map((value) => (
+            <FilterButton
+              key={value}
+              label={getLinkQueueStatusLabel(value)}
+              value={value}
+              active={linkFilter === value}
+              onClick={() => setLinkFilter(value)}
+              count={value === "all" ? linkTasks.length : linkCounts[value] || 0}
+            />
+          ))}
         </div>
         <input
           type="search"
@@ -512,7 +534,7 @@ function QueuePageContent() {
                           <Link href={{ pathname: `/links/${task.id}` }} className="text-indigo-600 hover:underline">
                             Открыть
                           </Link>
-                          {(normalizeLinkTaskStatus(task.status) || task.status) === "failed" && (
+                          {(normalizeLinkQueueStatus(task.status) || task.status) === "failed" && (
                             <button
                               onClick={() => handleLinkRetry(task)}
                               disabled={retryGuard.disabled}
@@ -554,29 +576,23 @@ function QueuePageContent() {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, { text: string; tone: "amber" | "yellow" | "slate" | "orange" | "red" | "green"; icon: ReactNode }> = {
-    pending: { text: "В очереди", tone: "amber", icon: <FiClock /> },
-    processing: { text: "В работе", tone: "amber", icon: <FiPlay /> },
-    pause_requested: { text: "Пауза запрошена", tone: "yellow", icon: <FiPause /> },
-    paused: { text: "Приостановлено", tone: "slate", icon: <FiPause /> },
-    cancelling: { text: "Отмена...", tone: "orange", icon: <FiX /> },
-    cancelled: { text: "Отменено", tone: "red", icon: <FiX /> },
-    success: { text: "Готово", tone: "green", icon: <FiCheck /> },
-    error: { text: "Ошибка", tone: "red", icon: <FiAlertTriangle /> },
-  };
-  const cfg = map[status] || { text: status, tone: "slate" as const, icon: <FiClock /> };
-  return <Badge label={cfg.text} tone={cfg.tone} icon={cfg.icon} className="text-xs" />;
+  const meta = getGenerationStatusMeta(status);
+  return <Badge label={meta.label} tone={meta.tone} icon={renderStatusIcon(meta.icon)} className="text-xs" />;
 }
 
 function LinkTaskStatusBadge({ status }: { status: string }) {
   const meta = getLinkTaskStatusMeta(status);
-  const icon: ReactNode = (() => {
-    if (meta.icon === "refresh") return <FiRefreshCw />;
-    if (meta.icon === "check") return <FiCheck />;
-    if (meta.icon === "alert") return <FiAlertTriangle />;
-    return <FiClock />;
-  })();
-  return <Badge label={meta.text} tone={meta.tone} icon={icon} className="text-xs" />;
+  return <Badge label={meta.text} tone={meta.tone} icon={renderStatusIcon(meta.icon)} className="text-xs" />;
+}
+
+function renderStatusIcon(icon: StatusIcon): ReactNode {
+  if (icon === "play") return <FiPlay />;
+  if (icon === "pause") return <FiPause />;
+  if (icon === "x") return <FiX />;
+  if (icon === "check") return <FiCheck />;
+  if (icon === "alert") return <FiAlertTriangle />;
+  if (icon === "refresh") return <FiRefreshCw />;
+  return <FiClock />;
 }
 
 function FilterButton({ label, value, active, onClick, count }: { label: string; value: string; active: boolean; onClick: () => void; count: number }) {

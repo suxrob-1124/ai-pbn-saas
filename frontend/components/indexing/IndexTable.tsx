@@ -5,6 +5,8 @@ import Link from "next/link";
 import { FiChevronDown, FiChevronUp } from "react-icons/fi";
 import type { IndexCheckDTO, IndexCheckHistoryDTO } from "../../types/indexChecks";
 import { IndexCheckHistoryCard } from "../IndexCheckHistoryCard";
+import { Badge } from "../Badge";
+import { getIndexCheckStatusMeta } from "../../features/queue-monitoring/services/statusMeta";
 
 export type IndexCheckSortKey =
   | "domain"
@@ -96,6 +98,7 @@ export function IndexTable({
                 const historyList = history[check.id] || [];
                 const historyIsLoading = Boolean(historyLoading[check.id]);
                 const historyErr = historyError[check.id];
+                const statusMeta = getIndexCheckStatusMeta(check.status);
                 return (
                   <Fragment key={check.id}>
                     <tr className="align-top">
@@ -110,7 +113,11 @@ export function IndexTable({
                         )}
                       </td>
                       <td className="py-2 pr-3 whitespace-nowrap">{formatDate(check.check_date)}</td>
-                      <td className="py-2 pr-3">{check.status}</td>
+                      <td className="py-2 pr-3">
+                        <span title={String(check.status || "")}>
+                          <Badge label={statusMeta.label} tone={statusMeta.tone} className="text-xs" />
+                        </span>
+                      </td>
                       <td className="py-2 pr-3">{check.attempts}</td>
                       <td className="py-2 pr-3">
                         {check.is_indexed === null || check.is_indexed === undefined

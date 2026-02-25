@@ -2,6 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { IndexCheckStatus } from "../types/indexChecks";
+import {
+  INDEX_CHECK_STATUS_KEYS,
+  getIndexCheckStatusMeta,
+  normalizeIndexCheckStatusList
+} from "../features/queue-monitoring/services/statusMeta";
 
 export type IndexFiltersValue = {
   statuses: IndexCheckStatus[];
@@ -24,12 +29,7 @@ export type IndexFiltersBarProps = {
   disabled?: boolean;
 };
 
-const DEFAULT_STATUS_OPTIONS: IndexCheckStatus[] = [
-  "pending",
-  "checking",
-  "success",
-  "failed_investigation"
-];
+const DEFAULT_STATUS_OPTIONS: IndexCheckStatus[] = [...INDEX_CHECK_STATUS_KEYS];
 
 const buildDefaultValue = (): IndexFiltersValue => ({
   statuses: [],
@@ -73,7 +73,7 @@ export function IndexFiltersBar({
     if (disabled) {
       return;
     }
-    onApply({ ...draft, statuses: normalizeStatuses(draft.statuses) });
+    onApply({ ...draft, statuses: normalizeIndexCheckStatusList(draft.statuses) });
   };
 
   const handleReset = () => {
@@ -101,7 +101,7 @@ export function IndexFiltersBar({
                   onChange={() => toggleStatus(status)}
                   disabled={disabled}
                 />
-                {status}
+                {getIndexCheckStatusMeta(status).label}
               </label>
             ))}
           </div>
@@ -186,11 +186,6 @@ export function IndexFiltersBar({
       </div>
     </div>
   );
-}
-
-function normalizeStatuses(statuses: IndexCheckStatus[]): IndexCheckStatus[] {
-  const trimmed = statuses.map((item) => item.trim()).filter(Boolean);
-  return Array.from(new Set(trimmed));
 }
 
 function isSameValue(a: IndexFiltersValue, b: IndexFiltersValue): boolean {

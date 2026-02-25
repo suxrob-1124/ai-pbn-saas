@@ -5,13 +5,11 @@ import { FiEdit2, FiRefreshCw, FiTrash2 } from "react-icons/fi";
 import type { ScheduleDTO } from "../types/schedules";
 import { ScheduleTrigger } from "./ScheduleTrigger";
 import { canCancel, canDelete, canRun } from "../features/queue-monitoring/services/actionGuards";
-
-const STRATEGY_LABELS: Record<string, string> = {
-  immediate: "Сразу",
-  daily: "Ежедневно",
-  weekly: "Еженедельно",
-  custom: "CRON"
-};
+import {
+  getScheduleActivityLabel,
+  getScheduleStrategyLabel,
+  getScheduleToggleLabel
+} from "../features/queue-monitoring/services/statusMeta";
 
 type ScheduleListProps = {
   schedules: ScheduleDTO[];
@@ -118,8 +116,8 @@ export function ScheduleList({
                 return (
                 <tr key={sched.id}>
                   <td className="py-3 pr-4 font-medium">{sched.name}</td>
-                  <td className="py-3 pr-4">{STRATEGY_LABELS[sched.strategy] || sched.strategy}</td>
-                  <td className="py-3 pr-4">{sched.isActive ? "Да" : "Нет"}</td>
+                  <td className="py-3 pr-4">{getScheduleStrategyLabel(sched.strategy)}</td>
+                  <td className="py-3 pr-4">{getScheduleActivityLabel(sched.isActive)}</td>
                   <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">
                     {(() => {
                       const nextRun = sched.nextRunAt || (sched as { next_run_at?: string }).next_run_at;
@@ -155,7 +153,7 @@ export function ScheduleList({
                       title={toggleGuard.reason}
                       className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                     >
-                      {sched.isActive ? "Пауза" : "Активировать"}
+                      {getScheduleToggleLabel(sched.isActive)}
                     </button>
                     <button
                       onClick={() => setPendingDelete(sched)}
