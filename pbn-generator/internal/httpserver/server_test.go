@@ -70,7 +70,7 @@ func setupServer(t *testing.T) *Server {
 	genQueue := newStubGenQueueStore()
 	indexChecks := newStubIndexCheckStore()
 	checkHistory := newStubCheckHistoryStore()
-	return New(cfg, svc, logger, proj, nil, dom, gen, prompts, promptOverrides, deployments, schedules, linkSchedules, nil, siteFiles, fileEdits, linkTasks, genQueue, indexChecks, checkHistory, newStubEnqueuer())
+	return New(cfg, svc, logger, proj, nil, dom, gen, prompts, promptOverrides, deployments, schedules, linkSchedules, nil, siteFiles, fileEdits, linkTasks, genQueue, indexChecks, checkHistory, nil, nil, newStubEnqueuer())
 }
 
 func TestRegisterAndLogin(t *testing.T) {
@@ -1000,6 +1000,85 @@ func TestDomainPatchLinkSettingsInvalidBody(t *testing.T) {
 	}
 }
 
+func TestPromptOverrideResolve_DomainPrecedence(t *testing.T) {
+	s := setupServer(t)
+	store := s.promptOverrides.(*stubPromptOverrideStore)
+	ctx := context.Background()
+
+	if err := store.Upsert(ctx, sqlstore.PromptOverride{
+		ID:        "project-override-1",
+		ScopeType: sqlstore.PromptScopeProject,
+		ScopeID:   "project-1",
+		Stage:     "editor_assistant",
+		Body:      "project prompt body",
+		UpdatedBy: "owner@example.com",
+	}); err != nil {
+		t.Fatalf("upsert project override: %v", err)
+	}
+	if err := store.Upsert(ctx, sqlstore.PromptOverride{
+		ID:        "domain-override-1",
+		ScopeType: sqlstore.PromptScopeDomain,
+		ScopeID:   "domain-1",
+		Stage:     "editor_assistant",
+		Body:      "domain prompt body",
+		UpdatedBy: "owner@example.com",
+	}); err != nil {
+		t.Fatalf("upsert domain override: %v", err)
+	}
+
+	resolved, err := store.ResolveForDomainStage(ctx, "domain-1", "project-1", "editor_assistant")
+	if err != nil {
+		t.Fatalf("resolve prompt: %v", err)
+	}
+	if resolved.Source != sqlstore.PromptScopeDomain {
+		t.Fatalf("expected domain source, got %s", resolved.Source)
+	}
+	if resolved.Body != "domain prompt body" {
+		t.Fatalf("expected domain body, got %q", resolved.Body)
+	}
+}
+
+func TestPromptOverrideResolve_ProjectFallback(t *testing.T) {
+	s := setupServer(t)
+	store := s.promptOverrides.(*stubPromptOverrideStore)
+	ctx := context.Background()
+
+	if err := store.Upsert(ctx, sqlstore.PromptOverride{
+		ID:        "project-override-2",
+		ScopeType: sqlstore.PromptScopeProject,
+		ScopeID:   "project-2",
+		Stage:     "editor_assistant",
+		Body:      "project fallback body",
+		UpdatedBy: "owner@example.com",
+	}); err != nil {
+		t.Fatalf("upsert project override: %v", err)
+	}
+
+	resolved, err := store.ResolveForDomainStage(ctx, "domain-without-override", "project-2", "editor_assistant")
+	if err != nil {
+		t.Fatalf("resolve prompt: %v", err)
+	}
+	if resolved.Source != sqlstore.PromptScopeProject {
+		t.Fatalf("expected project source, got %s", resolved.Source)
+	}
+	if resolved.Body != "project fallback body" {
+		t.Fatalf("expected project body, got %q", resolved.Body)
+	}
+}
+
+func TestPromptOverrideResolve_GlobalFallback(t *testing.T) {
+	s := setupServer(t)
+	store := s.promptOverrides.(*stubPromptOverrideStore)
+
+	resolved, err := store.ResolveForDomainStage(context.Background(), "domain-none", "project-none", "editor_assistant")
+	if err != nil {
+		t.Fatalf("resolve prompt: %v", err)
+	}
+	if resolved.Source != "global" {
+		t.Fatalf("expected global source, got %s", resolved.Source)
+	}
+}
+
 func TestDomainLinkRunCreatesTask(t *testing.T) {
 	s := setupServer(t)
 
@@ -1240,6 +1319,161 @@ func TestGenerationAction_CancelPending(t *testing.T) {
 	domain := s.domains.(*stubDomainStore).domains[domainID]
 	if domain.Status != "waiting" {
 		t.Fatalf("expected domain waiting, got %s", domain.Status)
+	}
+}
+
+func TestGenerationAction_ResumeRollbackOnEnqueueFail(t *testing.T) {
+	s := setupServer(t)
+
+	projectID := "project-resume"
+	domainID := "domain-resume"
+	genID := "gen-resume"
+	now := time.Now().UTC()
+	s.projects.(*stubProjectStore).projects[projectID] = sqlstore.Project{
+		ID:        projectID,
+		UserEmail: "owner@example.com",
+		Name:      "Project",
+		Status:    "active",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	s.domains.(*stubDomainStore).domains[domainID] = sqlstore.Domain{
+		ID:          domainID,
+		ProjectID:   projectID,
+		URL:         "example.com",
+		MainKeyword: "keyword",
+		Status:      "processing",
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	s.generations.(*stubGenerationStore).generations[genID] = sqlstore.Generation{
+		ID:        genID,
+		DomainID:  domainID,
+		Status:    "paused",
+		Progress:  73,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	enq := s.tasks.(*stubEnqueuer)
+	enq.failTypes[tasks.TaskGenerate] = errors.New("queue down")
+
+	adminCtx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: "admin@example.com",
+		Role:  "admin",
+	})
+	req := httptest.NewRequest(http.MethodPatch, "/api/generations/"+genID, strings.NewReader(`{"action":"resume"}`)).WithContext(adminCtx)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.handleGenerationAction(rec, req, genID)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("resume enqueue fail status: %d %s", rec.Code, rec.Body.String())
+	}
+	gen := s.generations.(*stubGenerationStore).generations[genID]
+	if gen.Status != "paused" {
+		t.Fatalf("expected paused after enqueue fail, got %s", gen.Status)
+	}
+	domain := s.domains.(*stubDomainStore).domains[domainID]
+	if domain.Status != "waiting" {
+		t.Fatalf("expected domain waiting after enqueue fail, got %s", domain.Status)
+	}
+}
+
+func TestDomainGenerateForceStepUsesLatestArtifacts(t *testing.T) {
+	s := setupServer(t)
+	cfg := s.cfg
+	cfg.APIKeySecret = "test-secret-key"
+	users := newStubUserStore()
+	s.svc = auth.NewService(auth.ServiceDeps{
+		Config:             cfg,
+		Users:              users,
+		Sessions:           newStubSessionStore(),
+		VerificationTokens: newStubVerificationStore(),
+		ResetTokens:        newStubResetStore(),
+		Captchas:           newStubCaptchaStore(),
+		Mailer:             stubMailer{},
+		Logger:             zap.NewNop().Sugar(),
+	})
+
+	const (
+		projectID = "project-force-step"
+		domainID  = "domain-force-step"
+		admin     = "admin@example.com"
+		owner     = "owner@example.com"
+	)
+	now := time.Now().UTC()
+	users.users[admin] = "pass"
+	users.verified[admin] = true
+	users.roles[admin] = "admin"
+	users.approved[admin] = true
+	_ = users.SetAPIKey(context.Background(), admin, []byte("enc-key"), now)
+	users.users[owner] = "pass"
+	users.verified[owner] = true
+	users.roles[owner] = "manager"
+	users.approved[owner] = true
+
+	s.projects.(*stubProjectStore).projects[projectID] = sqlstore.Project{
+		ID:        projectID,
+		UserEmail: owner,
+		Name:      "Project",
+		Status:    "active",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	s.domains.(*stubDomainStore).domains[domainID] = sqlstore.Domain{
+		ID:          domainID,
+		ProjectID:   projectID,
+		URL:         "example.com",
+		MainKeyword: "keyword",
+		Status:      "waiting",
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+
+	latestErrArtifacts := json.RawMessage(`{"from":"latest-error"}`)
+	olderSuccessArtifacts := json.RawMessage(`{"from":"older-success"}`)
+	s.generations.(*stubGenerationStore).generations["gen-success-old"] = sqlstore.Generation{
+		ID:        "gen-success-old",
+		DomainID:  domainID,
+		Status:    "success",
+		Artifacts: olderSuccessArtifacts,
+		CreatedAt: now.Add(-10 * time.Minute),
+		UpdatedAt: now.Add(-10 * time.Minute),
+	}
+	s.generations.(*stubGenerationStore).generations["gen-error-latest"] = sqlstore.Generation{
+		ID:        "gen-error-latest",
+		DomainID:  domainID,
+		Status:    "error",
+		Artifacts: latestErrArtifacts,
+		CreatedAt: now.Add(-1 * time.Minute),
+		UpdatedAt: now.Add(-1 * time.Minute),
+	}
+
+	adminCtx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: admin,
+		Role:  "admin",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/domains/"+domainID+"/generate", strings.NewReader(`{"force_step":"content_generation"}`)).WithContext(adminCtx)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.handleDomainGenerate(rec, req, domainID)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	newID := payload["id"]
+	if strings.TrimSpace(newID) == "" {
+		t.Fatalf("missing generation id in response")
+	}
+	newGen, ok := s.generations.(*stubGenerationStore).generations[newID]
+	if !ok {
+		t.Fatalf("new generation %s not found", newID)
+	}
+	if string(newGen.Artifacts) != string(latestErrArtifacts) {
+		t.Fatalf("expected latest artifacts to be reused, got %s", string(newGen.Artifacts))
 	}
 }
 
@@ -3529,11 +3763,23 @@ func (s *stubSiteFileStore) Get(ctx context.Context, fileID string) (*sqlstore.S
 	return nil, sql.ErrNoRows
 }
 
+func (s *stubSiteFileStore) Create(ctx context.Context, file sqlstore.SiteFile) error {
+	return nil
+}
+
 func (s *stubSiteFileStore) List(ctx context.Context, domainID string) ([]sqlstore.SiteFile, error) {
 	return []sqlstore.SiteFile{}, nil
 }
 
+func (s *stubSiteFileStore) ListDeleted(ctx context.Context, domainID string) ([]sqlstore.SiteFile, error) {
+	return []sqlstore.SiteFile{}, nil
+}
+
 func (s *stubSiteFileStore) GetByPath(ctx context.Context, domainID, path string) (*sqlstore.SiteFile, error) {
+	return nil, sql.ErrNoRows
+}
+
+func (s *stubSiteFileStore) GetByPathAny(ctx context.Context, domainID, path string) (*sqlstore.SiteFile, error) {
 	return nil, sql.ErrNoRows
 }
 
@@ -3543,6 +3789,22 @@ func (s *stubSiteFileStore) Update(ctx context.Context, fileID string, content [
 
 func (s *stubSiteFileStore) Delete(ctx context.Context, fileID string) error {
 	return errors.New("not found")
+}
+
+func (s *stubSiteFileStore) SoftDelete(ctx context.Context, fileID string, deletedBy sql.NullString, reason sql.NullString) error {
+	return nil
+}
+
+func (s *stubSiteFileStore) Restore(ctx context.Context, fileID string) error {
+	return nil
+}
+
+func (s *stubSiteFileStore) Move(ctx context.Context, fileID, newPath string) error {
+	return nil
+}
+
+func (s *stubSiteFileStore) SetLastEditedBy(ctx context.Context, fileID string, editedBy sql.NullString) error {
+	return nil
 }
 
 type stubFileEditStore struct{}
@@ -3557,4 +3819,16 @@ func (s *stubFileEditStore) Create(ctx context.Context, edit sqlstore.FileEdit) 
 
 func (s *stubFileEditStore) ListByFile(ctx context.Context, fileID string, limit int) ([]sqlstore.FileEdit, error) {
 	return []sqlstore.FileEdit{}, nil
+}
+
+func (s *stubFileEditStore) CreateRevision(ctx context.Context, rev sqlstore.FileRevision) error {
+	return nil
+}
+
+func (s *stubFileEditStore) GetRevision(ctx context.Context, revisionID string) (*sqlstore.FileRevision, error) {
+	return nil, sql.ErrNoRows
+}
+
+func (s *stubFileEditStore) ListRevisionsByFile(ctx context.Context, fileID string, limit int) ([]sqlstore.FileRevision, error) {
+	return []sqlstore.FileRevision{}, nil
 }

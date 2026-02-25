@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // Client представляет клиент для работы с Gemini API
@@ -39,7 +40,7 @@ func (c *Client) Generate(ctx context.Context, stage, prompt, model string) (str
 
 	// Выполняем запрос с retry логикой
 	var response string
-	var tokensUsed int64
+	var usage usageTotals
 	var err error
 
 	for attempt := 0; attempt <= c.config.MaxRetries; attempt++ {
@@ -51,7 +52,7 @@ func (c *Client) Generate(ctx context.Context, stage, prompt, model string) (str
 			}
 		}
 
-		response, tokensUsed, err = c.callGemini(ctx, prompt, model)
+		response, usage, err = c.callGemini(ctx, prompt, model)
 		if err == nil {
 			break
 		}
@@ -60,13 +61,17 @@ func (c *Client) Generate(ctx context.Context, stage, prompt, model string) (str
 	// Сохраняем запрос
 	c.mu.Lock()
 	c.requests = append(c.requests, LLMRequest{
-		Stage:      stage,
-		Prompt:     prompt,
-		Response:   response,
-		Model:      model,
-		TokensUsed: tokensUsed,
-		Timestamp:  start,
-		Error:      errString(err),
+		Stage:            stage,
+		Prompt:           prompt,
+		Response:         response,
+		Model:            model,
+		PromptTokens:     usage.PromptTokens,
+		CompletionTokens: usage.CompletionTokens,
+		TotalTokens:      usage.TotalTokens,
+		TokensUsed:       usage.TotalTokens,
+		TokenSource:      usage.TokenSource,
+		Timestamp:        start,
+		Error:            errString(err),
 	})
 	c.mu.Unlock()
 
@@ -84,6 +89,7 @@ func (c *Client) GenerateImage(ctx context.Context, prompt, model string) ([]byt
 
 	var (
 		imgBytes []byte
+		usage    usageTotals
 		err      error
 	)
 
@@ -96,11 +102,28 @@ func (c *Client) GenerateImage(ctx context.Context, prompt, model string) ([]byt
 			}
 		}
 
-		imgBytes, err = c.callGeminiImage(ctx, prompt, model)
+		imgBytes, usage, err = c.callGeminiImage(ctx, prompt, model)
 		if err == nil {
 			break
 		}
 	}
+
+	start := time.Now()
+	c.mu.Lock()
+	c.requests = append(c.requests, LLMRequest{
+		Stage:            "image_generation",
+		Prompt:           prompt,
+		Response:         fmt.Sprintf("[image:%d bytes]", len(imgBytes)),
+		Model:            model,
+		PromptTokens:     usage.PromptTokens,
+		CompletionTokens: usage.CompletionTokens,
+		TotalTokens:      usage.TotalTokens,
+		TokensUsed:       usage.TotalTokens,
+		TokenSource:      usage.TokenSource,
+		Timestamp:        start,
+		Error:            errString(err),
+	})
+	c.mu.Unlock()
 
 	if err != nil {
 		return nil, fmt.Errorf("gemini image API error after %d attempts: %w", c.config.MaxRetries+1, err)
@@ -110,7 +133,7 @@ func (c *Client) GenerateImage(ctx context.Context, prompt, model string) ([]byt
 }
 
 // callGemini выполняет один запрос к Gemini API
-func (c *Client) callGemini(ctx context.Context, prompt, model string) (string, int64, error) {
+func (c *Client) callGemini(ctx context.Context, prompt, model string) (string, usageTotals, error) {
 	// Формируем URL для Gemini API
 	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", model, c.config.APIKey)
 
@@ -129,13 +152,13 @@ func (c *Client) callGemini(ctx context.Context, prompt, model string) (string, 
 
 	bodyBytes, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", 0, fmt.Errorf("failed to marshal request: %w", err)
+		return "", usageTotals{}, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
 	// Создаем HTTP запрос
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(string(bodyBytes)))
 	if err != nil {
-		return "", 0, fmt.Errorf("failed to create request: %w", err)
+		return "", usageTotals{}, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -143,7 +166,7 @@ func (c *Client) callGemini(ctx context.Context, prompt, model string) (string, 
 	// Выполняем запрос
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return "", 0, fmt.Errorf("failed to execute request: %w", err)
+		return "", usageTotals{}, fmt.Errorf("failed to execute request: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -151,7 +174,7 @@ func (c *Client) callGemini(ctx context.Context, prompt, model string) (string, 
 		body, _ := io.ReadAll(resp.Body)
 		// Маскируем потенциальные API ключи в URL ошибки
 		err := fmt.Errorf("gemini API returned status %d: %s", resp.StatusCode, string(body))
-		return "", 0, SanitizeError(err)
+		return "", usageTotals{}, SanitizeError(err)
 	}
 
 	// Парсим ответ
@@ -171,11 +194,11 @@ func (c *Client) callGemini(ctx context.Context, prompt, model string) (string, 
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&geminiResp); err != nil {
-		return "", 0, fmt.Errorf("failed to decode response: %w", err)
+		return "", usageTotals{}, fmt.Errorf("failed to decode response: %w", err)
 	}
 
 	if len(geminiResp.Candidates) == 0 {
-		return "", 0, fmt.Errorf("no candidates in response")
+		return "", usageTotals{}, fmt.Errorf("no candidates in response")
 	}
 
 	// Извлекаем текст из ответа
@@ -185,14 +208,19 @@ func (c *Client) callGemini(ctx context.Context, prompt, model string) (string, 
 	}
 	response := strings.Join(textParts, "\n")
 
-	// Получаем количество токенов
-	tokensUsed := geminiResp.UsageMetadata.TotalTokenCount
+	usage := normalizeUsage(
+		prompt,
+		response,
+		geminiResp.UsageMetadata.PromptTokenCount,
+		geminiResp.UsageMetadata.CandidatesTokenCount,
+		geminiResp.UsageMetadata.TotalTokenCount,
+	)
 
-	return response, tokensUsed, nil
+	return response, usage, nil
 }
 
 // callGeminiImage выполняет запрос генерации изображения и возвращает байты (inlineData base64).
-func (c *Client) callGeminiImage(ctx context.Context, prompt, model string) ([]byte, error) {
+func (c *Client) callGeminiImage(ctx context.Context, prompt, model string) ([]byte, usageTotals, error) {
 	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", model, c.config.APIKey)
 
 	reqBody := map[string]interface{}{
@@ -207,18 +235,18 @@ func (c *Client) callGeminiImage(ctx context.Context, prompt, model string) ([]b
 
 	bodyBytes, err := json.Marshal(reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal image request: %w", err)
+		return nil, usageTotals{}, fmt.Errorf("failed to marshal image request: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(string(bodyBytes)))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create image request: %w", err)
+		return nil, usageTotals{}, fmt.Errorf("failed to create image request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to execute image request: %w", err)
+		return nil, usageTotals{}, fmt.Errorf("failed to execute image request: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -226,7 +254,7 @@ func (c *Client) callGeminiImage(ctx context.Context, prompt, model string) ([]b
 		body, _ := io.ReadAll(resp.Body)
 		// Маскируем потенциальные API ключи в URL ошибки
 		err := fmt.Errorf("gemini image API returned status %d: %s", resp.StatusCode, string(body))
-		return nil, SanitizeError(err)
+		return nil, usageTotals{}, SanitizeError(err)
 	}
 
 	var geminiResp struct {
@@ -240,27 +268,40 @@ func (c *Client) callGeminiImage(ctx context.Context, prompt, model string) ([]b
 				} `json:"parts"`
 			} `json:"content"`
 		} `json:"candidates"`
+		UsageMetadata struct {
+			PromptTokenCount     int64 `json:"promptTokenCount"`
+			CandidatesTokenCount int64 `json:"candidatesTokenCount"`
+			TotalTokenCount      int64 `json:"totalTokenCount"`
+		} `json:"usageMetadata"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&geminiResp); err != nil {
-		return nil, fmt.Errorf("failed to decode image response: %w", err)
+		return nil, usageTotals{}, fmt.Errorf("failed to decode image response: %w", err)
 	}
 
 	if len(geminiResp.Candidates) == 0 {
-		return nil, fmt.Errorf("no candidates in image response")
+		return nil, usageTotals{}, fmt.Errorf("no candidates in image response")
 	}
+
+	usage := normalizeUsage(
+		prompt,
+		"",
+		geminiResp.UsageMetadata.PromptTokenCount,
+		geminiResp.UsageMetadata.CandidatesTokenCount,
+		geminiResp.UsageMetadata.TotalTokenCount,
+	)
 	parts := geminiResp.Candidates[0].Content.Parts
 	for _, p := range parts {
 		if p.InlineData.Data != "" {
 			raw, err := base64.StdEncoding.DecodeString(p.InlineData.Data)
 			if err != nil {
-				return nil, fmt.Errorf("failed to decode inlineData: %w", err)
+				return nil, usageTotals{}, fmt.Errorf("failed to decode inlineData: %w", err)
 			}
-			return raw, nil
+			return raw, usage, nil
 		}
 	}
 
-	return nil, fmt.Errorf("no inlineData in image response")
+	return nil, usage, fmt.Errorf("no inlineData in image response")
 }
 
 // GetRequests возвращает все накопленные запросы
@@ -287,4 +328,70 @@ func errString(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+type usageTotals struct {
+	PromptTokens     int64
+	CompletionTokens int64
+	TotalTokens      int64
+	TokenSource      string
+}
+
+func normalizeUsage(prompt, response string, providerPrompt, providerCompletion, providerTotal int64) usageTotals {
+	estimatedPrompt := estimateTokens(prompt)
+	estimatedCompletion := estimateTokens(response)
+
+	providerPresent := providerPrompt > 0 || providerCompletion > 0 || providerTotal > 0
+	fullProvider := providerPrompt > 0 && providerCompletion > 0 && providerTotal > 0
+	if fullProvider {
+		return usageTotals{
+			PromptTokens:     providerPrompt,
+			CompletionTokens: providerCompletion,
+			TotalTokens:      providerTotal,
+			TokenSource:      "provider",
+		}
+	}
+
+	promptTokens := providerPrompt
+	completionTokens := providerCompletion
+	totalTokens := providerTotal
+
+	if promptTokens == 0 && totalTokens > completionTokens && completionTokens > 0 {
+		promptTokens = totalTokens - completionTokens
+	}
+	if completionTokens == 0 && totalTokens > promptTokens && promptTokens > 0 {
+		completionTokens = totalTokens - promptTokens
+	}
+	if promptTokens == 0 {
+		promptTokens = estimatedPrompt
+	}
+	if completionTokens == 0 {
+		completionTokens = estimatedCompletion
+	}
+	if totalTokens == 0 {
+		totalTokens = promptTokens + completionTokens
+	}
+
+	source := "estimated"
+	if providerPresent {
+		source = "mixed"
+	}
+	return usageTotals{
+		PromptTokens:     promptTokens,
+		CompletionTokens: completionTokens,
+		TotalTokens:      totalTokens,
+		TokenSource:      source,
+	}
+}
+
+func estimateTokens(text string) int64 {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return 0
+	}
+	runes := utf8.RuneCountInString(text)
+	if runes <= 0 {
+		return 0
+	}
+	return int64((runes + 3) / 4)
 }

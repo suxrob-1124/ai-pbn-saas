@@ -51,6 +51,8 @@ func main() {
 	genQueueStore := sqlstore.NewGenQueueStore(database)
 	indexCheckStore := sqlstore.NewIndexCheckStore(database)
 	checkHistoryStore := sqlstore.NewCheckHistoryStore(database)
+	llmUsageStore := sqlstore.NewLLMUsageStore(database)
+	modelPricingStore := sqlstore.NewModelPricingStore(database)
 	mailer := buildMailer(cfg, logger)
 	taskClient, err := tasks.NewClient(cfg)
 	if err != nil {
@@ -90,6 +92,8 @@ func main() {
 		genQueueStore,
 		indexCheckStore,
 		checkHistoryStore,
+		llmUsageStore,
+		modelPricingStore,
 		taskClient,
 	)
 	handler := srv.Handler()

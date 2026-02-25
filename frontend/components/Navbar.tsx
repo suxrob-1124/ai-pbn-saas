@@ -127,6 +127,12 @@ export function Navbar() {
                         >
                           Индексация
                         </Link>
+                        <Link
+                          href={{ pathname: "/monitoring/llm-usage" }}
+                          className="block px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-100 dark:hover:bg-slate-800"
+                        >
+                          LLM Usage
+                        </Link>
                       </div>
                     </div>
                   )}

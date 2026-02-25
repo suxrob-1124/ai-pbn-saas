@@ -4,13 +4,17 @@ import "time"
 
 // LLMRequest представляет один запрос к LLM API
 type LLMRequest struct {
-	Stage      string    `json:"stage"`           // "competitor_analysis", "technical_spec", "content", "images", etc.
-	Prompt     string    `json:"prompt"`          // полный промпт (может быть большой)
-	Response   string    `json:"response"`        // полный ответ LLM
-	Model      string    `json:"model"`           // "gemini-2.5-pro", "gemini-2.5-flash", etc.
-	TokensUsed int64     `json:"tokens_used"`     // количество использованных токенов
-	Timestamp  time.Time `json:"timestamp"`       // время запроса
-	Error      string    `json:"error,omitempty"` // ошибка, если была
+	Stage            string    `json:"stage"`             // "competitor_analysis", "technical_spec", "content", "images", etc.
+	Prompt           string    `json:"prompt"`            // полный промпт (может быть большой)
+	Response         string    `json:"response"`          // полный ответ LLM
+	Model            string    `json:"model"`             // "gemini-2.5-pro", "gemini-2.5-flash", etc.
+	PromptTokens     int64     `json:"prompt_tokens"`     // количество prompt токенов
+	CompletionTokens int64     `json:"completion_tokens"` // количество completion токенов
+	TotalTokens      int64     `json:"total_tokens"`      // суммарное количество токенов
+	TokensUsed       int64     `json:"tokens_used"`       // legacy alias для total_tokens
+	TokenSource      string    `json:"token_source"`      // provider|estimated|mixed
+	Timestamp        time.Time `json:"timestamp"`         // время запроса
+	Error            string    `json:"error,omitempty"`   // ошибка, если была
 }
 
 // Config содержит конфигурацию для LLM клиента

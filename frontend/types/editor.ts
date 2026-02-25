@@ -3,6 +3,12 @@ export type EditorFileMeta = {
   path: string;
   size: number;
   mimeType: string;
+  version: number;
+  isEditable: boolean;
+  isBinary: boolean;
+  width?: number;
+  height?: number;
+  lastEditedBy?: string;
   updatedAt: string;
   editable: boolean;
 };
@@ -20,6 +26,7 @@ export type EditorSelectionState = {
   selectedFileId: string;
   language: string;
   mimeType: string;
+  version: number;
 };
 
 export type EditorDirtyState = {
@@ -27,4 +34,13 @@ export type EditorDirtyState = {
   originalContent: string;
   currentContent: string;
   lastSavedAt?: string;
+};
+
+export type EditorRevision = {
+  id: string;
+  version: number;
+  editedBy: string;
+  source: string;
+  description?: string;
+  createdAt: string;
 };

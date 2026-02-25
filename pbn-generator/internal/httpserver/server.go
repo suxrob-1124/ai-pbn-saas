@@ -1,14 +1,21 @@
 package httpserver
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
+	"io/fs"
 	"math"
 	"mime"
 	"net"
@@ -20,6 +27,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,6 +36,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/robfig/cron/v3"
 	"go.uber.org/zap"
+	"golang.org/x/net/idna"
 
 	"obzornik-pbn-generator/internal/auth"
 	"obzornik-pbn-generator/internal/config"
@@ -129,16 +138,26 @@ type GenQueueStore interface {
 }
 
 type SiteFileStore interface {
+	Create(ctx context.Context, file sqlstore.SiteFile) error
 	Get(ctx context.Context, fileID string) (*sqlstore.SiteFile, error)
 	List(ctx context.Context, domainID string) ([]sqlstore.SiteFile, error)
+	ListDeleted(ctx context.Context, domainID string) ([]sqlstore.SiteFile, error)
 	GetByPath(ctx context.Context, domainID, path string) (*sqlstore.SiteFile, error)
+	GetByPathAny(ctx context.Context, domainID, path string) (*sqlstore.SiteFile, error)
 	Update(ctx context.Context, fileID string, content []byte) error
 	Delete(ctx context.Context, fileID string) error
+	SoftDelete(ctx context.Context, fileID string, deletedBy sql.NullString, reason sql.NullString) error
+	Restore(ctx context.Context, fileID string) error
+	Move(ctx context.Context, fileID, newPath string) error
+	SetLastEditedBy(ctx context.Context, fileID string, editedBy sql.NullString) error
 }
 
 type FileEditStore interface {
 	Create(ctx context.Context, edit sqlstore.FileEdit) error
 	ListByFile(ctx context.Context, fileID string, limit int) ([]sqlstore.FileEdit, error)
+	CreateRevision(ctx context.Context, rev sqlstore.FileRevision) error
+	GetRevision(ctx context.Context, revisionID string) (*sqlstore.FileRevision, error)
+	ListRevisionsByFile(ctx context.Context, fileID string, limit int) ([]sqlstore.FileRevision, error)
 }
 
 type LinkTaskStore interface {
@@ -179,6 +198,19 @@ type CheckHistoryStore interface {
 	ListByCheck(ctx context.Context, checkID string, limit int) ([]sqlstore.CheckHistory, error)
 }
 
+type LLMUsageStore interface {
+	CreateEvent(ctx context.Context, item sqlstore.LLMUsageEvent) error
+	ListEvents(ctx context.Context, filters sqlstore.LLMUsageFilters) ([]sqlstore.LLMUsageEvent, error)
+	CountEvents(ctx context.Context, filters sqlstore.LLMUsageFilters) (int, error)
+	AggregateStats(ctx context.Context, filters sqlstore.LLMUsageFilters) (sqlstore.LLMUsageStats, error)
+}
+
+type ModelPricingStore interface {
+	GetActiveByModel(ctx context.Context, provider, model string, at time.Time) (*sqlstore.LLMModelPricing, error)
+	ListActive(ctx context.Context) ([]sqlstore.LLMModelPricing, error)
+	UpsertActive(ctx context.Context, provider, model string, inputUSDPerMillion, outputUSDPerMillion float64, updatedBy string, at time.Time) error
+}
+
 type Server struct {
 	cfg             config.Config
 	svc             *auth.Service
@@ -198,15 +230,19 @@ type Server struct {
 	genQueue        GenQueueStore
 	indexChecks     IndexCheckStore
 	checkHistory    CheckHistoryStore
+	llmUsage        LLMUsageStore
+	modelPricing    ModelPricingStore
 	tasks           tasks.Enqueuer
 	reqDuration     *prometheus.HistogramVec
 	reqCounter      *prometheus.CounterVec
 	genStatus       *prometheus.GaugeVec
 	registry        *prometheus.Registry
 	logger          *zap.SugaredLogger
+	editorCtxMu     sync.Mutex
+	editorCtxCache  map[string]editorContextPackCacheEntry
 }
 
-func New(cfg config.Config, svc *auth.Service, logger *zap.SugaredLogger, projects ProjectStore, projectMembers *sqlstore.ProjectMemberStore, domains DomainStore, generations GenerationStore, prompts PromptStore, promptOverrides PromptOverrideStore, deployments DeploymentAttemptStore, schedules ScheduleStore, linkSchedules LinkScheduleStore, auditRules *sqlstore.AuditStore, siteFiles SiteFileStore, fileEdits FileEditStore, linkTasks LinkTaskStore, genQueue GenQueueStore, indexChecks IndexCheckStore, checkHistory CheckHistoryStore, tq tasks.Enqueuer) *Server {
+func New(cfg config.Config, svc *auth.Service, logger *zap.SugaredLogger, projects ProjectStore, projectMembers *sqlstore.ProjectMemberStore, domains DomainStore, generations GenerationStore, prompts PromptStore, promptOverrides PromptOverrideStore, deployments DeploymentAttemptStore, schedules ScheduleStore, linkSchedules LinkScheduleStore, auditRules *sqlstore.AuditStore, siteFiles SiteFileStore, fileEdits FileEditStore, linkTasks LinkTaskStore, genQueue GenQueueStore, indexChecks IndexCheckStore, checkHistory CheckHistoryStore, llmUsage LLMUsageStore, modelPricing ModelPricingStore, tq tasks.Enqueuer) *Server {
 	if logger == nil {
 		logger = zap.NewNop().Sugar()
 	}
@@ -248,12 +284,15 @@ func New(cfg config.Config, svc *auth.Service, logger *zap.SugaredLogger, projec
 		genQueue:        genQueue,
 		indexChecks:     indexChecks,
 		checkHistory:    checkHistory,
+		llmUsage:        llmUsage,
+		modelPricing:    modelPricing,
 		tasks:           tq,
 		reqDuration:     reqDuration,
 		reqCounter:      reqCounter,
 		genStatus:       genStatus,
 		registry:        registry,
 		logger:          logger,
+		editorCtxCache:  make(map[string]editorContextPackCacheEntry),
 	}
 	s.startGenerationMetricsLoop()
 	return s
@@ -293,6 +332,10 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("/api/admin/index-checks/calendar", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminIndexChecksCalendar))))
 	mux.Handle("/api/admin/index-checks/", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminIndexCheckRoute))))
 	mux.Handle("/api/admin/index-checks/failed", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminIndexChecksFailed))))
+	mux.Handle("/api/admin/llm-usage/events", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminLLMUsageEvents))))
+	mux.Handle("/api/admin/llm-usage/stats", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminLLMUsageStats))))
+	mux.Handle("/api/admin/llm-pricing", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminLLMPricing))))
+	mux.Handle("/api/admin/llm-pricing/", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminLLMPricingByModel))))
 	mux.Handle("/api/admin/users", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminUsers))))
 	mux.Handle("/api/admin/users/", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminUserRoute))))
 	mux.Handle("/api/admin/prompts", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminPrompts))))
@@ -1171,6 +1214,18 @@ func (s *Server) handleProjectByID(w http.ResponseWriter, r *http.Request) {
 		s.handleProjectIndexChecks(w, r, projectID, parts[2:])
 		return
 	}
+	if len(parts) > 1 && parts[1] == "llm-usage" {
+		action := ""
+		if len(parts) > 2 {
+			action = parts[2]
+		}
+		if action == "stats" {
+			s.handleProjectLLMUsageStats(w, r, projectID)
+			return
+		}
+		s.handleProjectLLMUsageEvents(w, r, projectID)
+		return
+	}
 	if len(parts) > 1 && parts[1] == "prompts" {
 		stage := ""
 		if len(parts) > 2 {
@@ -1770,11 +1825,8 @@ func (s *Server) handleProjectDomains(w http.ResponseWriter, r *http.Request, pr
 		}
 		defer r.Body.Close()
 		var body struct {
-			Items []struct {
-				URL     string `json:"url"`
-				Keyword string `json:"keyword"`
-			} `json:"items"`
-			Text string `json:"text"`
+			Items []domainImportItem `json:"items"`
+			Text  string             `json:"text"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid body")
@@ -1784,53 +1836,79 @@ func (s *Server) handleProjectDomains(w http.ResponseWriter, r *http.Request, pr
 			writeError(w, http.StatusBadRequest, "no domains provided")
 			return
 		}
-		records := body.Items
-		if len(records) == 0 {
-			lines := strings.Split(body.Text, "\n")
-			for _, line := range lines {
-				line = strings.TrimSpace(line)
-				if line == "" {
-					continue
-				}
-				url := line
-				kw := ""
-				if strings.Contains(line, ",") {
-					parts := strings.SplitN(line, ",", 2)
-					url = strings.TrimSpace(parts[0])
-					kw = strings.TrimSpace(parts[1])
-				}
-				records = append(records, struct {
-					URL     string `json:"url"`
-					Keyword string `json:"keyword"`
-				}{URL: url, Keyword: kw})
+		records := make([]domainImportItem, 0, len(body.Items))
+		records = append(records, body.Items...)
+		if strings.TrimSpace(body.Text) != "" {
+			parsed, err := parseDomainImportText(body.Text)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
 			}
+			records = append(records, parsed...)
 		}
+		if len(records) == 0 {
+			writeError(w, http.StatusBadRequest, "no domains provided")
+			return
+		}
+
+		_ = s.domains.EnsureDefaultServer(r.Context(), p.UserEmail)
 		created := 0
-		for _, item := range records {
-			cleanURL := sanitizeDomain(item.URL)
-			if cleanURL == "" {
-				continue
+		skipped := 0
+		for idx, item := range records {
+			cleanURL, err := normalizeImportedDomain(item.URL)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid domain at row %d: %s", idx+1, err.Error()))
+				return
 			}
-			_ = s.domains.EnsureDefaultServer(r.Context(), p.UserEmail)
+			serverID := strings.TrimSpace(firstNonEmpty(item.ServerID, item.Server))
+			if serverID == "" {
+				serverID = sqlstore.DefaultServerID
+			}
+			targetCountry := strings.TrimSpace(item.Country)
+			if targetCountry == "" {
+				targetCountry = p.TargetCountry
+			}
+			targetLanguage := strings.TrimSpace(item.Language)
+			if targetLanguage == "" {
+				targetLanguage = p.TargetLanguage
+			}
 			d := sqlstore.Domain{
 				ID:             uuid.NewString(),
 				ProjectID:      projectID,
 				URL:            cleanURL,
 				MainKeyword:    strings.TrimSpace(item.Keyword),
-				TargetCountry:  p.TargetCountry,
-				TargetLanguage: p.TargetLanguage,
-				ServerID:       sqlstore.NullableString(sqlstore.DefaultServerID),
+				TargetCountry:  targetCountry,
+				TargetLanguage: targetLanguage,
+				ServerID:       sqlstore.NullableString(serverID),
 				Status:         "waiting",
 			}
 			if err := s.domains.Create(r.Context(), d); err != nil {
 				if s.logger != nil {
-					s.logger.Warnf("import domain failed: %v", err)
+					s.logger.Warnf("import domain failed (url=%s): %v", cleanURL, err)
 				}
+				skipped++
 				continue
+			}
+			anchor := strings.TrimSpace(firstNonEmpty(item.LinkAnchorText, item.Anchor))
+			acceptor := strings.TrimSpace(firstNonEmpty(item.LinkAcceptorURL, item.Acceptor))
+			if anchor != "" || acceptor != "" {
+				_, err := s.domains.UpdateLinkSettings(
+					r.Context(),
+					d.ID,
+					nullStringFromOptional(&anchor),
+					nullStringFromOptional(&acceptor),
+				)
+				if err != nil && s.logger != nil {
+					s.logger.Warnf("import link settings failed (domain=%s): %v", d.ID, err)
+				}
 			}
 			created++
 		}
-		writeJSON(w, http.StatusCreated, map[string]any{"created": created})
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"created": created,
+			"skipped": skipped,
+			"total":   len(records),
+		})
 		return
 	}
 
@@ -1856,11 +1934,16 @@ func (s *Server) handleProjectDomains(w http.ResponseWriter, r *http.Request, pr
 			writeError(w, http.StatusBadRequest, "invalid body")
 			return
 		}
+		cleanURL, err := normalizeImportedDomain(body.URL)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid domain")
+			return
+		}
 		_ = s.domains.EnsureDefaultServer(r.Context(), p.UserEmail)
 		d := sqlstore.Domain{
 			ID:             uuid.NewString(),
 			ProjectID:      projectID,
-			URL:            sanitizeDomain(body.URL),
+			URL:            cleanURL,
 			MainKeyword:    body.Keyword,
 			TargetCountry:  p.TargetCountry,
 			TargetLanguage: p.TargetLanguage,
@@ -1977,6 +2060,8 @@ func (s *Server) handleDomainActions(w http.ResponseWriter, r *http.Request) {
 		s.handleDomainPrompts(w, r, domainID, stage)
 	case "deployments":
 		s.handleDomainDeployments(w, r, domainID)
+	case "editor":
+		s.handleDomainEditorActions(w, r, domainID, parts[2:])
 	case "":
 		s.handleDomainBase(w, r, domainID)
 	default:
@@ -2181,9 +2266,9 @@ func (s *Server) handleDomainGenerate(w http.ResponseWriter, r *http.Request, do
 	// Попытка скопировать артефакты из последней успешной генерации, если делаем force rerun
 	var baseArtifacts []byte
 	if forceStep != "" {
-		if last, err := s.generations.GetLastSuccessfulByDomain(r.Context(), domainID); err == nil && len(last.Artifacts) > 0 {
+		if last, err := s.generations.GetLastByDomain(r.Context(), domainID); err == nil && len(last.Artifacts) > 0 {
 			baseArtifacts = last.Artifacts
-		} else if last, err := s.generations.GetLastByDomain(r.Context(), domainID); err == nil && len(last.Artifacts) > 0 {
+		} else if last, err := s.generations.GetLastSuccessfulByDomain(r.Context(), domainID); err == nil && len(last.Artifacts) > 0 {
 			baseArtifacts = last.Artifacts
 		}
 	}
@@ -2264,14 +2349,32 @@ func (s *Server) handleDomainGenerations(w http.ResponseWriter, r *http.Request,
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (s *Server) handleDomainFiles(w http.ResponseWriter, r *http.Request, domainID string, parts []string) {
+const (
+	editorContextPackMaxTotalBytes   = 180 * 1024
+	editorContextPackMaxFileBytes    = 40 * 1024
+	editorContextPackMaxFiles        = 20
+	editorContextPackCacheTTL        = 10 * time.Minute
+	editorContextPackCacheMaxEntries = 200
+)
+
+type editorContextPackCacheEntry struct {
+	Prompt    string
+	Meta      editorContextPackMeta
+	ExpiresAt time.Time
+}
+
+type editorContextPackMeta struct {
+	PackHash    string   `json:"pack_hash"`
+	FilesUsed   int      `json:"files_used"`
+	BytesUsed   int      `json:"bytes_used"`
+	Truncated   bool     `json:"truncated"`
+	SourceFiles []string `json:"source_files"`
+}
+
+func (s *Server) handleDomainEditorActions(w http.ResponseWriter, r *http.Request, domainID string, parts []string) {
 	user, ok := currentUserFromContext(r.Context())
 	if !ok || user.Email == "" {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
-	if s.siteFiles == nil || s.fileEdits == nil {
-		writeError(w, http.StatusInternalServerError, "file storage not configured")
 		return
 	}
 	domain, project, err := s.authorizeDomain(r.Context(), domainID)
@@ -2279,7 +2382,6 @@ func (s *Server) handleDomainFiles(w http.ResponseWriter, r *http.Request, domai
 		respondAuthzError(w, err, "domain not found")
 		return
 	}
-
 	memberRole := ""
 	if !strings.EqualFold(user.Role, "admin") {
 		role, err := s.getProjectMemberRole(r.Context(), project.ID, user.Email)
@@ -2289,24 +2391,16 @@ func (s *Server) handleDomainFiles(w http.ResponseWriter, r *http.Request, domai
 		}
 		memberRole = role
 	}
-
-	// История файла: /api/domains/:id/files/:fileId/history
-	if len(parts) == 2 && parts[1] == "history" {
-		if !hasProjectPermission(user.Role, memberRole, "viewer") {
-			writeError(w, http.StatusForbidden, "insufficient permissions: viewer role required")
-			return
-		}
-		fileID, err := url.PathUnescape(parts[0])
-		if err != nil || strings.TrimSpace(fileID) == "" {
-			writeError(w, http.StatusBadRequest, "invalid file id")
-			return
-		}
-		s.handleFileHistory(w, r, domain.ID, fileID)
+	if !hasProjectPermission(user.Role, memberRole, "editor") {
+		writeError(w, http.StatusForbidden, "insufficient permissions: editor role required")
 		return
 	}
-
-	// Список файлов
-	if len(parts) == 0 || parts[0] == "" {
+	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	switch parts[0] {
+	case "context-pack":
 		if r.Method != http.MethodGet {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
@@ -2315,57 +2409,47 @@ func (s *Server) handleDomainFiles(w http.ResponseWriter, r *http.Request, domai
 			writeError(w, http.StatusForbidden, "insufficient permissions: viewer role required")
 			return
 		}
-		files, err := s.siteFiles.List(r.Context(), domainID)
+		targetPath := strings.TrimSpace(r.URL.Query().Get("target_path"))
+		if targetPath == "" {
+			targetPath = "index.html"
+		}
+		if !strings.HasSuffix(strings.ToLower(targetPath), ".html") {
+			targetPath += ".html"
+		}
+		cleanTarget, err := normalizeEditorProtectedPath(targetPath)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "could not list files")
+			writeEditorError(w, http.StatusBadRequest, editorErrForbiddenPath, err.Error(), nil)
 			return
 		}
-		resp := make([]fileDTO, 0, len(files))
-		for _, f := range files {
-			resp = append(resp, fileDTO{
-				ID:        f.ID,
-				Path:      f.Path,
-				Size:      f.SizeBytes,
-				MimeType:  f.MimeType,
-				UpdatedAt: f.UpdatedAt,
-			})
+		contextMode := normalizeEditorContextMode(r.URL.Query().Get("context_mode"))
+		var contextFiles []string
+		for _, raw := range strings.Split(strings.TrimSpace(r.URL.Query().Get("context_files")), ",") {
+			raw = strings.TrimSpace(raw)
+			if raw != "" {
+				contextFiles = append(contextFiles, raw)
+			}
 		}
-		writeJSON(w, http.StatusOK, resp)
+		packPrompt, meta, err := s.buildEditorContextPack(r.Context(), domain, cleanTarget, "", contextFiles, contextMode)
+		if err != nil {
+			writeEditorContextPackError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"target_path":       cleanTarget,
+			"context_mode":      contextMode,
+			"context_pack_meta": meta,
+			"site_context":      packPrompt,
+		})
 		return
-	}
-
-	rawPath, err := joinURLPath(parts)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid path")
+	case "ai-create-page":
+		s.handleDomainEditorAICreatePage(w, r, domain, project, user.Email)
 		return
-	}
-	cleanPath, err := sanitizeFilePath(rawPath)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid path")
+	case "ai-regenerate-asset":
+		s.handleDomainEditorAIRegenerateAsset(w, r, domain, project, user.Email)
 		return
-	}
-
-	switch r.Method {
-	case http.MethodGet:
-		if !hasProjectPermission(user.Role, memberRole, "viewer") {
-			writeError(w, http.StatusForbidden, "insufficient permissions: viewer role required")
-			return
-		}
-		s.handleGetFile(w, r, domain, cleanPath)
-	case http.MethodPut:
-		if !hasProjectPermission(user.Role, memberRole, "editor") {
-			writeError(w, http.StatusForbidden, "insufficient permissions: editor role required")
-			return
-		}
-		s.handleUpdateFile(w, r, domain, cleanPath, user.Email)
-	case http.MethodDelete:
-		if !strings.EqualFold(user.Role, "admin") {
-			writeError(w, http.StatusForbidden, "admin only")
-			return
-		}
-		s.handleDeleteFile(w, r, domain, cleanPath)
 	default:
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		writeError(w, http.StatusNotFound, "not found")
+		return
 	}
 }
 
@@ -2995,218 +3079,6 @@ func (s *Server) findActiveLinkTask(ctx context.Context, domainID string) (*sqls
 	return nil, nil
 }
 
-func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request, domain sqlstore.Domain, relPath string) {
-	file, err := s.siteFiles.GetByPath(r.Context(), domain.ID, relPath)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "file not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "could not load file")
-		return
-	}
-	domainDir, err := domainFilesDir(domain.URL)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid domain")
-		return
-	}
-	fullPath := filepath.Join(domainDir, filepath.FromSlash(relPath))
-	if err := ensurePathWithin(domainDir, fullPath); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid path")
-		return
-	}
-	content, err := os.ReadFile(fullPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			writeError(w, http.StatusNotFound, "file not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "could not read file")
-		return
-	}
-	mimeType := file.MimeType
-	if mimeType == "" {
-		mimeType = detectMimeType(relPath, content)
-	}
-	if r.URL.Query().Get("raw") == "1" {
-		if strings.HasPrefix(mimeType, "text/") && !strings.Contains(strings.ToLower(mimeType), "charset=") {
-			mimeType = mimeType + "; charset=utf-8"
-		}
-		w.Header().Set("Content-Type", mimeType)
-		w.Header().Set("Cache-Control", "no-store")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(content)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"content":  string(content),
-		"mimeType": mimeType,
-	})
-}
-
-func (s *Server) handleUpdateFile(w http.ResponseWriter, r *http.Request, domain sqlstore.Domain, relPath, editedBy string) {
-	if !ensureJSON(w, r) {
-		return
-	}
-	defer r.Body.Close()
-	var body struct {
-		Content     string `json:"content"`
-		Description string `json:"description"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid body")
-		return
-	}
-
-	file, err := s.siteFiles.GetByPath(r.Context(), domain.ID, relPath)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "file not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "could not load file")
-		return
-	}
-
-	domainDir, err := domainFilesDir(domain.URL)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid domain")
-		return
-	}
-	fullPath := filepath.Join(domainDir, filepath.FromSlash(relPath))
-	if err := ensurePathWithin(domainDir, fullPath); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid path")
-		return
-	}
-
-	oldContent, err := os.ReadFile(fullPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			writeError(w, http.StatusNotFound, "file not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "could not read file")
-		return
-	}
-
-	newBytes := []byte(body.Content)
-	detected := detectMimeType(relPath, newBytes)
-	if err := validateMimeType(relPath, detected, file.MimeType); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not write file")
-		return
-	}
-	if err := os.WriteFile(fullPath, newBytes, 0o644); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not write file")
-		return
-	}
-
-	if err := s.siteFiles.Update(r.Context(), file.ID, newBytes); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not update file metadata")
-		return
-	}
-
-	beforeHash := sha256.Sum256(oldContent)
-	afterHash := sha256.Sum256(newBytes)
-	edit := sqlstore.FileEdit{
-		ID:                uuid.NewString(),
-		FileID:            file.ID,
-		EditedBy:          editedBy,
-		ContentBeforeHash: sql.NullString{String: hex.EncodeToString(beforeHash[:]), Valid: true},
-		ContentAfterHash:  sql.NullString{String: hex.EncodeToString(afterHash[:]), Valid: true},
-		EditType:          "manual",
-	}
-	if strings.TrimSpace(body.Description) != "" {
-		edit.EditDescription = sql.NullString{String: strings.TrimSpace(body.Description), Valid: true}
-	}
-	if err := s.fileEdits.Create(r.Context(), edit); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not log file edit")
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
-}
-
-func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request, domain sqlstore.Domain, relPath string) {
-	file, err := s.siteFiles.GetByPath(r.Context(), domain.ID, relPath)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "file not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "could not load file")
-		return
-	}
-	domainDir, err := domainFilesDir(domain.URL)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid domain")
-		return
-	}
-	fullPath := filepath.Join(domainDir, filepath.FromSlash(relPath))
-	if err := ensurePathWithin(domainDir, fullPath); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid path")
-		return
-	}
-	if err := os.Remove(fullPath); err != nil && !os.IsNotExist(err) {
-		writeError(w, http.StatusInternalServerError, "could not delete file")
-		return
-	}
-	if err := s.siteFiles.Delete(r.Context(), file.ID); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not delete file metadata")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
-}
-
-func (s *Server) handleFileHistory(w http.ResponseWriter, r *http.Request, domainID, fileID string) {
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	file, err := s.siteFiles.Get(r.Context(), fileID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "file not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "could not load file")
-		return
-	}
-	if file.DomainID != domainID {
-		writeError(w, http.StatusNotFound, "file not found")
-		return
-	}
-	limit := 50
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 200 {
-			limit = n
-		}
-	}
-	list, err := s.fileEdits.ListByFile(r.Context(), fileID, limit)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not list file history")
-		return
-	}
-	resp := make([]fileEditDTO, 0, len(list))
-	for _, e := range list {
-		item := fileEditDTO{
-			ID:        e.ID,
-			EditedBy:  e.EditedBy,
-			EditType:  e.EditType,
-			CreatedAt: e.CreatedAt,
-		}
-		if e.EditDescription.Valid {
-			item.Description = e.EditDescription.String
-		}
-		resp = append(resp, item)
-	}
-	writeJSON(w, http.StatusOK, resp)
-}
-
 func (s *Server) handleGenerations(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -3427,6 +3299,10 @@ func (s *Server) handleGenerationAction(w http.ResponseWriter, r *http.Request, 
 			writeError(w, http.StatusBadRequest, "can only resume paused generation")
 			return
 		}
+		if s.tasks == nil {
+			writeError(w, http.StatusServiceUnavailable, "queue unavailable")
+			return
+		}
 		// Устанавливаем статус PENDING (чтобы worker мог подхватить задачу) и перезапускаем задачу
 		// Если чекпоинта нет, задача начнется сначала (это нормально)
 		if err := s.generations.UpdateStatus(r.Context(), id, "pending", gen.Progress, nil); err != nil {
@@ -3435,21 +3311,22 @@ func (s *Server) handleGenerationAction(w http.ResponseWriter, r *http.Request, 
 		}
 		// Обновляем статус домена обратно на processing
 		_ = s.domains.UpdateStatus(r.Context(), gen.DomainID, "processing")
-		// Перезапускаем задачу через очередь (если есть enqueuer)
-		if s.tasks != nil {
-			task := tasks.NewGenerateTask(id, gen.DomainID, "")
-			queue := "default"
-			if s.domains != nil {
-				if d, err := s.domains.Get(r.Context(), gen.DomainID); err == nil {
-					queue = s.genQueueForProject(d.ProjectID)
-				}
+		// Перезапускаем задачу через очередь
+		task := tasks.NewGenerateTask(id, gen.DomainID, "")
+		queue := "default"
+		if s.domains != nil {
+			if d, err := s.domains.Get(r.Context(), gen.DomainID); err == nil {
+				queue = s.genQueueForProject(d.ProjectID)
 			}
-			if _, err := s.tasks.Enqueue(r.Context(), task, asynq.Queue(queue)); err != nil {
-				if s.logger != nil {
-					s.logger.Warnf("failed to enqueue resumed generation: %v", err)
-				}
-				// Не возвращаем ошибку, так как статус уже обновлен
+		}
+		if _, err := s.tasks.Enqueue(r.Context(), task, asynq.Queue(queue)); err != nil {
+			if s.logger != nil {
+				s.logger.Warnf("failed to enqueue resumed generation: %v", err)
 			}
+			_ = s.generations.UpdateStatus(r.Context(), id, "paused", gen.Progress, nil)
+			_ = s.domains.UpdateStatus(r.Context(), gen.DomainID, stableDomainStatusFromDomain(d))
+			writeError(w, http.StatusServiceUnavailable, "could not enqueue resumed generation")
+			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "pending", "message": "generation resumed"})
 
@@ -5937,6 +5814,213 @@ func (s *Server) handleAdminIndexCheckHistory(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func (s *Server) handleAdminLLMUsageEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if s.llmUsage == nil {
+		writeError(w, http.StatusInternalServerError, "llm usage store not configured")
+		return
+	}
+	filters := parseLLMUsageFilters(r)
+	items, err := s.llmUsage.ListEvents(r.Context(), filters)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not list llm usage")
+		return
+	}
+	total, err := s.llmUsage.CountEvents(r.Context(), filters)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not count llm usage")
+		return
+	}
+	resp := make([]llmUsageEventDTO, 0, len(items))
+	for _, item := range items {
+		resp = append(resp, toLLMUsageEventDTO(item))
+	}
+	writeJSON(w, http.StatusOK, llmUsageListDTO{Items: resp, Total: total})
+}
+
+func (s *Server) handleAdminLLMUsageStats(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if s.llmUsage == nil {
+		writeError(w, http.StatusInternalServerError, "llm usage store not configured")
+		return
+	}
+	filters := parseLLMUsageFilters(r)
+	filters.Limit = 0
+	filters.Offset = 0
+	stats, err := s.llmUsage.AggregateStats(r.Context(), filters)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not aggregate llm usage")
+		return
+	}
+	writeJSON(w, http.StatusOK, toLLMUsageStatsDTO(stats))
+}
+
+func (s *Server) handleAdminLLMPricing(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if s.modelPricing == nil {
+		writeError(w, http.StatusInternalServerError, "model pricing store not configured")
+		return
+	}
+	items, err := s.modelPricing.ListActive(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not list llm model pricing")
+		return
+	}
+	resp := make([]llmPricingDTO, 0, len(items))
+	for _, item := range items {
+		resp = append(resp, toLLMPricingDTO(item))
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleAdminLLMPricingByModel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if s.modelPricing == nil {
+		writeError(w, http.StatusInternalServerError, "model pricing store not configured")
+		return
+	}
+	model := strings.TrimSpace(strings.TrimPrefix(r.URL.Path, "/api/admin/llm-pricing/"))
+	model, _ = url.PathUnescape(model)
+	model = strings.TrimSpace(model)
+	if model == "" {
+		writeError(w, http.StatusBadRequest, "model is required")
+		return
+	}
+	if !ensureJSON(w, r) {
+		return
+	}
+	defer r.Body.Close()
+	var body struct {
+		Provider            string  `json:"provider"`
+		InputUSDPerMillion  float64 `json:"input_usd_per_million"`
+		OutputUSDPerMillion float64 `json:"output_usd_per_million"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	provider := strings.TrimSpace(body.Provider)
+	if provider == "" {
+		provider = "gemini"
+	}
+	if body.InputUSDPerMillion <= 0 || body.OutputUSDPerMillion <= 0 {
+		writeError(w, http.StatusBadRequest, "input_usd_per_million and output_usd_per_million must be > 0")
+		return
+	}
+	user, ok := currentUserFromContext(r.Context())
+	if !ok || strings.TrimSpace(user.Email) == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if err := s.modelPricing.UpsertActive(
+		r.Context(),
+		provider,
+		model,
+		body.InputUSDPerMillion,
+		body.OutputUSDPerMillion,
+		user.Email,
+		time.Now().UTC(),
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not update model pricing")
+		return
+	}
+	item, err := s.modelPricing.GetActiveByModel(r.Context(), provider, model, time.Now().UTC())
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"status": "updated"})
+		return
+	}
+	writeJSON(w, http.StatusOK, toLLMPricingDTO(*item))
+}
+
+func (s *Server) handleProjectLLMUsageEvents(w http.ResponseWriter, r *http.Request, projectID string) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if s.llmUsage == nil {
+		writeError(w, http.StatusInternalServerError, "llm usage store not configured")
+		return
+	}
+	user, ok := currentUserFromContext(r.Context())
+	if !ok || strings.TrimSpace(user.Email) == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	project, err := s.authorizeProject(r.Context(), projectID)
+	if err != nil {
+		respondAuthzError(w, err, "project not found")
+		return
+	}
+	if !strings.EqualFold(user.Role, "admin") && !strings.EqualFold(project.UserEmail, user.Email) {
+		writeError(w, http.StatusForbidden, "only admin or project owner can view llm usage")
+		return
+	}
+	filters := parseLLMUsageFilters(r)
+	filters.ProjectID = &projectID
+	items, err := s.llmUsage.ListEvents(r.Context(), filters)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not list llm usage")
+		return
+	}
+	total, err := s.llmUsage.CountEvents(r.Context(), filters)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not count llm usage")
+		return
+	}
+	resp := make([]llmUsageEventDTO, 0, len(items))
+	for _, item := range items {
+		resp = append(resp, toLLMUsageEventDTO(item))
+	}
+	writeJSON(w, http.StatusOK, llmUsageListDTO{Items: resp, Total: total})
+}
+
+func (s *Server) handleProjectLLMUsageStats(w http.ResponseWriter, r *http.Request, projectID string) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if s.llmUsage == nil {
+		writeError(w, http.StatusInternalServerError, "llm usage store not configured")
+		return
+	}
+	user, ok := currentUserFromContext(r.Context())
+	if !ok || strings.TrimSpace(user.Email) == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	project, err := s.authorizeProject(r.Context(), projectID)
+	if err != nil {
+		respondAuthzError(w, err, "project not found")
+		return
+	}
+	if !strings.EqualFold(user.Role, "admin") && !strings.EqualFold(project.UserEmail, user.Email) {
+		writeError(w, http.StatusForbidden, "only admin or project owner can view llm usage")
+		return
+	}
+	filters := parseLLMUsageFilters(r)
+	filters.ProjectID = &projectID
+	filters.Limit = 0
+	filters.Offset = 0
+	stats, err := s.llmUsage.AggregateStats(r.Context(), filters)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not aggregate llm usage")
+		return
+	}
+	writeJSON(w, http.StatusOK, toLLMUsageStatsDTO(stats))
+}
+
 func (s *Server) handleAdminAuditRuleByCode(w http.ResponseWriter, r *http.Request) {
 	if s.auditRules == nil {
 		writeError(w, http.StatusInternalServerError, "audit store not configured")
@@ -6115,11 +6199,20 @@ type domainDTO struct {
 }
 
 type fileDTO struct {
-	ID        string    `json:"id"`
-	Path      string    `json:"path"`
-	Size      int64     `json:"size"`
-	MimeType  string    `json:"mimeType"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	ID           string     `json:"id"`
+	Path         string     `json:"path"`
+	Size         int64      `json:"size"`
+	MimeType     string     `json:"mimeType"`
+	Version      int        `json:"version"`
+	IsEditable   bool       `json:"isEditable"`
+	IsBinary     bool       `json:"isBinary"`
+	Width        *int       `json:"width,omitempty"`
+	Height       *int       `json:"height,omitempty"`
+	LastEditedBy *string    `json:"lastEditedBy,omitempty"`
+	DeletedAt    *time.Time `json:"deletedAt,omitempty"`
+	DeletedBy    *string    `json:"deletedBy,omitempty"`
+	DeleteReason *string    `json:"deleteReason,omitempty"`
+	UpdatedAt    time.Time  `json:"updatedAt"`
 }
 
 type fileEditDTO struct {
@@ -6128,6 +6221,20 @@ type fileEditDTO struct {
 	EditType    string    `json:"editType"`
 	Description string    `json:"description,omitempty"`
 	CreatedAt   time.Time `json:"createdAt"`
+}
+
+type fileRevisionDTO struct {
+	ID          string    `json:"id"`
+	FileID      string    `json:"file_id"`
+	Version     int       `json:"version"`
+	EditedBy    string    `json:"edited_by"`
+	Source      string    `json:"source"`
+	Description string    `json:"description,omitempty"`
+	ContentHash string    `json:"content_hash"`
+	SizeBytes   int64     `json:"size_bytes"`
+	MimeType    string    `json:"mime_type"`
+	Content     string    `json:"content,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 type linkTaskDTO struct {
@@ -6203,6 +6310,64 @@ type indexCheckStatsDTO struct {
 	AvgAttemptsToSuccess float64              `json:"avg_attempts_to_success"`
 	FailedInvestigation  int                  `json:"failed_investigation"`
 	Daily                []indexCheckDailyDTO `json:"daily"`
+}
+
+type llmUsageEventDTO struct {
+	ID               string    `json:"id"`
+	CreatedAt        time.Time `json:"created_at"`
+	Provider         string    `json:"provider"`
+	Operation        string    `json:"operation"`
+	Stage            *string   `json:"stage,omitempty"`
+	Model            string    `json:"model"`
+	Status           string    `json:"status"`
+	RequesterEmail   string    `json:"requester_email"`
+	KeyOwnerEmail    *string   `json:"key_owner_email,omitempty"`
+	KeyType          *string   `json:"key_type,omitempty"`
+	ProjectID        *string   `json:"project_id,omitempty"`
+	DomainID         *string   `json:"domain_id,omitempty"`
+	GenerationID     *string   `json:"generation_id,omitempty"`
+	LinkTaskID       *string   `json:"link_task_id,omitempty"`
+	FilePath         *string   `json:"file_path,omitempty"`
+	PromptTokens     *int64    `json:"prompt_tokens,omitempty"`
+	CompletionTokens *int64    `json:"completion_tokens,omitempty"`
+	TotalTokens      *int64    `json:"total_tokens,omitempty"`
+	TokenSource      string    `json:"token_source"`
+	EstimatedCostUSD *float64  `json:"estimated_cost_usd,omitempty"`
+}
+
+type llmUsageListDTO struct {
+	Items []llmUsageEventDTO `json:"items"`
+	Total int                `json:"total"`
+}
+
+type llmUsageBucketDTO struct {
+	Key      string  `json:"key"`
+	Requests int     `json:"requests"`
+	Tokens   int64   `json:"tokens"`
+	CostUSD  float64 `json:"cost_usd"`
+}
+
+type llmUsageStatsDTO struct {
+	TotalRequests int                 `json:"total_requests"`
+	TotalTokens   int64               `json:"total_tokens"`
+	TotalCostUSD  float64             `json:"total_cost_usd"`
+	ByDay         []llmUsageBucketDTO `json:"by_day"`
+	ByModel       []llmUsageBucketDTO `json:"by_model"`
+	ByOperation   []llmUsageBucketDTO `json:"by_operation"`
+	ByUser        []llmUsageBucketDTO `json:"by_user"`
+}
+
+type llmPricingDTO struct {
+	ID                  string     `json:"id"`
+	Provider            string     `json:"provider"`
+	Model               string     `json:"model"`
+	InputUSDPerMillion  float64    `json:"input_usd_per_million"`
+	OutputUSDPerMillion float64    `json:"output_usd_per_million"`
+	ActiveFrom          time.Time  `json:"active_from"`
+	ActiveTo            *time.Time `json:"active_to,omitempty"`
+	IsActive            bool       `json:"is_active"`
+	UpdatedBy           string     `json:"updated_by"`
+	UpdatedAt           time.Time  `json:"updated_at"`
 }
 
 type generationDTO struct {
@@ -6611,6 +6776,128 @@ func buildIndexCheckStatsDTO(
 		}
 	}
 	return resp
+}
+
+func toLLMUsageEventDTO(item sqlstore.LLMUsageEvent) llmUsageEventDTO {
+	dto := llmUsageEventDTO{
+		ID:             item.ID,
+		CreatedAt:      item.CreatedAt,
+		Provider:       item.Provider,
+		Operation:      item.Operation,
+		Model:          item.Model,
+		Status:         item.Status,
+		RequesterEmail: item.RequesterEmail,
+		TokenSource:    item.TokenSource,
+	}
+	if item.Stage.Valid {
+		v := strings.TrimSpace(item.Stage.String)
+		if v != "" {
+			dto.Stage = &v
+		}
+	}
+	if item.KeyOwnerEmail.Valid {
+		v := strings.TrimSpace(item.KeyOwnerEmail.String)
+		if v != "" {
+			dto.KeyOwnerEmail = &v
+		}
+	}
+	if item.KeyType.Valid {
+		v := strings.TrimSpace(item.KeyType.String)
+		if v != "" {
+			dto.KeyType = &v
+		}
+	}
+	if item.ProjectID.Valid {
+		v := strings.TrimSpace(item.ProjectID.String)
+		if v != "" {
+			dto.ProjectID = &v
+		}
+	}
+	if item.DomainID.Valid {
+		v := strings.TrimSpace(item.DomainID.String)
+		if v != "" {
+			dto.DomainID = &v
+		}
+	}
+	if item.GenerationID.Valid {
+		v := strings.TrimSpace(item.GenerationID.String)
+		if v != "" {
+			dto.GenerationID = &v
+		}
+	}
+	if item.LinkTaskID.Valid {
+		v := strings.TrimSpace(item.LinkTaskID.String)
+		if v != "" {
+			dto.LinkTaskID = &v
+		}
+	}
+	if item.FilePath.Valid {
+		v := strings.TrimSpace(item.FilePath.String)
+		if v != "" {
+			dto.FilePath = &v
+		}
+	}
+	if item.PromptTokens.Valid {
+		v := item.PromptTokens.Int64
+		dto.PromptTokens = &v
+	}
+	if item.CompletionTokens.Valid {
+		v := item.CompletionTokens.Int64
+		dto.CompletionTokens = &v
+	}
+	if item.TotalTokens.Valid {
+		v := item.TotalTokens.Int64
+		dto.TotalTokens = &v
+	}
+	if item.EstimatedCostUSD.Valid {
+		v := item.EstimatedCostUSD.Float64
+		dto.EstimatedCostUSD = &v
+	}
+	return dto
+}
+
+func toLLMUsageStatsDTO(stats sqlstore.LLMUsageStats) llmUsageStatsDTO {
+	dto := llmUsageStatsDTO{
+		TotalRequests: stats.Totals.TotalRequests,
+		TotalTokens:   stats.Totals.TotalTokens,
+		TotalCostUSD:  stats.Totals.TotalCostUSD,
+		ByDay:         make([]llmUsageBucketDTO, 0, len(stats.ByDay)),
+		ByModel:       make([]llmUsageBucketDTO, 0, len(stats.ByModel)),
+		ByOperation:   make([]llmUsageBucketDTO, 0, len(stats.ByOperation)),
+		ByUser:        make([]llmUsageBucketDTO, 0, len(stats.ByUser)),
+	}
+	for _, item := range stats.ByDay {
+		dto.ByDay = append(dto.ByDay, llmUsageBucketDTO{Key: item.Key, Requests: item.Requests, Tokens: item.Tokens, CostUSD: item.CostUSD})
+	}
+	for _, item := range stats.ByModel {
+		dto.ByModel = append(dto.ByModel, llmUsageBucketDTO{Key: item.Key, Requests: item.Requests, Tokens: item.Tokens, CostUSD: item.CostUSD})
+	}
+	for _, item := range stats.ByOperation {
+		dto.ByOperation = append(dto.ByOperation, llmUsageBucketDTO{Key: item.Key, Requests: item.Requests, Tokens: item.Tokens, CostUSD: item.CostUSD})
+	}
+	for _, item := range stats.ByUser {
+		dto.ByUser = append(dto.ByUser, llmUsageBucketDTO{Key: item.Key, Requests: item.Requests, Tokens: item.Tokens, CostUSD: item.CostUSD})
+	}
+	return dto
+}
+
+func toLLMPricingDTO(item sqlstore.LLMModelPricing) llmPricingDTO {
+	dto := llmPricingDTO{
+		ID:                  item.ID,
+		Provider:            item.Provider,
+		Model:               item.Model,
+		InputUSDPerMillion:  item.InputUSDPerMillion,
+		OutputUSDPerMillion: item.OutputUSDPerMillion,
+		ActiveFrom:          item.ActiveFrom,
+		IsActive:            item.IsActive,
+		UpdatedBy:           item.UpdatedBy,
+		UpdatedAt:           item.UpdatedAt,
+	}
+	if item.ActiveTo.Valid {
+		v := item.ActiveTo.Time
+		dto.ActiveTo = &v
+	}
+	return dto
 }
 
 func toGenerationDTO(g sqlstore.Generation) generationDTO {
@@ -7345,6 +7632,180 @@ func rawJSONOrNil(b []byte) any {
 	return v
 }
 
+type domainImportItem struct {
+	URL             string `json:"url"`
+	Keyword         string `json:"keyword"`
+	Country         string `json:"country"`
+	Language        string `json:"language"`
+	ServerID        string `json:"server_id"`
+	Server          string `json:"server"`
+	LinkAnchorText  string `json:"link_anchor_text"`
+	Anchor          string `json:"anchor"`
+	LinkAcceptorURL string `json:"link_acceptor_url"`
+	Acceptor        string `json:"acceptor"`
+}
+
+func parseDomainImportText(text string) ([]domainImportItem, error) {
+	lines := strings.Split(text, "\n")
+	items := make([]domainImportItem, 0, len(lines))
+	for idx, rawLine := range lines {
+		line := strings.TrimSpace(rawLine)
+		if line == "" {
+			continue
+		}
+		fields, err := parseDomainImportCSVLine(line)
+		if err != nil {
+			return nil, fmt.Errorf("invalid import format at line %d", idx+1)
+		}
+		if len(items) == 0 && domainImportLooksLikeHeader(fields) {
+			continue
+		}
+		item, err := parseDomainImportFields(fields)
+		if err != nil {
+			return nil, fmt.Errorf("invalid import format at line %d: %s", idx+1, err.Error())
+		}
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+func parseDomainImportCSVLine(line string) ([]string, error) {
+	reader := csv.NewReader(strings.NewReader(line))
+	reader.FieldsPerRecord = -1
+	reader.TrimLeadingSpace = true
+	reader.LazyQuotes = true
+	fields, err := reader.Read()
+	if err != nil {
+		return nil, err
+	}
+	for i := range fields {
+		fields[i] = strings.TrimSpace(fields[i])
+	}
+	if len(fields) > 0 {
+		fields[0] = strings.TrimPrefix(fields[0], "\ufeff")
+	}
+	return fields, nil
+}
+
+func parseDomainImportFields(fields []string) (domainImportItem, error) {
+	if len(fields) == 0 {
+		return domainImportItem{}, errors.New("empty line")
+	}
+	if len(fields) > 7 {
+		return domainImportItem{}, errors.New("too many columns")
+	}
+	url := strings.TrimSpace(fields[0])
+	if url == "" {
+		return domainImportItem{}, errors.New("domain is required")
+	}
+	item := domainImportItem{URL: url}
+	if len(fields) > 1 {
+		item.Keyword = strings.TrimSpace(fields[1])
+	}
+	if len(fields) > 2 {
+		item.Country = strings.TrimSpace(fields[2])
+	}
+	if len(fields) > 3 {
+		item.Language = strings.TrimSpace(fields[3])
+	}
+	if len(fields) > 4 {
+		item.ServerID = strings.TrimSpace(fields[4])
+	}
+	if len(fields) > 5 {
+		item.LinkAnchorText = strings.TrimSpace(fields[5])
+	}
+	if len(fields) > 6 {
+		item.LinkAcceptorURL = strings.TrimSpace(fields[6])
+	}
+	return item, nil
+}
+
+func domainImportLooksLikeHeader(fields []string) bool {
+	if len(fields) == 0 {
+		return false
+	}
+	v := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(fields[0], "\ufeff")))
+	return v == "url" || v == "domain"
+}
+
+func normalizeImportedDomain(input string) (string, error) {
+	raw := strings.TrimSpace(input)
+	if raw == "" {
+		return "", errors.New("domain is required")
+	}
+	candidate := raw
+	if strings.HasPrefix(candidate, "//") {
+		candidate = "https:" + candidate
+	} else if !strings.Contains(candidate, "://") {
+		candidate = "https://" + candidate
+	}
+	parsed, err := url.Parse(candidate)
+	if err != nil {
+		return "", errors.New("invalid domain")
+	}
+	if parsed.User != nil {
+		return "", errors.New("invalid domain")
+	}
+	if parsed.Path != "" && parsed.Path != "/" {
+		return "", errors.New("path is not allowed")
+	}
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", errors.New("query is not allowed")
+	}
+	if parsed.Port() != "" {
+		return "", errors.New("port is not allowed")
+	}
+	host := strings.ToLower(strings.TrimSpace(parsed.Hostname()))
+	host = strings.TrimSuffix(host, ".")
+	if host == "" {
+		return "", errors.New("domain is required")
+	}
+	asciiHost, err := idna.Lookup.ToASCII(host)
+	if err != nil {
+		return "", errors.New("invalid domain")
+	}
+	asciiHost = strings.ToLower(strings.TrimSpace(asciiHost))
+	if net.ParseIP(asciiHost) != nil {
+		return "", errors.New("ip address is not allowed")
+	}
+	if !isValidDomainHost(asciiHost) {
+		return "", errors.New("invalid domain")
+	}
+	return asciiHost, nil
+}
+
+func isValidDomainHost(host string) bool {
+	if len(host) == 0 || len(host) > 253 || !strings.Contains(host, ".") {
+		return false
+	}
+	labels := strings.Split(host, ".")
+	for _, label := range labels {
+		if len(label) == 0 || len(label) > 63 {
+			return false
+		}
+		if label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for i := 0; i < len(label); i++ {
+			ch := label[i]
+			if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-' {
+				continue
+			}
+			return false
+		}
+	}
+	return true
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func sanitizeDomain(input string) string {
 	s := strings.TrimSpace(input)
 	s = strings.TrimPrefix(s, "http://")
@@ -7613,6 +8074,63 @@ func parseIndexCheckFilters(r *http.Request, fallbackLimit int, maxLimit int) sq
 	return filters
 }
 
+func parseLLMUsageFilters(r *http.Request) sqlstore.LLMUsageFilters {
+	limit := parseLimitParam(r, 50, 500)
+	page := parsePageParam(r, 1)
+	offset := (page - 1) * limit
+	filters := sqlstore.LLMUsageFilters{
+		Limit:  limit,
+		Offset: offset,
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("from")); raw != "" {
+		if t, ok := parseLLMUsageTime(raw, true); ok {
+			filters.From = &t
+		}
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("to")); raw != "" {
+		if t, ok := parseLLMUsageTime(raw, false); ok {
+			filters.To = &t
+		}
+	}
+	if v := strings.TrimSpace(r.URL.Query().Get("user_email")); v != "" {
+		filters.UserEmail = &v
+	}
+	if v := strings.TrimSpace(r.URL.Query().Get("project_id")); v != "" {
+		filters.ProjectID = &v
+	}
+	if v := strings.TrimSpace(r.URL.Query().Get("domain_id")); v != "" {
+		filters.DomainID = &v
+	}
+	if v := strings.TrimSpace(r.URL.Query().Get("model")); v != "" {
+		filters.Model = &v
+	}
+	if v := strings.TrimSpace(r.URL.Query().Get("operation")); v != "" {
+		filters.Operation = &v
+	}
+	if v := strings.TrimSpace(r.URL.Query().Get("status")); v != "" {
+		filters.Status = &v
+	}
+	return filters
+}
+
+func parseLLMUsageTime(raw string, startOfDay bool) (time.Time, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}, false
+	}
+	if t, err := time.Parse(time.RFC3339, raw); err == nil {
+		return t.UTC(), true
+	}
+	if d, err := time.Parse("2006-01-02", raw); err == nil {
+		d = d.UTC()
+		if !startOfDay {
+			d = d.Add(24*time.Hour - time.Nanosecond)
+		}
+		return d, true
+	}
+	return time.Time{}, false
+}
+
 func resolveIndexCheckStatsRange(filters *sqlstore.IndexCheckFilters, now time.Time) (time.Time, time.Time) {
 	const defaultDays = 30
 	var from time.Time
@@ -7868,6 +8386,984 @@ func validateMimeType(path string, detected string, existing string) error {
 		return fmt.Errorf("mime type mismatch: expected %s, got %s", baseMimeType(existing), baseMimeType(detected))
 	}
 	return nil
+}
+
+func validateEditorPath(relPath string) error {
+	parts := strings.Split(relPath, "/")
+	for _, part := range parts {
+		p := strings.TrimSpace(part)
+		if p == "" || p == "." || p == ".." {
+			return errors.New("invalid path segment")
+		}
+		if strings.HasPrefix(p, ".") && p != ".well-known" {
+			return errors.New("hidden files are not allowed")
+		}
+		switch strings.ToLower(p) {
+		case ".git", ".gitignore", ".env", ".env.local", ".env.production", ".env.development":
+			return errors.New("protected path is not allowed")
+		}
+	}
+	return nil
+}
+
+var blockedUploadExtensions = map[string]struct{}{
+	".exe":   {},
+	".dll":   {},
+	".so":    {},
+	".dylib": {},
+	".msi":   {},
+	".bin":   {},
+	".com":   {},
+	".cmd":   {},
+	".bat":   {},
+	".ps1":   {},
+	".sh":    {},
+	".bash":  {},
+	".zsh":   {},
+	".py":    {},
+	".rb":    {},
+	".pl":    {},
+	".jar":   {},
+	".class": {},
+	".apk":   {},
+	".deb":   {},
+	".rpm":   {},
+	".php":   {},
+	".phtml": {},
+	".phar":  {},
+	".cgi":   {},
+}
+
+func validateUploadPathPolicy(relPath string) error {
+	ext := strings.ToLower(strings.TrimSpace(filepath.Ext(relPath)))
+	if ext == "" {
+		return nil
+	}
+	if _, blocked := blockedUploadExtensions[ext]; blocked {
+		return fmt.Errorf("file type %s is not allowed", ext)
+	}
+	return nil
+}
+
+func isImageExt(ext string) bool {
+	switch strings.ToLower(strings.TrimSpace(ext)) {
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg":
+		return true
+	default:
+		return false
+	}
+}
+
+func isImagePath(path string) bool {
+	return isImageExt(filepath.Ext(path))
+}
+
+func isImageMime(mimeType string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(baseMimeType(mimeType))), "image/")
+}
+
+func imageExtByMime(mimeType string) string {
+	switch strings.ToLower(strings.TrimSpace(baseMimeType(mimeType))) {
+	case "image/png":
+		return ".png"
+	case "image/jpeg":
+		return ".jpg"
+	case "image/gif":
+		return ".gif"
+	case "image/webp":
+		return ".webp"
+	case "image/svg+xml":
+		return ".svg"
+	default:
+		return ""
+	}
+}
+
+func validateUploadSecurity(relPath, mimeType string, content []byte) error {
+	if err := validateUploadPathPolicy(relPath); err != nil {
+		return err
+	}
+	normalized := strings.ToLower(strings.TrimSpace(baseMimeType(mimeType)))
+	switch normalized {
+	case "application/x-dosexec",
+		"application/x-msdownload",
+		"application/x-msdos-program",
+		"application/x-executable",
+		"application/x-elf",
+		"application/x-mach-binary",
+		"application/x-sh":
+		return fmt.Errorf("mime type %s is not allowed", normalized)
+	}
+	if strings.HasPrefix(normalized, "application/x-ms") {
+		return fmt.Errorf("mime type %s is not allowed", normalized)
+	}
+	if strings.HasSuffix(strings.ToLower(relPath), ".svg") {
+		lower := strings.ToLower(string(content))
+		if strings.Contains(lower, "<script") {
+			return errors.New("inline scripts in svg are not allowed")
+		}
+		if !strings.Contains(lower, "<svg") {
+			return errors.New("invalid svg content")
+		}
+	}
+	if strings.HasPrefix(normalized, "image/") {
+		if err := validateImagePayload(relPath, normalized, content); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateImagePayload(relPath, mimeType string, content []byte) error {
+	if len(content) == 0 {
+		return errors.New("empty image content")
+	}
+	ext := strings.ToLower(filepath.Ext(relPath))
+	switch ext {
+	case ".png":
+		if len(content) < 8 || !bytes.Equal(content[:8], []byte{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A}) {
+			return errors.New("invalid png signature")
+		}
+	case ".jpg", ".jpeg":
+		if len(content) < 3 || content[0] != 0xFF || content[1] != 0xD8 {
+			return errors.New("invalid jpeg signature")
+		}
+	case ".gif":
+		if len(content) < 6 {
+			return errors.New("invalid gif signature")
+		}
+		head := string(content[:6])
+		if head != "GIF87a" && head != "GIF89a" {
+			return errors.New("invalid gif signature")
+		}
+	case ".webp":
+		if len(content) < 12 || string(content[:4]) != "RIFF" || string(content[8:12]) != "WEBP" {
+			return errors.New("invalid webp signature")
+		}
+	case ".svg":
+		// already validated above in validateUploadSecurity.
+		return nil
+	}
+
+	if strings.HasPrefix(mimeType, "image/") && ext != ".svg" {
+		if _, _, err := image.DecodeConfig(bytes.NewReader(content)); err != nil {
+			return fmt.Errorf("invalid image data: %w", err)
+		}
+	}
+	return nil
+}
+
+func listDomainDirs(domain sqlstore.Domain) ([]string, error) {
+	domainDir, err := domainFilesDir(domain.URL)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, 16)
+	err = filepath.WalkDir(domainDir, func(curr string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if curr == domainDir || !d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(domainDir, curr)
+		if err != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(strings.TrimSpace(rel))
+		if rel == "" || rel == "." {
+			return nil
+		}
+		clean, err := sanitizeFilePath(rel)
+		if err != nil {
+			return nil
+		}
+		if err := validateEditorPath(clean); err != nil {
+			return filepath.SkipDir
+		}
+		out = append(out, clean)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func isEditableMimeType(mimeType string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(baseMimeType(mimeType)))
+	if strings.HasPrefix(normalized, "text/") {
+		return true
+	}
+	switch normalized {
+	case "application/json", "application/javascript", "application/xml", "image/svg+xml":
+		return true
+	default:
+		return false
+	}
+}
+
+func isBinaryMimeType(mimeType string) bool {
+	return !isEditableMimeType(mimeType)
+}
+
+func normalizeRevisionSource(source string) string {
+	switch strings.ToLower(strings.TrimSpace(source)) {
+	case "ai":
+		return "ai"
+	case "revert":
+		return "revert"
+	default:
+		return "manual"
+	}
+}
+
+func buildRevision(file *sqlstore.SiteFile, content []byte, source, editedBy, description string) sqlstore.FileRevision {
+	hash := sha256.Sum256(content)
+	rev := sqlstore.FileRevision{
+		ID:          uuid.NewString(),
+		FileID:      "",
+		Version:     1,
+		Content:     content,
+		ContentHash: hex.EncodeToString(hash[:]),
+		SizeBytes:   int64(len(content)),
+		MimeType:    detectMimeType("", content),
+		Source:      normalizeRevisionSource(source),
+		EditedBy:    editedBy,
+	}
+	if file != nil {
+		rev.FileID = file.ID
+		if file.Version > 0 {
+			rev.Version = file.Version
+		}
+		if strings.TrimSpace(file.MimeType) != "" {
+			rev.MimeType = file.MimeType
+		}
+	}
+	if strings.TrimSpace(description) != "" {
+		rev.Description = sqlstore.NullableString(strings.TrimSpace(description))
+	}
+	return rev
+}
+
+func (s *Server) readDomainFileContent(ctx context.Context, domain sqlstore.Domain, relPath string) (string, string, error) {
+	file, err := s.siteFiles.GetByPath(ctx, domain.ID, relPath)
+	if err != nil {
+		return "", "", err
+	}
+	domainDir, err := domainFilesDir(domain.URL)
+	if err != nil {
+		return "", "", err
+	}
+	fullPath := filepath.Join(domainDir, filepath.FromSlash(relPath))
+	if err := ensurePathWithin(domainDir, fullPath); err != nil {
+		return "", "", err
+	}
+	content, err := os.ReadFile(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", "", sql.ErrNoRows
+		}
+		return "", "", err
+	}
+	mimeType := file.MimeType
+	if mimeType == "" {
+		mimeType = detectMimeType(relPath, content)
+	}
+	return string(content), mimeType, nil
+}
+
+func toFileDTO(domain sqlstore.Domain, f sqlstore.SiteFile) fileDTO {
+	item := fileDTO{
+		ID:         f.ID,
+		Path:       f.Path,
+		Size:       f.SizeBytes,
+		MimeType:   f.MimeType,
+		Version:    f.Version,
+		IsEditable: isEditableMimeType(f.MimeType),
+		IsBinary:   isBinaryMimeType(f.MimeType),
+		UpdatedAt:  f.UpdatedAt,
+	}
+	if item.Version <= 0 {
+		item.Version = 1
+	}
+	if f.LastEditedBy.Valid {
+		v := strings.TrimSpace(f.LastEditedBy.String)
+		if v != "" {
+			item.LastEditedBy = &v
+		}
+	}
+	if f.DeletedAt.Valid {
+		v := f.DeletedAt.Time
+		item.DeletedAt = &v
+	}
+	if f.DeletedBy.Valid {
+		v := strings.TrimSpace(f.DeletedBy.String)
+		if v != "" {
+			item.DeletedBy = &v
+		}
+	}
+	if f.DeleteReason.Valid {
+		v := strings.TrimSpace(f.DeleteReason.String)
+		if v != "" {
+			item.DeleteReason = &v
+		}
+	}
+	if strings.HasPrefix(strings.ToLower(baseMimeType(f.MimeType)), "image/") {
+		if w, h, ok := detectImageDimensions(domain, f.Path); ok {
+			item.Width = &w
+			item.Height = &h
+		}
+	}
+	return item
+}
+
+func detectImageDimensions(domain sqlstore.Domain, relPath string) (int, int, bool) {
+	domainDir, err := domainFilesDir(domain.URL)
+	if err != nil {
+		return 0, 0, false
+	}
+	fullPath := filepath.Join(domainDir, filepath.FromSlash(relPath))
+	if err := ensurePathWithin(domainDir, fullPath); err != nil {
+		return 0, 0, false
+	}
+	content, err := os.ReadFile(fullPath)
+	if err != nil || len(content) == 0 {
+		return 0, 0, false
+	}
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(content))
+	if err != nil {
+		return 0, 0, false
+	}
+	return cfg.Width, cfg.Height, true
+}
+
+type editorAPIKeyMeta struct {
+	Source        string
+	KeyOwnerEmail string
+	KeyType       string
+}
+
+func (s *Server) resolveEditorAPIKey(ctx context.Context, requesterEmail, ownerEmail string) (string, editorAPIKeyMeta, error) {
+	tryUser := func(email string) (string, bool) {
+		email = strings.TrimSpace(email)
+		if email == "" {
+			return "", false
+		}
+		encKey, err := s.svc.GetUserAPIKeyEncrypted(ctx, email)
+		if err != nil || len(encKey) == 0 {
+			return "", false
+		}
+		keySecret := secretbox.DeriveKey(s.cfg.APIKeySecret)
+		decrypted, err := secretbox.Decrypt(keySecret, encKey)
+		if err != nil {
+			return "", false
+		}
+		val := strings.TrimSpace(string(decrypted))
+		if val == "" {
+			return "", false
+		}
+		return val, true
+	}
+	if key, ok := tryUser(requesterEmail); ok {
+		return key, editorAPIKeyMeta{Source: "user", KeyOwnerEmail: requesterEmail, KeyType: "user"}, nil
+	}
+	if key, ok := tryUser(ownerEmail); ok {
+		return key, editorAPIKeyMeta{Source: "owner", KeyOwnerEmail: ownerEmail, KeyType: "user"}, nil
+	}
+	if key := strings.TrimSpace(s.cfg.GeminiAPIKey); key != "" {
+		return key, editorAPIKeyMeta{Source: "global", KeyType: "global"}, nil
+	}
+	return "", editorAPIKeyMeta{}, errors.New("gemini api key not configured")
+}
+
+func (s *Server) resolveEditorPrompt(ctx context.Context, domainID, projectID, stage, fallback string) (string, string, string) {
+	promptBody := fallback
+	promptSource := "fallback"
+	promptModel := ""
+	if s.promptOverrides != nil {
+		if resolved, err := s.promptOverrides.ResolveForDomainStage(ctx, domainID, projectID, stage); err == nil {
+			if strings.TrimSpace(resolved.Body) != "" {
+				promptBody = resolved.Body
+				promptSource = resolved.Source
+			}
+			if resolved.Model.Valid {
+				promptModel = strings.TrimSpace(resolved.Model.String)
+			}
+		}
+	}
+	return promptBody, promptSource, promptModel
+}
+
+func extractCSSVariables(styleContent string, limit int) []string {
+	if limit <= 0 {
+		limit = 20
+	}
+	out := make([]string, 0, limit)
+	for _, line := range strings.Split(styleContent, "\n") {
+		l := strings.TrimSpace(line)
+		if !strings.Contains(l, "--") || !strings.Contains(l, ":") {
+			continue
+		}
+		if strings.HasPrefix(l, "/*") || strings.HasPrefix(l, "*") {
+			continue
+		}
+		out = append(out, l)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func extractLocalHrefValues(html string, limit int) []string {
+	if limit <= 0 {
+		limit = 20
+	}
+	out := make([]string, 0, limit)
+	seen := map[string]struct{}{}
+	rest := html
+	for len(out) < limit {
+		idx := strings.Index(strings.ToLower(rest), "href=")
+		if idx < 0 {
+			break
+		}
+		rest = rest[idx+5:]
+		rest = strings.TrimLeft(rest, " \t\r\n")
+		if len(rest) == 0 {
+			break
+		}
+		quote := rest[0]
+		if quote != '"' && quote != '\'' {
+			continue
+		}
+		rest = rest[1:]
+		end := strings.IndexByte(rest, quote)
+		if end < 0 {
+			break
+		}
+		val := strings.TrimSpace(rest[:end])
+		rest = rest[end+1:]
+		if val == "" || strings.HasPrefix(val, "#") {
+			continue
+		}
+		lower := strings.ToLower(val)
+		if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") || strings.HasPrefix(lower, "mailto:") || strings.HasPrefix(lower, "tel:") || strings.HasPrefix(lower, "javascript:") || strings.HasPrefix(lower, "data:") {
+			continue
+		}
+		if _, ok := seen[val]; ok {
+			continue
+		}
+		seen[val] = struct{}{}
+		out = append(out, val)
+	}
+	return out
+}
+
+func (s *Server) readDomainFileBytes(domain sqlstore.Domain, relPath string) ([]byte, error) {
+	domainDir, err := domainFilesDir(domain.URL)
+	if err != nil {
+		return nil, err
+	}
+	fullPath := filepath.Join(domainDir, filepath.FromSlash(relPath))
+	if err := ensurePathWithin(domainDir, fullPath); err != nil {
+		return nil, err
+	}
+	content, err := os.ReadFile(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, sql.ErrNoRows
+		}
+		return nil, err
+	}
+	return content, nil
+}
+
+func (s *Server) pruneEditorContextCacheLocked(now time.Time) {
+	for key, item := range s.editorCtxCache {
+		if now.After(item.ExpiresAt) {
+			delete(s.editorCtxCache, key)
+		}
+	}
+	if len(s.editorCtxCache) <= editorContextPackCacheMaxEntries {
+		return
+	}
+	type pair struct {
+		Key string
+		Exp time.Time
+	}
+	all := make([]pair, 0, len(s.editorCtxCache))
+	for key, item := range s.editorCtxCache {
+		all = append(all, pair{Key: key, Exp: item.ExpiresAt})
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].Exp.Before(all[j].Exp) })
+	needDrop := len(s.editorCtxCache) - editorContextPackCacheMaxEntries
+	for i := 0; i < needDrop && i < len(all); i++ {
+		delete(s.editorCtxCache, all[i].Key)
+	}
+}
+
+func (s *Server) buildEditorContextPack(ctx context.Context, domain sqlstore.Domain, targetPath, currentPath string, userSelected []string, mode string) (string, editorContextPackMeta, error) {
+	meta := editorContextPackMeta{
+		SourceFiles: make([]string, 0, editorContextPackMaxFiles),
+	}
+	mode = normalizeEditorContextMode(mode)
+	files, err := s.siteFiles.List(ctx, domain.ID)
+	if err != nil {
+		return "", meta, err
+	}
+	byPath := make(map[string]sqlstore.SiteFile, len(files))
+	for _, f := range files {
+		byPath[f.Path] = f
+	}
+
+	baseCandidates := []string{
+		"index.html",
+		"style.css",
+		"script.js",
+		"404.html",
+		"robots.txt",
+		"sitemap.xml",
+	}
+	if strings.TrimSpace(currentPath) != "" {
+		baseCandidates = append([]string{currentPath}, baseCandidates...)
+	}
+	if strings.TrimSpace(targetPath) != "" {
+		baseCandidates = append([]string{targetPath}, baseCandidates...)
+	}
+	logoCandidates := make([]string, 0, 4)
+	for _, f := range files {
+		name := strings.ToLower(path.Base(f.Path))
+		if strings.Contains(name, "logo.") || strings.HasPrefix(name, "logo-") {
+			logoCandidates = append(logoCandidates, f.Path)
+		}
+	}
+	sort.Strings(logoCandidates)
+	if len(logoCandidates) > 4 {
+		logoCandidates = logoCandidates[:4]
+	}
+
+	sanitizeSelected := make([]string, 0, len(userSelected))
+	for _, raw := range userSelected {
+		clean, err := sanitizeFilePath(raw)
+		if err != nil {
+			continue
+		}
+		if err := validateEditorPath(clean); err != nil {
+			continue
+		}
+		if _, ok := byPath[clean]; ok {
+			sanitizeSelected = append(sanitizeSelected, clean)
+		}
+	}
+
+	candidates := make([]string, 0, editorContextPackMaxFiles+8)
+	switch mode {
+	case "manual":
+		candidates = append(candidates, sanitizeSelected...)
+	case "hybrid":
+		candidates = append(candidates, baseCandidates...)
+		candidates = append(candidates, logoCandidates...)
+		candidates = append(candidates, sanitizeSelected...)
+	default:
+		candidates = append(candidates, baseCandidates...)
+		candidates = append(candidates, logoCandidates...)
+	}
+	seen := map[string]struct{}{}
+	finalPaths := make([]string, 0, editorContextPackMaxFiles)
+	for _, p := range candidates {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if _, ok := byPath[p]; !ok {
+			continue
+		}
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		finalPaths = append(finalPaths, p)
+		if len(finalPaths) >= editorContextPackMaxFiles {
+			break
+		}
+	}
+
+	signatureParts := make([]string, 0, len(finalPaths)+8)
+	signatureParts = append(signatureParts, domain.ID, mode, targetPath, currentPath)
+	for _, p := range finalPaths {
+		f := byPath[p]
+		hash := ""
+		if f.ContentHash.Valid {
+			hash = strings.TrimSpace(f.ContentHash.String)
+		}
+		signatureParts = append(signatureParts, fmt.Sprintf("%s|%d|%s", p, f.Version, hash))
+	}
+	cacheKeyBytes := sha256.Sum256([]byte(strings.Join(signatureParts, "\n")))
+	cacheKey := hex.EncodeToString(cacheKeyBytes[:])
+	now := time.Now().UTC()
+	s.editorCtxMu.Lock()
+	if cached, ok := s.editorCtxCache[cacheKey]; ok && now.Before(cached.ExpiresAt) {
+		s.editorCtxMu.Unlock()
+		return cached.Prompt, cached.Meta, nil
+	}
+	s.editorCtxMu.Unlock()
+
+	var builder strings.Builder
+	builder.WriteString("SITE_CONTEXT\n")
+	builder.WriteString(fmt.Sprintf("identity.domain_url=%s\n", domain.URL))
+	builder.WriteString(fmt.Sprintf("identity.language=%s\n", strings.TrimSpace(domain.TargetLanguage)))
+	builder.WriteString(fmt.Sprintf("identity.country=%s\n", strings.TrimSpace(domain.TargetCountry)))
+	builder.WriteString(fmt.Sprintf("identity.keyword=%s\n", strings.TrimSpace(domain.MainKeyword)))
+	builder.WriteString(fmt.Sprintf("identity.context_mode=%s\n", mode))
+
+	totalBytes := 0
+	truncated := false
+	styleContent := ""
+	indexContent := ""
+	for _, p := range finalPaths {
+		file := byPath[p]
+		meta.SourceFiles = append(meta.SourceFiles, p)
+		raw, err := s.readDomainFileBytes(domain, p)
+		if err != nil {
+			continue
+		}
+		builder.WriteString("\n\n[FILE] ")
+		builder.WriteString(p)
+		builder.WriteString("\n")
+		builder.WriteString("mime=")
+		builder.WriteString(file.MimeType)
+		builder.WriteString("\n")
+		if isBinaryMimeType(file.MimeType) {
+			builder.WriteString(fmt.Sprintf("binary_meta.size_bytes=%d\n", len(raw)))
+			continue
+		}
+		content := string(raw)
+		if p == "style.css" {
+			styleContent = content
+		}
+		if p == "index.html" {
+			indexContent = content
+		}
+		if len(content) > editorContextPackMaxFileBytes {
+			content = content[:editorContextPackMaxFileBytes]
+			truncated = true
+		}
+		if totalBytes+len(content) > editorContextPackMaxTotalBytes {
+			left := editorContextPackMaxTotalBytes - totalBytes
+			if left <= 0 {
+				truncated = true
+				break
+			}
+			content = content[:left]
+			truncated = true
+		}
+		totalBytes += len(content)
+		builder.WriteString(content)
+		if totalBytes >= editorContextPackMaxTotalBytes {
+			break
+		}
+	}
+
+	builder.WriteString("\n\n[DERIVED]\n")
+	if strings.TrimSpace(styleContent) != "" {
+		vars := extractCSSVariables(styleContent, 20)
+		if len(vars) > 0 {
+			builder.WriteString("design_tokens:\n")
+			for _, item := range vars {
+				builder.WriteString("- ")
+				builder.WriteString(item)
+				builder.WriteByte('\n')
+			}
+		}
+	}
+	if strings.TrimSpace(indexContent) != "" {
+		links := extractLocalHrefValues(indexContent, 20)
+		if len(links) > 0 {
+			builder.WriteString("page_structure_links:\n")
+			for _, href := range links {
+				builder.WriteString("- ")
+				builder.WriteString(href)
+				builder.WriteByte('\n')
+			}
+		}
+	}
+
+	contextText := builder.String()
+	packHashBytes := sha256.Sum256([]byte(contextText))
+	meta.PackHash = hex.EncodeToString(packHashBytes[:])
+	meta.FilesUsed = len(meta.SourceFiles)
+	meta.BytesUsed = totalBytes
+	meta.Truncated = truncated
+
+	s.editorCtxMu.Lock()
+	s.editorCtxCache[cacheKey] = editorContextPackCacheEntry{
+		Prompt:    contextText,
+		Meta:      meta,
+		ExpiresAt: now.Add(editorContextPackCacheTTL),
+	}
+	s.pruneEditorContextCacheLocked(now)
+	s.editorCtxMu.Unlock()
+	return contextText, meta, nil
+}
+
+func (s *Server) generateEditorSuggestion(ctx context.Context, requesterEmail, ownerEmail, projectID, domainID, operation, stage, filePath, model, prompt string) (string, map[string]any, error) {
+	apiKey, keyMeta, err := s.resolveEditorAPIKey(ctx, requesterEmail, ownerEmail)
+	if err != nil {
+		return "", nil, err
+	}
+	client := llm.NewClient(llm.Config{
+		APIKey:          apiKey,
+		DefaultModel:    s.cfg.GeminiDefaultModel,
+		MaxRetries:      s.cfg.GeminiMaxRetries,
+		RetryDelay:      s.cfg.GeminiRetryDelay,
+		RequestTimeout:  s.cfg.GeminiRequestTimeout,
+		RateLimitPerMin: s.cfg.GeminiRateLimitPerMin,
+	})
+	selectedModel := strings.TrimSpace(model)
+	result, err := client.Generate(ctx, stage, prompt, selectedModel)
+	reqs := client.GetRequests()
+	var req llm.LLMRequest
+	if len(reqs) > 0 {
+		req = reqs[len(reqs)-1]
+	}
+	if req.Model == "" {
+		req.Model = selectedModel
+	}
+	if req.TokenSource == "" {
+		req.TokenSource = "estimated"
+	}
+
+	if err != nil {
+		s.logEditorLLMUsageEvent(ctx, req, requesterEmail, keyMeta, projectID, domainID, operation, stage, filePath)
+		return "", nil, llm.SanitizeError(err)
+	}
+	var (
+		inputPrice  sql.NullFloat64
+		outputPrice sql.NullFloat64
+		estCost     sql.NullFloat64
+	)
+	if s.modelPricing != nil {
+		at := req.Timestamp
+		if at.IsZero() {
+			at = time.Now().UTC()
+		}
+		if pricing, err := s.modelPricing.GetActiveByModel(ctx, "gemini", req.Model, at); err == nil && pricing != nil {
+			inputPrice = sql.NullFloat64{Float64: pricing.InputUSDPerMillion, Valid: true}
+			outputPrice = sql.NullFloat64{Float64: pricing.OutputUSDPerMillion, Valid: true}
+			estCost = sql.NullFloat64{Float64: estimateLLMCostUSD(req.PromptTokens, req.CompletionTokens, pricing.InputUSDPerMillion, pricing.OutputUSDPerMillion), Valid: true}
+		}
+	}
+
+	s.logEditorLLMUsageEventWithPricing(ctx, req, requesterEmail, keyMeta, projectID, domainID, operation, stage, filePath, inputPrice, outputPrice, estCost)
+
+	tokenUsage := map[string]any{
+		"source":            keyMeta.Source,
+		"model":             req.Model,
+		"stage":             stage,
+		"prompt_tokens":     req.PromptTokens,
+		"completion_tokens": req.CompletionTokens,
+		"total_tokens":      req.TotalTokens,
+		"token_source":      llmTokenSource(req.TokenSource),
+	}
+	if estCost.Valid {
+		tokenUsage["estimated_cost_usd"] = estCost.Float64
+	}
+	if inputPrice.Valid {
+		tokenUsage["input_price_usd_per_million"] = inputPrice.Float64
+	}
+	if outputPrice.Valid {
+		tokenUsage["output_price_usd_per_million"] = outputPrice.Float64
+	}
+	return strings.TrimSpace(result), tokenUsage, nil
+}
+
+func (s *Server) generateEditorImage(ctx context.Context, requesterEmail, ownerEmail, projectID, domainID, operation, stage, filePath, model, prompt string) ([]byte, map[string]any, error) {
+	apiKey, keyMeta, err := s.resolveEditorAPIKey(ctx, requesterEmail, ownerEmail)
+	if err != nil {
+		return nil, nil, err
+	}
+	client := llm.NewClient(llm.Config{
+		APIKey:          apiKey,
+		DefaultModel:    s.cfg.GeminiDefaultModel,
+		MaxRetries:      s.cfg.GeminiMaxRetries,
+		RetryDelay:      s.cfg.GeminiRetryDelay,
+		RequestTimeout:  s.cfg.GeminiRequestTimeout,
+		RateLimitPerMin: s.cfg.GeminiRateLimitPerMin,
+	})
+	selectedModel := normalizeImageGenerationModel(strings.TrimSpace(model))
+	imageBytes, err := client.GenerateImage(ctx, prompt, selectedModel)
+	reqs := client.GetRequests()
+	var req llm.LLMRequest
+	if len(reqs) > 0 {
+		req = reqs[len(reqs)-1]
+	}
+	if req.Model == "" {
+		req.Model = selectedModel
+	}
+	if req.TokenSource == "" {
+		req.TokenSource = "estimated"
+	}
+
+	if err != nil {
+		s.logEditorLLMUsageEvent(ctx, req, requesterEmail, keyMeta, projectID, domainID, operation, stage, filePath)
+		return nil, nil, llm.SanitizeError(err)
+	}
+	var (
+		inputPrice  sql.NullFloat64
+		outputPrice sql.NullFloat64
+		estCost     sql.NullFloat64
+	)
+	if s.modelPricing != nil {
+		at := req.Timestamp
+		if at.IsZero() {
+			at = time.Now().UTC()
+		}
+		if pricing, err := s.modelPricing.GetActiveByModel(ctx, "gemini", req.Model, at); err == nil && pricing != nil {
+			inputPrice = sql.NullFloat64{Float64: pricing.InputUSDPerMillion, Valid: true}
+			outputPrice = sql.NullFloat64{Float64: pricing.OutputUSDPerMillion, Valid: true}
+			estCost = sql.NullFloat64{Float64: estimateLLMCostUSD(req.PromptTokens, req.CompletionTokens, pricing.InputUSDPerMillion, pricing.OutputUSDPerMillion), Valid: true}
+		}
+	}
+	s.logEditorLLMUsageEventWithPricing(ctx, req, requesterEmail, keyMeta, projectID, domainID, operation, stage, filePath, inputPrice, outputPrice, estCost)
+	tokenUsage := map[string]any{
+		"source":            keyMeta.Source,
+		"model":             req.Model,
+		"stage":             stage,
+		"prompt_tokens":     req.PromptTokens,
+		"completion_tokens": req.CompletionTokens,
+		"total_tokens":      req.TotalTokens,
+		"token_source":      llmTokenSource(req.TokenSource),
+	}
+	if estCost.Valid {
+		tokenUsage["estimated_cost_usd"] = estCost.Float64
+	}
+	if inputPrice.Valid {
+		tokenUsage["input_price_usd_per_million"] = inputPrice.Float64
+	}
+	if outputPrice.Valid {
+		tokenUsage["output_price_usd_per_million"] = outputPrice.Float64
+	}
+	return imageBytes, tokenUsage, nil
+}
+
+func isImageGenerationModel(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	if model == "" {
+		return false
+	}
+	switch model {
+	case "gemini-2.5-flash-image":
+		return true
+	default:
+		return strings.Contains(model, "image")
+	}
+}
+
+func normalizeImageGenerationModel(candidates ...string) string {
+	for _, candidate := range candidates {
+		model := strings.TrimSpace(candidate)
+		if model == "" {
+			continue
+		}
+		if isImageGenerationModel(model) {
+			return model
+		}
+	}
+	return "gemini-2.5-flash-image"
+}
+
+func (s *Server) logEditorLLMUsageEvent(
+	ctx context.Context,
+	req llm.LLMRequest,
+	requesterEmail string,
+	keyMeta editorAPIKeyMeta,
+	projectID string,
+	domainID string,
+	operation string,
+	stage string,
+	filePath string,
+) {
+	s.logEditorLLMUsageEventWithPricing(ctx, req, requesterEmail, keyMeta, projectID, domainID, operation, stage, filePath, sql.NullFloat64{}, sql.NullFloat64{}, sql.NullFloat64{})
+}
+
+func (s *Server) logEditorLLMUsageEventWithPricing(
+	ctx context.Context,
+	req llm.LLMRequest,
+	requesterEmail string,
+	keyMeta editorAPIKeyMeta,
+	projectID string,
+	domainID string,
+	operation string,
+	stage string,
+	filePath string,
+	inputPrice sql.NullFloat64,
+	outputPrice sql.NullFloat64,
+	estCost sql.NullFloat64,
+) {
+	if s.llmUsage == nil {
+		return
+	}
+	requesterEmail = strings.TrimSpace(requesterEmail)
+	if requesterEmail == "" {
+		return
+	}
+	if req.Model == "" {
+		req.Model = strings.TrimSpace(s.cfg.GeminiDefaultModel)
+	}
+	if req.TokenSource == "" {
+		req.TokenSource = "estimated"
+	}
+	event := sqlstore.LLMUsageEvent{
+		Provider:                 "gemini",
+		Operation:                operation,
+		Stage:                    sql.NullString{String: stage, Valid: strings.TrimSpace(stage) != ""},
+		Model:                    req.Model,
+		Status:                   llmUsageStatus(req.Error),
+		RequesterEmail:           requesterEmail,
+		KeyOwnerEmail:            sql.NullString{String: strings.TrimSpace(keyMeta.KeyOwnerEmail), Valid: strings.TrimSpace(keyMeta.KeyOwnerEmail) != ""},
+		KeyType:                  sql.NullString{String: strings.TrimSpace(keyMeta.KeyType), Valid: strings.TrimSpace(keyMeta.KeyType) != ""},
+		ProjectID:                sql.NullString{String: strings.TrimSpace(projectID), Valid: strings.TrimSpace(projectID) != ""},
+		DomainID:                 sql.NullString{String: strings.TrimSpace(domainID), Valid: strings.TrimSpace(domainID) != ""},
+		FilePath:                 sql.NullString{String: strings.TrimSpace(filePath), Valid: strings.TrimSpace(filePath) != ""},
+		PromptTokens:             sql.NullInt64{Int64: req.PromptTokens, Valid: true},
+		CompletionTokens:         sql.NullInt64{Int64: req.CompletionTokens, Valid: true},
+		TotalTokens:              sql.NullInt64{Int64: req.TotalTokens, Valid: true},
+		TokenSource:              llmTokenSource(req.TokenSource),
+		InputPriceUSDPerMillion:  inputPrice,
+		OutputPriceUSDPerMillion: outputPrice,
+		EstimatedCostUSD:         estCost,
+		ErrorMessage:             sql.NullString{String: strings.TrimSpace(req.Error), Valid: strings.TrimSpace(req.Error) != ""},
+		CreatedAt:                req.Timestamp,
+	}
+	if event.CreatedAt.IsZero() {
+		event.CreatedAt = time.Now().UTC()
+	}
+	_ = s.llmUsage.CreateEvent(ctx, event)
+}
+
+func estimateLLMCostUSD(promptTokens, completionTokens int64, inputUSDPerMillion, outputUSDPerMillion float64) float64 {
+	promptCost := (float64(promptTokens) / 1_000_000.0) * inputUSDPerMillion
+	completionCost := (float64(completionTokens) / 1_000_000.0) * outputUSDPerMillion
+	return promptCost + completionCost
+}
+
+func llmUsageStatus(errText string) string {
+	if strings.TrimSpace(errText) == "" {
+		return "success"
+	}
+	return "error"
+}
+
+func llmTokenSource(src string) string {
+	src = strings.TrimSpace(strings.ToLower(src))
+	switch src {
+	case "provider", "estimated", "mixed":
+		return src
+	default:
+		return "estimated"
+	}
 }
 
 // requireProjectRole проверяет права доступа к проекту

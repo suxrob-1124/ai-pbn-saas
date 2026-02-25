@@ -11,6 +11,13 @@ import { showToast } from "../../lib/toastStore";
 import type { LinkTaskDTO } from "../../types/linkTasks";
 import { Badge } from "../../components/Badge";
 import { getLinkTaskStatusMeta, isLinkTaskInProgress, normalizeLinkTaskStatus } from "../../lib/linkTaskStatus";
+import { PaginationControls } from "../../features/queue-monitoring/components/PaginationControls";
+import { canDelete, canRetry, canRun } from "../../features/queue-monitoring/services/actionGuards";
+import {
+  QUEUE_LINK_STATUS_LABELS,
+  hasNextPageByPageSize,
+  resolveQueueTab
+} from "../../features/queue-monitoring/services/primitives";
 
 type Generation = {
   id: string;
@@ -51,8 +58,7 @@ function QueuePageContent() {
   const linkPageSize = 20;
   const [linkDomains, setLinkDomains] = useState<Record<string, string>>({});
   const searchParams = useSearchParams();
-  const tabParam = (searchParams.get("tab") || "domains").toLowerCase();
-  const activeTab = tabParam === "links" ? "links" : "domains";
+  const activeTab = resolveQueueTab(searchParams.get("tab"));
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -234,12 +240,13 @@ function QueuePageContent() {
     setLinkPage(1);
   }, [linkFilter, linkSearch]);
 
-  const genHasNext = items.length === genPageSize;
-  const linkHasNext = linkTasks.length === linkPageSize;
+  const genHasNext = hasNextPageByPageSize(items.length, genPageSize);
+  const linkHasNext = hasNextPageByPageSize(linkTasks.length, linkPageSize);
   const visibleGenerations = filtered;
   const visibleLinks = filteredLinks;
   const genIndexBase = (genPage - 1) * genPageSize;
   const linkIndexBase = (linkPage - 1) * linkPageSize;
+  const refreshGuard = canRun({ busy: loading || linkLoading });
 
   const handleLinkRetry = async (task: LinkTaskDTO) => {
     const domainLabel = linkDomains[task.domain_id] || "домен";
@@ -305,7 +312,8 @@ function QueuePageContent() {
         <div className="flex flex-wrap gap-2">
           <button
             onClick={handleRefresh}
-            disabled={loading || linkLoading}
+            disabled={refreshGuard.disabled}
+            title={refreshGuard.reason}
             className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
           >
             <FiRefreshCw /> Обновить всё
@@ -409,25 +417,12 @@ function QueuePageContent() {
         </div>
         )}
         {filtered.length > 0 && (
-          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-            <span>Страница {genPage}</span>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setGenPage((p) => Math.max(1, p - 1))}
-                disabled={genPage <= 1}
-                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              >
-                Назад
-              </button>
-              <button
-                onClick={() => setGenPage((p) => p + 1)}
-                disabled={!genHasNext}
-                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              >
-                Вперёд
-              </button>
-            </div>
-          </div>
+          <PaginationControls
+            page={genPage}
+            hasNext={genHasNext}
+            onPrev={() => setGenPage((p) => Math.max(1, p - 1))}
+            onNext={() => setGenPage((p) => p + 1)}
+          />
         )}
       </div>
       )}
@@ -444,14 +439,14 @@ function QueuePageContent() {
           <span className="text-xs text-slate-500 dark:text-slate-400">Показано: {filteredLinks.length}</span>
         </div>
         <div className="flex flex-wrap gap-2">
-          <FilterButton label="Все" value="all" active={linkFilter === "all"} onClick={() => setLinkFilter("all")} count={linkTasks.length} />
-          <FilterButton label="Ожидает" value="pending" active={linkFilter === "pending"} onClick={() => setLinkFilter("pending")} count={linkCounts["pending"] || 0} />
-          <FilterButton label="Поиск" value="searching" active={linkFilter === "searching"} onClick={() => setLinkFilter("searching")} count={linkCounts["searching"] || 0} />
-          <FilterButton label="Удаление" value="removing" active={linkFilter === "removing"} onClick={() => setLinkFilter("removing")} count={linkCounts["removing"] || 0} />
-          <FilterButton label="Вставлено" value="inserted" active={linkFilter === "inserted"} onClick={() => setLinkFilter("inserted")} count={linkCounts["inserted"] || 0} />
-          <FilterButton label="Вставлено (ген. текст)" value="generated" active={linkFilter === "generated"} onClick={() => setLinkFilter("generated")} count={linkCounts["generated"] || 0} />
-          <FilterButton label="Удалено" value="removed" active={linkFilter === "removed"} onClick={() => setLinkFilter("removed")} count={linkCounts["removed"] || 0} />
-          <FilterButton label="Ошибка" value="failed" active={linkFilter === "failed"} onClick={() => setLinkFilter("failed")} count={linkCounts["failed"] || 0} />
+          <FilterButton label={QUEUE_LINK_STATUS_LABELS.all} value="all" active={linkFilter === "all"} onClick={() => setLinkFilter("all")} count={linkTasks.length} />
+          <FilterButton label={QUEUE_LINK_STATUS_LABELS.pending} value="pending" active={linkFilter === "pending"} onClick={() => setLinkFilter("pending")} count={linkCounts["pending"] || 0} />
+          <FilterButton label={QUEUE_LINK_STATUS_LABELS.searching} value="searching" active={linkFilter === "searching"} onClick={() => setLinkFilter("searching")} count={linkCounts["searching"] || 0} />
+          <FilterButton label={QUEUE_LINK_STATUS_LABELS.removing} value="removing" active={linkFilter === "removing"} onClick={() => setLinkFilter("removing")} count={linkCounts["removing"] || 0} />
+          <FilterButton label={QUEUE_LINK_STATUS_LABELS.inserted} value="inserted" active={linkFilter === "inserted"} onClick={() => setLinkFilter("inserted")} count={linkCounts["inserted"] || 0} />
+          <FilterButton label={QUEUE_LINK_STATUS_LABELS.generated} value="generated" active={linkFilter === "generated"} onClick={() => setLinkFilter("generated")} count={linkCounts["generated"] || 0} />
+          <FilterButton label={QUEUE_LINK_STATUS_LABELS.removed} value="removed" active={linkFilter === "removed"} onClick={() => setLinkFilter("removed")} count={linkCounts["removed"] || 0} />
+          <FilterButton label={QUEUE_LINK_STATUS_LABELS.failed} value="failed" active={linkFilter === "failed"} onClick={() => setLinkFilter("failed")} count={linkCounts["failed"] || 0} />
         </div>
         <input
           type="search"
@@ -486,6 +481,8 @@ function QueuePageContent() {
                   const lastLog = task.log_lines?.length ? task.log_lines[task.log_lines.length - 1] : "";
                   const eventText = task.error_message || lastLog || "—";
                   const domainLabel = linkDomains[task.domain_id] || "Домен";
+                  const retryGuard = canRetry({ busy: linkLoading, status: task.status });
+                  const deleteGuard = canDelete({ busy: linkLoading, status: task.status });
                   return (
                     <tr key={task.id}>
                       <td className="py-3 pr-4 text-xs text-slate-500 dark:text-slate-400">
@@ -518,7 +515,8 @@ function QueuePageContent() {
                           {(normalizeLinkTaskStatus(task.status) || task.status) === "failed" && (
                             <button
                               onClick={() => handleLinkRetry(task)}
-                              disabled={linkLoading}
+                              disabled={retryGuard.disabled}
+                              title={retryGuard.reason}
                               className="inline-flex items-center gap-1 rounded-lg border border-amber-200 bg-white px-2 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:bg-slate-800 dark:text-amber-200"
                             >
                               <FiRotateCw /> Повтор
@@ -526,7 +524,8 @@ function QueuePageContent() {
                           )}
                           <button
                             onClick={() => handleLinkDelete(task)}
-                            disabled={linkLoading}
+                            disabled={deleteGuard.disabled}
+                            title={deleteGuard.reason}
                             className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
                           >
                             <FiTrash2 /> Удалить
@@ -541,25 +540,12 @@ function QueuePageContent() {
           </div>
         )}
         {filteredLinks.length > 0 && (
-          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-            <span>Страница {linkPage}</span>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setLinkPage((p) => Math.max(1, p - 1))}
-                disabled={linkPage <= 1}
-                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              >
-                Назад
-              </button>
-              <button
-                onClick={() => setLinkPage((p) => p + 1)}
-                disabled={!linkHasNext}
-                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              >
-                Вперёд
-              </button>
-            </div>
-          </div>
+          <PaginationControls
+            page={linkPage}
+            hasNext={linkHasNext}
+            onPrev={() => setLinkPage((p) => Math.max(1, p - 1))}
+            onNext={() => setLinkPage((p) => p + 1)}
+          />
         )}
       </div>
       )}

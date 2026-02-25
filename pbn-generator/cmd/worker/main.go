@@ -39,6 +39,8 @@ func main() {
 	deploymentStore := sqlstore.NewDeploymentAttemptStore(dbConn)
 	userStore := sqlstore.NewUserStore(dbConn)
 	apiKeyUsageStore := sqlstore.NewAPIKeyUsageStore(dbConn)
+	llmUsageStore := sqlstore.NewLLMUsageStore(dbConn)
+	modelPricingStore := sqlstore.NewModelPricingStore(dbConn)
 	siteFileStore := sqlstore.NewSiteFileStore(dbConn)
 	fileEditStore := sqlstore.NewFileEditStore(dbConn)
 	linkTaskStore := sqlstore.NewLinkTaskStore(dbConn)
@@ -69,6 +71,8 @@ func main() {
 			deploymentStore,
 			userStore,
 			apiKeyUsageStore,
+			llmUsageStore,
+			modelPricingStore,
 			siteFileStore,
 			auditStore,
 		)
@@ -83,6 +87,8 @@ func main() {
 		Users:     userStore,
 		SiteFiles: siteFileStore,
 		FileEdits: fileEditStore,
+		LLMUsage:  llmUsageStore,
+		Pricing:   modelPricingStore,
 	}
 	mux.HandleFunc(tasks.TaskProcessLink, func(ctx context.Context, t *asynq.Task) error {
 		payload, err := tasks.ParseLinkTaskPayload(t)

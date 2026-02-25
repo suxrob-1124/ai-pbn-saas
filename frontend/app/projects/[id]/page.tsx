@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { UrlObject } from "url";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { authFetch, authFetchCached, post, patch, del } from "../../../lib/http";
@@ -8,18 +8,10 @@ import { useAuthGuard } from "../../../lib/useAuth";
 import {
   FiPlay,
   FiRefreshCw,
-  FiList,
-  FiEdit2,
   FiClock,
   FiPauseCircle,
   FiCheck,
-  FiTrash2,
-  FiX,
-  FiKey,
-  FiAlertCircle,
-  FiLink,
-  FiInfo,
-  FiActivity
+  FiX
 } from "react-icons/fi";
 import Link from "next/link";
 import { showToast } from "../../../lib/toastStore";
@@ -31,7 +23,12 @@ import { ScheduleList } from "../../../components/ScheduleList";
 import { PromptOverridesPanel } from "../../../components/PromptOverridesPanel";
 import type { ScheduleFormValue } from "../../../lib/scheduleFormValidation";
 import { Badge } from "../../../components/Badge";
-import { getDomainLinkStatusMeta, hasInsertedLink, isLinkTaskInProgress } from "../../../lib/linkTaskStatus";
+import { getDomainLinkStatusMeta } from "../../../lib/linkTaskStatus";
+import { getGenerationStatusMeta } from "../../../features/domain-project/services/statusCta";
+import { useProjectAsyncActions } from "../../../features/domain-project/hooks/useProjectAsyncActions";
+import { ProjectHeaderActionsSection } from "../../../features/domain-project/components/ProjectHeaderActionsSection";
+import { ProjectDomainsSection } from "../../../features/domain-project/components/ProjectDomainsSection";
+import { ProjectMembersSection } from "../../../features/domain-project/components/ProjectMembersSection";
 
 type Project = {
   id: string;
@@ -68,7 +65,9 @@ type Domain = {
   updated_at?: string;
 };
 
-const effectiveDomainLinkStatus = (domain: Domain | null | undefined) =>
+const effectiveDomainLinkStatus = (
+  domain: { link_status_effective?: string; link_status?: string } | null | undefined
+) =>
   domain?.link_status_effective || domain?.link_status || "";
 
 type Generation = {
@@ -93,6 +92,164 @@ type ProjectSummary = {
 
 type ProjectTab = "domains" | "schedules" | "errors" | "settings";
 const PROJECT_TABS: ProjectTab[] = ["domains", "schedules", "errors", "settings"];
+
+type DomainImportPayloadItem = {
+  url: string;
+  keyword?: string;
+  country?: string;
+  language?: string;
+  server_id?: string;
+  link_anchor_text?: string;
+  link_acceptor_url?: string;
+};
+
+type DomainImportValidationError = {
+  line: number;
+  reason: string;
+};
+
+const DOMAIN_IMPORT_MAX_COLUMNS = 7;
+
+const parseImportCsvFields = (line: string): string[] | null => {
+  const fields: string[] = [];
+  let current = "";
+  let inQuotes = false;
+  for (let idx = 0; idx < line.length; idx += 1) {
+    const ch = line[idx];
+    if (ch === "\"") {
+      if (inQuotes && line[idx + 1] === "\"") {
+        current += "\"";
+        idx += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+    if (ch === "," && !inQuotes) {
+      fields.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  if (inQuotes) {
+    return null;
+  }
+  fields.push(current.trim());
+  if (fields.length > 0) {
+    fields[0] = fields[0].replace(/^\uFEFF/, "");
+  }
+  return fields;
+};
+
+const isDomainImportHeader = (fields: string[]) => {
+  const first = (fields[0] || "").trim().toLowerCase();
+  return first === "url" || first === "domain" || first === "домен";
+};
+
+const isValidDomainHost = (host: string) => {
+  if (!host || host.length > 253 || !host.includes(".")) {
+    return false;
+  }
+  const labels = host.split(".");
+  return labels.every((label) => {
+    if (!label || label.length > 63) {
+      return false;
+    }
+    if (label.startsWith("-") || label.endsWith("-")) {
+      return false;
+    }
+    return /^[a-z0-9-]+$/.test(label);
+  });
+};
+
+const normalizeDomainForImport = (raw: string): string | null => {
+  const input = raw.trim();
+  if (!input) {
+    return null;
+  }
+  let candidate = input;
+  if (candidate.startsWith("//")) {
+    candidate = `https:${candidate}`;
+  } else if (!candidate.includes("://")) {
+    candidate = `https://${candidate}`;
+  }
+  try {
+    const parsed = new URL(candidate);
+    if (parsed.pathname && parsed.pathname !== "/") {
+      return null;
+    }
+    if (parsed.search || parsed.hash || parsed.port || parsed.username || parsed.password) {
+      return null;
+    }
+    const host = parsed.hostname.trim().toLowerCase().replace(/\.$/, "");
+    if (!isValidDomainHost(host)) {
+      return null;
+    }
+    return host;
+  } catch {
+    return null;
+  }
+};
+
+const parseDomainImportText = (
+  rawText: string
+): { items: DomainImportPayloadItem[]; errors: DomainImportValidationError[] } => {
+  const items: DomainImportPayloadItem[] = [];
+  const errors: DomainImportValidationError[] = [];
+  const lines = rawText.split(/\r?\n/);
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const lineNo = lineIndex + 1;
+    const line = lines[lineIndex].trim();
+    if (!line) {
+      continue;
+    }
+    const fields = parseImportCsvFields(line);
+    if (!fields) {
+      errors.push({ line: lineNo, reason: "незакрытая кавычка" });
+      continue;
+    }
+    if (items.length === 0 && isDomainImportHeader(fields)) {
+      continue;
+    }
+    if (fields.length === 0 || fields.length > DOMAIN_IMPORT_MAX_COLUMNS) {
+      errors.push({ line: lineNo, reason: "ожидается до 7 колонок" });
+      continue;
+    }
+    const normalizedDomain = normalizeDomainForImport(fields[0] || "");
+    if (!normalizedDomain) {
+      errors.push({ line: lineNo, reason: "некорректный домен" });
+      continue;
+    }
+    const item: DomainImportPayloadItem = { url: normalizedDomain };
+    const keyword = (fields[1] || "").trim();
+    const country = (fields[2] || "").trim();
+    const language = (fields[3] || "").trim();
+    const serverId = (fields[4] || "").trim();
+    const anchor = (fields[5] || "").trim();
+    const acceptor = (fields[6] || "").trim();
+    if (keyword) {
+      item.keyword = keyword;
+    }
+    if (country) {
+      item.country = country;
+    }
+    if (language) {
+      item.language = language;
+    }
+    if (serverId) {
+      item.server_id = serverId;
+    }
+    if (anchor) {
+      item.link_anchor_text = anchor;
+    }
+    if (acceptor) {
+      item.link_acceptor_url = acceptor;
+    }
+    items.push(item);
+  }
+  return { items, errors };
+};
 
 export default function ProjectDetailPage() {
   const { me } = useAuthGuard();
@@ -924,10 +1081,15 @@ export default function ProjectDetailPage() {
 
   const addDomain = async () => {
     if (!url.trim()) return;
+    const normalizedDomain = normalizeDomainForImport(url);
+    if (!normalizedDomain) {
+      setError("Укажите корректный домен (без пути, порта и query).");
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
-      await post(`/api/projects/${projectId}/domains`, { url, keyword, country, language, exclude_domains: exclude });
+      await post(`/api/projects/${projectId}/domains`, { url: normalizedDomain, keyword, country, language, exclude_domains: exclude });
       setUrl("");
       setKeyword("");
       setExclude("");
@@ -941,47 +1103,33 @@ export default function ProjectDetailPage() {
 
   const importDomains = async () => {
     if (!importText.trim()) return;
+    const parsed = parseDomainImportText(importText);
+    if (parsed.errors.length > 0) {
+      const lines = parsed.errors.slice(0, 5).map((entry) => `${entry.line} (${entry.reason})`).join(", ");
+      setError(`Импорт остановлен. Проверьте строки: ${lines}.`);
+      return;
+    }
+    if (parsed.items.length === 0) {
+      setError("Импорт пустой: добавьте хотя бы один корректный домен.");
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
-      await post(`/api/projects/${projectId}/domains/import`, { text: importText });
+      const result = await post<{ created?: number; skipped?: number; total?: number }>(`/api/projects/${projectId}/domains/import`, {
+        items: parsed.items
+      });
+      const created = Number(result?.created ?? parsed.items.length);
+      const skipped = Number(result?.skipped ?? 0);
+      showToast({
+        type: skipped > 0 ? "warning" : "success",
+        title: skipped > 0 ? "Импорт завершен с пропусками" : "Импорт завершен",
+        message: skipped > 0 ? `Создано: ${created}, пропущено: ${skipped}` : `Создано: ${created}`
+      });
       setImportText("");
       await load(true);
     } catch (err: any) {
       setError(err?.message || "Не удалось импортировать");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const runGeneration = async (id: string) => {
-    const domain = domains.find((d) => d.id === id);
-    if (!(keywordEdits[id] || "").trim() && !(domain?.main_keyword || "").trim()) {
-      setError("Сначала задайте ключевое слово");
-      return;
-    }
-    if (domain?.status === "processing" || domain?.status === "pending") {
-      setError("У этого домена уже есть запущенная генерация");
-      return;
-    }
-    // Проверяем наличие API ключа у владельца проекта
-    if (project && project.ownerHasApiKey === false) {
-      setError("API ключ не настроен у владельца проекта. Настройте ключ в профиле для запуска генерации.");
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    try {
-      await post(`/api/domains/${id}/generate`);
-      await load(true);
-    } catch (err: any) {
-      const errMsg = err?.message || "Не удалось запустить генерацию";
-      // Улучшаем сообщение об ошибке, если это связано с API ключом
-      if (errMsg.includes("API key") || errMsg.includes("api key")) {
-        setError(`${errMsg} Настройте API ключ в профиле.`);
-      } else {
-        setError(errMsg);
-      }
     } finally {
       setLoading(false);
     }
@@ -1037,120 +1185,18 @@ export default function ProjectDetailPage() {
     }
   };
 
-  const deleteDomain = async (id: string) => {
-    if (!confirm("Удалить домен?")) return;
-    setLoading(true);
-    setError(null);
-    try {
-      await del(`/api/domains/${id}`);
-      await load(true);
-    } catch (err: any) {
-      setError(err?.message || "Не удалось удалить домен");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const runLinkTask = async (id: string) => {
-    const domain = domainById[id];
-    if (!domain) return;
-    const linkStatus = effectiveDomainLinkStatus(domain);
-    const hasActiveLink = hasInsertedLink(linkStatus);
-    if (isLinkTaskInProgress(linkStatus)) {
-      showToast({
-        type: "error",
-        title: "Задача уже выполняется",
-        message: "Дождитесь завершения текущей задачи по ссылке."
-      });
-      return;
-    }
-    const anchor = (domain.link_anchor_text || "").trim();
-    const acceptor = (domain.link_acceptor_url || "").trim();
-    const draft = linkEdits[id] || { anchor, acceptor };
-    const draftAnchor = (draft.anchor || "").trim();
-    const draftAcceptor = (draft.acceptor || "").trim();
-    if (draftAnchor !== anchor || draftAcceptor !== acceptor) {
-      showToast({
-        type: "error",
-        title: "Сначала сохраните ссылку",
-        message: "В полях есть несохранённые изменения."
-      });
-      return;
-    }
-    if (!anchor || !acceptor) {
-      showToast({
-        type: "error",
-        title: "Ссылка не настроена",
-        message: "Заполните анкор и акцептор в настройках домена."
-      });
-      return;
-    }
-    setLinkLoadingId(id);
-    try {
-      await post(`/api/domains/${id}/link/run`);
-      showToast({
-        type: "success",
-        title: hasActiveLink ? "Ссылка обновляется" : "Ссылка добавляется",
-        message: domain.url
-      });
-      await load(true);
-    } catch (err: any) {
-      showToast({
-        type: "error",
-        title: "Не удалось запустить ссылку",
-        message: err?.message || "Попробуйте позже"
-      });
-    } finally {
-      setLinkLoadingId(null);
-    }
-  };
-
-  const removeLinkTask = async (id: string) => {
-    const domain = domainById[id];
-    if (!domain) return;
-    const linkStatus = effectiveDomainLinkStatus(domain);
-    const canRemoveLink = hasInsertedLink(linkStatus) && !isLinkTaskInProgress(linkStatus);
-    const anchor = (domain.link_anchor_text || "").trim();
-    const acceptor = (domain.link_acceptor_url || "").trim();
-    const draft = linkEdits[id] || { anchor, acceptor };
-    const draftAnchor = (draft.anchor || "").trim();
-    const draftAcceptor = (draft.acceptor || "").trim();
-    if (draftAnchor !== anchor || draftAcceptor !== acceptor) {
-      showToast({
-        type: "error",
-        title: "Сначала сохраните ссылку",
-        message: "В полях есть несохранённые изменения."
-      });
-      return;
-    }
-    if (!canRemoveLink) {
-      showToast({
-        type: "error",
-        title: "Удалять нечего",
-        message: "Ссылка на сайте не найдена."
-      });
-      return;
-    }
-    if (!confirm(`Удалить ссылку с сайта ${domain.url}?`)) return;
-    setLinkLoadingId(id);
-    try {
-      await post(`/api/domains/${id}/link/remove`);
-      showToast({
-        type: "success",
-        title: "Ссылка удаляется",
-        message: domain.url
-      });
-      await load(true);
-    } catch (err: any) {
-      showToast({
-        type: "error",
-        title: "Не удалось удалить ссылку",
-        message: err?.message || "Попробуйте позже"
-      });
-    } finally {
-      setLinkLoadingId(null);
-    }
-  };
+  const { runGeneration, runLinkTask, removeLinkTask, deleteDomain, generationFlow, linkFlow } = useProjectAsyncActions({
+    projectId,
+    project,
+    domains,
+    domainById,
+    keywordEdits,
+    linkEdits,
+    setLoading,
+    setError,
+    setLinkLoadingId,
+    load
+  });
 
   const deleteProject = async () => {
     if (!confirm("Удалить проект и все его домены?")) return;
@@ -1222,78 +1268,16 @@ export default function ProjectDetailPage() {
 
   return (
     <div className="space-y-4">
-      <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-xl">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-xl font-semibold">{project?.name || "Проект"}</h2>
-            <p className="text-sm text-slate-500 dark:text-slate-400">
-              Страна: {project?.target_country || "—"} · Язык: {project?.target_language || "—"}
-            </p>
-          </div>
-          <div className="flex gap-2">
-            <Link
-              href={projectId ? `/projects/${projectId}/queue?tab=domains` : "/projects"}
-              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-            >
-              <FiList /> Очередь проекта
-            </Link>
-            {projectId && (
-              <Link
-                href={{ pathname: "/monitoring/indexing", query: { projectId } } as UrlObject}
-                className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              >
-                <FiActivity /> Индексация
-              </Link>
-            )}
-            <button
-              onClick={() => load(true)}
-              disabled={loading}
-              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-            >
-              <FiRefreshCw /> Обновить
-            </button>
-            <button
-              onClick={deleteProject}
-              disabled={loading}
-              className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
-            >
-              <FiTrash2 /> Удалить
-            </button>
-          </div>
-        </div>
-        {error && <div className="text-red-500 text-sm mt-2">{error}</div>}
-        
-        {/* Индикатор API ключа */}
-        {project && (
-          <div className="mt-4">
-            {project.ownerHasApiKey === false ? (
-              <div className="rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/20 p-3">
-                <div className="flex items-start gap-2">
-                  <FiAlertCircle className="text-amber-600 dark:text-amber-400 mt-0.5" />
-                  <div className="flex-1">
-                    <div className="text-sm font-semibold text-amber-800 dark:text-amber-200">
-                      ⚠️ API ключ не настроен
-                    </div>
-                    <div className="text-xs text-amber-700 dark:text-amber-300 mt-1">
-                      Генерация не будет работать без API ключа владельца проекта.{" "}
-                      <a href="/me" className="underline hover:no-underline">
-                        Настроить в профиле →
-                      </a>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ) : project.ownerHasApiKey === true ? (
-              <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40 p-3">
-                <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
-                  <FiKey className="text-emerald-600 dark:text-emerald-400" />
-                  <span>API ключ настроен. Генерация будет использовать ключ владельца проекта.</span>
-                </div>
-              </div>
-            ) : null}
-          </div>
-        )}
-      </div>
+      <ProjectHeaderActionsSection
+        project={project}
+        projectId={projectId}
+        loading={loading}
+        error={error}
+        generationFlow={generationFlow}
+        linkFlow={linkFlow}
+        onRefresh={() => load(true)}
+        onDeleteProject={deleteProject}
+      />
 
       {/* Tabs */}
       <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow">
@@ -1343,418 +1327,46 @@ export default function ProjectDetailPage() {
         </div>
 
         {activeTab === "domains" && (
-          <>
-      <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3 mb-3">
-        <h3 className="font-semibold">Добавить домен</h3>
-        <div className="grid gap-3 md:grid-cols-3">
-          <input
-            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-            placeholder="example.com"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
+          <ProjectDomainsSection
+            loading={loading}
+            url={url}
+            keyword={keyword}
+            country={country}
+            language={language}
+            exclude={exclude}
+            importText={importText}
+            domainSearch={domainSearch}
+            domainsCount={domains.length}
+            filteredDomains={filteredDomains}
+            linkLoadingId={linkLoadingId}
+            openRuns={openRuns}
+            gens={gens}
+            keywordEdits={keywordEdits}
+            linkEdits={linkEdits}
+            onUrlChange={setUrl}
+            onKeywordChange={setKeyword}
+            onCountryChange={setCountry}
+            onLanguageChange={setLanguage}
+            onExcludeChange={setExclude}
+            onImportTextChange={setImportText}
+            onDomainSearchChange={setDomainSearch}
+            onAddDomain={addDomain}
+            onImportDomains={importDomains}
+            onRunLinkTask={runLinkTask}
+            onRemoveLinkTask={removeLinkTask}
+            onLoadRuns={loadGens}
+            onDeleteDomain={deleteDomain}
+            onKeywordEditChange={(domainId, value) => setKeywordEdits((prev) => ({ ...prev, [domainId]: value }))}
+            onUpdateKeyword={updateKeyword}
+            onLinkEditChange={(domainId, value) => setLinkEdits((prev) => ({ ...prev, [domainId]: value }))}
+            onUpdateLinkSettings={updateLinkSettings}
+            getEffectiveLinkStatus={effectiveDomainLinkStatus}
+            renderStatusBadge={(status) => <StatusBadge status={status} />}
+            renderLinkStatusBadge={(domain) => <LinkStatusBadge domain={domain} />}
+            renderRunsList={(runs) => <RunsList runs={runs as Generation[]} />}
+            formatDateTime={formatDateTime}
+            formatRelativeTime={formatRelativeTime}
           />
-          <input
-            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-            placeholder="Ключевое слово"
-            value={keyword}
-            onChange={(e) => setKeyword(e.target.value)}
-          />
-          <div className="flex gap-2">
-            <button
-              onClick={addDomain}
-              disabled={loading || !url.trim()}
-              className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
-            >
-              Добавить
-            </button>
-          </div>
-        </div>
-        <div className="grid gap-3 md:grid-cols-3">
-          <input
-            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-            placeholder="Страна (по умолчанию из проекта)"
-            value={country}
-            onChange={(e) => setCountry(e.target.value)}
-          />
-          <input
-            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-            placeholder="Язык (по умолчанию из проекта)"
-            value={language}
-            onChange={(e) => setLanguage(e.target.value)}
-          />
-          <input
-            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-            placeholder="Исключить домены (через запятую)"
-            value={exclude}
-            onChange={(e) => setExclude(e.target.value)}
-          />
-        </div>
-        <div className="space-y-2">
-          <p className="text-sm text-slate-500 dark:text-slate-400">
-            Импорт списком (url[,ключевое слово] на строку). Пример: <code>example.com,casino</code>
-          </p>
-          <textarea
-            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-            rows={4}
-            placeholder="example.com,ключевое слово&#10;example.org"
-            value={importText}
-            onChange={(e) => setImportText(e.target.value)}
-          />
-          <button
-            onClick={importDomains}
-            disabled={loading || !importText.trim()}
-            className="inline-flex items-center gap-2 rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-50"
-          >
-            Импортировать
-          </button>
-        </div>
-      </div>
-
-      <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3">
-        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-          <h3 className="font-semibold">Домены</h3>
-          <span className="text-xs text-slate-500 dark:text-slate-400">
-            Показано: {filteredDomains.length} из {domains.length}
-          </span>
-        </div>
-        <input
-          type="search"
-          value={domainSearch}
-          onChange={(e) => setDomainSearch(e.target.value)}
-          placeholder="Поиск по домену"
-          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-        />
-        {filteredDomains.length === 0 && (
-          <div className="text-sm text-slate-500 dark:text-slate-400">Домены не найдены.</div>
-        )}
-        <div className="space-y-3">
-          {filteredDomains.map((d) => {
-            const linkStatus = effectiveDomainLinkStatus(d);
-            const hasActiveLink = hasInsertedLink(linkStatus);
-            const linkInProgress = isLinkTaskInProgress(linkStatus);
-            const canRemoveLink = hasActiveLink && !linkInProgress;
-            const isPublished = (d.status || "").toLowerCase() === "published";
-            const linkReadyAtDate = d.link_ready_at ? new Date(d.link_ready_at) : null;
-            const linkReadyValid = linkReadyAtDate && !Number.isNaN(linkReadyAtDate.getTime());
-            const linkReadyFuture = Boolean(linkReadyValid && linkReadyAtDate!.getTime() > Date.now());
-            const linkReadyBadge = !linkReadyValid
-              ? { label: "не задано", tone: "slate" as const }
-              : linkReadyFuture
-                ? { label: "ожидает", tone: "amber" as const }
-                : { label: "готово", tone: "green" as const };
-            return (
-              <div
-                key={d.id}
-                className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white/60 dark:bg-slate-900/40 p-4 shadow-sm space-y-3"
-              >
-              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                <div className="space-y-2">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Link href={`/domains/${d.id}`} className="text-indigo-600 hover:underline font-semibold">
-                      {d.url}
-                    </Link>
-                    <StatusBadge status={d.status} />
-                    <Badge
-                      label={`Попытка: ${d.status}`}
-                      tone={["processing", "pending", "pause_requested", "cancelling"].includes((d.status || "").toLowerCase()) ? "amber" : "slate"}
-                      className="text-[11px]"
-                    />
-                    <Badge
-                      label={d.last_success_generation_id ? "Успех: есть" : "Успех: нет"}
-                      tone={d.last_success_generation_id ? "green" : "slate"}
-                      className="text-[11px]"
-                    />
-                    <LinkStatusBadge domain={d} />
-                  </div>
-                  <div className="text-xs text-slate-500 dark:text-slate-400">
-                    Обновлено: {formatDateTime(d.updated_at)}
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
-                    <span>
-                      Готовность ссылок: {linkReadyValid ? formatDateTime(d.link_ready_at) : "не задано"}
-                    </span>
-                    <Badge label={linkReadyBadge.label} tone={linkReadyBadge.tone} className="text-[11px]" />
-                    {linkReadyFuture && linkReadyAtDate && (
-                      <span className="text-amber-600 dark:text-amber-300">
-                        через {formatRelativeTime(linkReadyAtDate)}
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-xs text-slate-400">
-                    Страна: {d.target_country || "—"} · Язык: {d.target_language || "—"}
-                  </div>
-                  {d.exclude_domains && <div className="text-xs text-slate-400">Исключить: {d.exclude_domains}</div>}
-                </div>
-                <div className="flex flex-wrap items-center gap-2 md:justify-end">
-                  <button
-                    onClick={() => runLinkTask(d.id)}
-                    disabled={loading || linkLoadingId === d.id || linkInProgress}
-                    className="hidden sm:inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  >
-                    <FiLink />
-                    {linkInProgress ? "В работе..." : hasActiveLink ? "Обновить ссылку" : "Добавить ссылку"}
-                  </button>
-                  <button
-                    onClick={() => runLinkTask(d.id)}
-                    disabled={loading || linkLoadingId === d.id || linkInProgress}
-                    className="inline-flex sm:hidden items-center justify-center rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                    title={linkInProgress ? "Задача в работе" : hasActiveLink ? "Обновить ссылку" : "Добавить ссылку"}
-                    aria-label={linkInProgress ? "Задача в работе" : hasActiveLink ? "Обновить ссылку" : "Добавить ссылку"}
-                  >
-                    <FiLink />
-                  </button>
-                  {canRemoveLink ? (
-                    <>
-                      <button
-                        onClick={() => removeLinkTask(d.id)}
-                        disabled={loading || linkLoadingId === d.id}
-                        className="hidden sm:inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
-                      >
-                        <FiTrash2 />
-                        Удалить ссылку
-                      </button>
-                      <button
-                        onClick={() => removeLinkTask(d.id)}
-                        disabled={loading || linkLoadingId === d.id}
-                        className="inline-flex sm:hidden items-center justify-center rounded-lg border border-red-200 bg-white px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
-                        title="Удалить ссылку"
-                        aria-label="Удалить ссылку"
-                      >
-                        <FiTrash2 />
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      {linkInProgress ? (
-                        <span className="hidden sm:inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-600 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
-                          <FiRefreshCw className="h-3 w-3" /> Выполняется
-                        </span>
-                      ) : (
-                        <span className="hidden sm:inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
-                          <FiInfo className="h-3 w-3" /> Нет ссылки
-                        </span>
-                      )}
-                    </>
-                  )}
-                  <button
-                    onClick={() => loadGens(d.id)}
-                    className="hidden sm:inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  >
-                    <FiList /> Запуски {openRuns[d.id] && gens[d.id] && `(${gens[d.id].length})`}
-                  </button>
-                  <button
-                    onClick={() => loadGens(d.id)}
-                    className="inline-flex sm:hidden items-center justify-center rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                    title={`Запуски ${openRuns[d.id] && gens[d.id] ? `(${gens[d.id].length})` : ""}`}
-                    aria-label="Запуски"
-                  >
-                    <FiList />
-                  </button>
-                  {isPublished ? (
-                    <>
-                      <Link
-                        href={{ pathname: `/domains/${d.id}/editor` } as UrlObject}
-                        className="hidden sm:inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                      >
-                        <FiEdit2 /> Редактор
-                      </Link>
-                      <Link
-                        href={{ pathname: `/domains/${d.id}/editor` } as UrlObject}
-                        className="inline-flex sm:hidden items-center justify-center rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                        title="Редактор"
-                        aria-label="Открыть редактор"
-                      >
-                        <FiEdit2 />
-                      </Link>
-                    </>
-                  ) : (
-                    <>
-                      <span
-                        title="Редактор доступен после публикации сайта"
-                        className="hidden sm:inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400"
-                      >
-                        <FiEdit2 /> Редактор
-                      </span>
-                      <span
-                        title="Редактор доступен после публикации сайта"
-                        aria-label="Редактор доступен после публикации"
-                        className="inline-flex sm:hidden items-center justify-center rounded-lg border border-slate-200 bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400"
-                      >
-                        <FiEdit2 />
-                      </span>
-                    </>
-                  )}
-                  {isPublished ? (
-                    <>
-                      <Link
-                        href={{ pathname: "/monitoring/indexing", query: { domainId: d.id } } as UrlObject}
-                        className="hidden sm:inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                      >
-                        <FiActivity /> Проверки индексации
-                      </Link>
-                      <Link
-                        href={{ pathname: "/monitoring/indexing", query: { domainId: d.id } } as UrlObject}
-                        className="inline-flex sm:hidden items-center justify-center rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                        title="Проверки индексации"
-                        aria-label="Проверки индексации"
-                      >
-                        <FiActivity />
-                      </Link>
-                    </>
-                  ) : (
-                    <>
-                      <span
-                        title="Доступно после публикации сайта"
-                        className="hidden sm:inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400"
-                      >
-                        <FiActivity /> Проверки индексации
-                      </span>
-                      <span
-                        title="Доступно после публикации сайта"
-                        aria-label="Проверки индексации доступны после публикации"
-                        className="inline-flex sm:hidden items-center justify-center rounded-lg border border-slate-200 bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400"
-                      >
-                        <FiActivity />
-                      </span>
-                      <span
-                        title="Опубликуйте сайт, чтобы включить проверки индексации"
-                        className="hidden sm:inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400"
-                      >
-                        <FiInfo className="h-3 w-3" /> После публикации
-                      </span>
-                    </>
-                  )}
-                  <button
-                    onClick={() => deleteDomain(d.id)}
-                    disabled={loading}
-                    className="hidden sm:inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
-                  >
-                    Удалить
-                  </button>
-                  <button
-                    onClick={() => deleteDomain(d.id)}
-                    disabled={loading}
-                    className="inline-flex sm:hidden items-center justify-center rounded-lg border border-red-200 bg-white px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
-                    title="Удалить"
-                    aria-label="Удалить"
-                  >
-                    <FiTrash2 />
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid gap-3 md:grid-cols-2">
-                {(() => {
-                  const keywordValue = keywordEdits[d.id] ?? "";
-                  const keywordDirty = keywordValue.trim() !== (d.main_keyword || "").trim();
-                  return (
-                    <div className="space-y-1">
-                      <div className="text-xs uppercase tracking-wide text-slate-400 flex items-center gap-2">
-                        Ключевое слово
-                        {keywordDirty && (
-                          <span className="rounded-full bg-amber-900/30 px-2 py-0.5 text-[10px] text-amber-300">
-                            несохранено
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <input
-                          className={`w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 ${keywordDirty ? "border-indigo-400 ring-1 ring-indigo-400/40" : ""}`}
-                          value={keywordValue}
-                          onChange={(e) => setKeywordEdits((prev) => ({ ...prev, [d.id]: e.target.value }))}
-                          placeholder="Ключевое слово"
-                        />
-                        <button
-                          onClick={() => updateKeyword(d.id)}
-                          disabled={loading || !keywordDirty}
-                          className="hidden sm:inline-flex items-center gap-1 rounded-lg bg-slate-200 px-2 py-1 text-xs font-semibold text-slate-800 hover:bg-slate-300 disabled:opacity-50 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"
-                        >
-                          Сохранить
-                        </button>
-                        <button
-                          onClick={() => updateKeyword(d.id)}
-                          disabled={loading || !keywordDirty}
-                          className="inline-flex sm:hidden items-center justify-center rounded-lg bg-slate-200 px-2 py-1 text-xs font-semibold text-slate-800 hover:bg-slate-300 disabled:opacity-50 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"
-                          title="Сохранить ключевое слово"
-                          aria-label="Сохранить ключевое слово"
-                        >
-                          <FiCheck />
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })()}
-                {(() => {
-                  const link = linkEdits[d.id] || { anchor: d.link_anchor_text || "", acceptor: d.link_acceptor_url || "" };
-                  const anchorValue = link.anchor ?? "";
-                  const acceptorValue = link.acceptor ?? "";
-                  const linkDirty =
-                    anchorValue.trim() !== (d.link_anchor_text || "").trim() ||
-                    acceptorValue.trim() !== (d.link_acceptor_url || "").trim();
-                  return (
-                    <div className="space-y-1">
-                      <div className="text-xs uppercase tracking-wide text-slate-400 flex items-center gap-2">
-                        Ссылка
-                        {linkDirty && (
-                          <span className="rounded-full bg-amber-900/30 px-2 py-0.5 text-[10px] text-amber-300">
-                            несохранено
-                          </span>
-                        )}
-                      </div>
-                      <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
-                        <input
-                          className={`w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 ${linkDirty ? "border-indigo-400 ring-1 ring-indigo-400/40" : ""}`}
-                          value={anchorValue}
-                          onChange={(e) =>
-                            setLinkEdits((prev) => ({
-                              ...prev,
-                              [d.id]: { anchor: e.target.value, acceptor: prev[d.id]?.acceptor ?? "" }
-                            }))
-                          }
-                          placeholder="Анкор"
-                        />
-                        <input
-                          className={`w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 ${linkDirty ? "border-indigo-400 ring-1 ring-indigo-400/40" : ""}`}
-                          value={acceptorValue}
-                          onChange={(e) =>
-                            setLinkEdits((prev) => ({
-                              ...prev,
-                              [d.id]: { anchor: prev[d.id]?.anchor ?? "", acceptor: e.target.value }
-                            }))
-                          }
-                          placeholder="https://acceptor.example"
-                        />
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => updateLinkSettings(d.id)}
-                            disabled={loading || !linkDirty}
-                            className="hidden sm:inline-flex items-center gap-1 rounded-lg bg-slate-200 px-3 py-1 text-xs font-semibold text-slate-800 hover:bg-slate-300 disabled:opacity-50 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"
-                          >
-                            Сохранить
-                          </button>
-                          <button
-                            onClick={() => updateLinkSettings(d.id)}
-                            disabled={loading || !linkDirty}
-                            className="inline-flex sm:hidden items-center justify-center rounded-lg bg-slate-200 px-2 py-1 text-xs font-semibold text-slate-800 hover:bg-slate-300 disabled:opacity-50 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"
-                            title="Сохранить ссылку"
-                            aria-label="Сохранить ссылку"
-                          >
-                            <FiCheck />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })()}
-              </div>
-
-              {openRuns[d.id] && gens[d.id] && <RunsList runs={gens[d.id]} />}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-          </>
         )}
 
         {activeTab === "schedules" && (
@@ -2043,92 +1655,18 @@ export default function ProjectDetailPage() {
               canEdit={canEditPrompts}
             />
 
-            <div className="border-t border-slate-200 dark:border-slate-800 pt-4 space-y-4">
-              <h3 className="font-semibold">Участники проекта</h3>
-              <div className="bg-white/60 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3">
-                <h4 className="font-semibold">Добавить участника</h4>
-                <div className="grid gap-3 md:grid-cols-3">
-                  <input
-                    className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-                    placeholder="email@example.com"
-                    value={newMemberEmail}
-                    onChange={(e) => setNewMemberEmail(e.target.value)}
-                  />
-                  <select
-                    className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-                    value={newMemberRole}
-                    onChange={(e) => setNewMemberRole(e.target.value)}
-                  >
-                    <option value="viewer">Наблюдатель</option>
-                    <option value="editor">Редактор</option>
-                    <option value="owner">Владелец</option>
-                  </select>
-                  <button
-                    onClick={addMember}
-                    disabled={loading || !newMemberEmail.trim()}
-                    className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
-                  >
-                    Добавить
-                  </button>
-                </div>
-              </div>
-
-              <div className="bg-white/60 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3">
-                <div className="flex items-center justify-between">
-                  <h4 className="font-semibold">Список участников</h4>
-                  <span className="text-xs text-slate-500 dark:text-slate-400">Всего: {members.length}</span>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="min-w-full text-sm">
-                    <thead>
-                      <tr className="text-left text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
-                        <th className="py-2 pr-4">Почта</th>
-                        <th className="py-2 pr-4">Роль</th>
-                        <th className="py-2 pr-4">Добавлен</th>
-                        <th className="py-2 pr-4 text-right">Действия</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                      {members.map((m) => (
-                        <tr key={m.email}>
-                          <td className="py-3 pr-4 font-medium">{m.email}</td>
-                          <td className="py-3 pr-4">
-                            {m.role === "owner" ? (
-                              <span className="text-sm text-slate-600 dark:text-slate-400">Владелец</span>
-                            ) : (
-                              <select
-                                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-                                value={m.role}
-                                onChange={(e) => updateMemberRole(m.email, e.target.value)}
-                              >
-                                <option value="viewer">Наблюдатель</option>
-                                <option value="editor">Редактор</option>
-                                <option value="owner">Владелец</option>
-                              </select>
-                            )}
-                          </td>
-                          <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">
-                            {formatDateTime(m.createdAt)}
-                          </td>
-                          <td className="py-3 pr-4 text-right">
-                            {m.role !== "owner" && (
-                              <button
-                                onClick={() => removeMember(m.email)}
-                                disabled={loading}
-                                className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
-                              >
-                                <FiX /> Удалить
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {members.length === 0 && <div className="text-sm text-slate-500 mt-2">Участников пока нет.</div>}
-                </div>
-              </div>
-            </div>
+            <ProjectMembersSection
+              members={members}
+              loading={loading}
+              newMemberEmail={newMemberEmail}
+              newMemberRole={newMemberRole}
+              onNewMemberEmailChange={setNewMemberEmail}
+              onNewMemberRoleChange={setNewMemberRole}
+              onAddMember={addMember}
+              onUpdateMemberRole={updateMemberRole}
+              onRemoveMember={removeMember}
+              formatDateTime={formatDateTime}
+            />
           </div>
         )}
       </div>
@@ -2169,23 +1707,20 @@ function RunsList({ runs }: { runs: Generation[] }) {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, { text: string; tone: "slate" | "amber" | "green" | "yellow" | "orange" | "red"; icon: ReactNode }> = {
-    waiting: { text: "Ожидает генерацию", tone: "slate", icon: <FiClock /> },
-    processing: { text: "Генерация", tone: "amber", icon: <FiPlay /> },
-    published: { text: "Опубликован", tone: "green", icon: <FiPlay /> },
-    draft: { text: "Черновик", tone: "slate", icon: <FiPauseCircle /> },
-    active: { text: "Активен", tone: "green", icon: <FiPlay /> },
-    paused: { text: "Приостановлено", tone: "slate", icon: <FiPauseCircle /> },
-    pause_requested: { text: "Пауза запрошена", tone: "yellow", icon: <FiPauseCircle /> },
-    cancelling: { text: "Отмена...", tone: "orange", icon: <FiPauseCircle /> },
-    cancelled: { text: "Отменено", tone: "red", icon: <FiPauseCircle /> },
-    pending: { text: "В очереди", tone: "amber", icon: <FiClock /> },
-    success: { text: "Готово", tone: "green", icon: <FiCheck /> },
-    error: { text: "Ошибка", tone: "red", icon: <FiPauseCircle /> },
-    running: { text: "В работе", tone: "amber", icon: <FiPlay /> },
-  };
-  const cfg = map[status] || { text: status, tone: "slate" as const, icon: <FiPauseCircle /> };
-  return <Badge label={cfg.text} tone={cfg.tone} icon={cfg.icon} className="text-xs" />;
+  const meta = getGenerationStatusMeta(status);
+  const icon =
+    meta.icon === "play"
+      ? <FiPlay />
+      : meta.icon === "pause"
+        ? <FiPauseCircle />
+        : meta.icon === "check"
+          ? <FiCheck />
+          : meta.icon === "alert"
+            ? <FiPauseCircle />
+            : meta.icon === "x"
+              ? <FiX />
+              : <FiClock />;
+  return <Badge label={meta.text} tone={meta.tone} icon={icon} className="text-xs" />;
 }
 
 function LinkStatusBadge({

@@ -54,6 +54,8 @@ const STAGE_LABELS: Record<string, string> = {
   js_generation: "Генерация JavaScript",
   image_prompt_generation: "Промпты для изображений",
   "404_page": "Генерация 404",
+  editor_file_edit: "AI: редактирование файла",
+  editor_page_create: "AI: создание страницы",
 };
 
 const MODEL_OPTIONS = [

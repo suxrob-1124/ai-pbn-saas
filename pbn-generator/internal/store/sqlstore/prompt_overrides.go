@@ -24,29 +24,32 @@ var GenerationPromptStages = []string{
 	"js_generation",
 	"image_prompt_generation",
 	"404_page",
+	"editor_file_edit",
+	"editor_page_create",
+	"editor_asset_regenerate",
 }
 
 type PromptOverride struct {
-	ID             string
-	ScopeType      string
-	ScopeID        string
-	Stage          string
-	Body           string
-	Model          sql.NullString
-	BasedOnPrompt  sql.NullString
-	UpdatedBy      string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID            string
+	ScopeType     string
+	ScopeID       string
+	Stage         string
+	Body          string
+	Model         sql.NullString
+	BasedOnPrompt sql.NullString
+	UpdatedBy     string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 type ResolvedPrompt struct {
-	Stage            string
-	Source           string // domain|project|global
-	PromptID         sql.NullString
-	OverrideID       sql.NullString
-	Body             string
-	Model            sql.NullString
-	BasedOnPromptID  sql.NullString
+	Stage           string
+	Source          string // domain|project|global
+	PromptID        sql.NullString
+	OverrideID      sql.NullString
+	Body            string
+	Model           sql.NullString
+	BasedOnPromptID sql.NullString
 }
 
 type PromptOverrideStore struct {
@@ -171,4 +174,3 @@ LIMIT 1`, stage).Scan(&p.ID, &p.Name, &p.Description, &p.Body, &p.Stage, &p.Mode
 		Model:    p.Model,
 	}, nil
 }
-

@@ -1,20 +1,24 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import type { UrlObject } from "url";
-import { apiBase, authFetch, authFetchCached, patch, del } from "../../../lib/http";
+import { apiBase, authFetch, authFetchCached, patch } from "../../../lib/http";
 import { showToast } from "../../../lib/toastStore";
 import { useAuthGuard } from "../../../lib/useAuth";
 import { FiClock, FiPlay, FiCheck, FiAlertTriangle, FiRefreshCw, FiTrash2, FiPause, FiX, FiInfo, FiEdit3, FiCode, FiDownload } from "react-icons/fi";
-import { ArtifactsViewer, LogsViewer } from "../../../components/ArtifactsViewer";
 import { PromptOverridesPanel } from "../../../components/PromptOverridesPanel";
 import PipelineSteps from "../../../components/PipelineSteps";
 import { computeDisplayProgress } from "../../../lib/pipelineProgress";
 import { getLinkTaskStatusMeta, hasInsertedLink, isLinkTaskInProgress, normalizeLinkTaskStatus } from "../../../lib/linkTaskStatus";
-import { AuditReport } from "../../../components/AuditReport";
 import { Badge } from "../../../components/Badge";
+import { DOMAIN_PROJECT_CTA, getGenerationStatusMeta, getLinkActionLabel, getMainGenerationActionLabel } from "../../../features/domain-project/services/statusCta";
+import { useDomainAsyncActions } from "../../../features/domain-project/hooks/useDomainAsyncActions";
+import { ActionFlowBanner } from "../../../features/domain-project/components/ActionFlowBanner";
+import { DomainHeaderActionsSection } from "../../../features/domain-project/components/DomainHeaderActionsSection";
+import { DomainGenerationStatusSection } from "../../../features/domain-project/components/DomainGenerationStatusSection";
+import { DomainLogsSection } from "../../../features/domain-project/components/DomainLogsSection";
 
 type Domain = {
   id: string;
@@ -212,240 +216,13 @@ export default function DomainPage() {
     }
   };
 
-  const runLinkTask = async () => {
-    if (!id) return;
-    setLinkTasksError(null);
-    setLinkNotice(null);
-    const domainLinkStatus = domain?.link_status_effective || domain?.link_status;
-    const linkInProgressNow =
-      isLinkTaskInProgress(domainLinkStatus) ||
-      linkTasks.some((task) => isLinkTaskInProgress(task.status));
-    if (linkInProgressNow) {
-      showToast({
-        type: "error",
-        title: "Задача уже выполняется",
-        message: "Дождитесь завершения текущей задачи по ссылке."
-      });
-      return;
-    }
-    if (!linkAnchor.trim() || !linkAcceptor.trim()) {
-      setLinkTasksError("Заполните анкор и акцептор");
-      showToast({
-        type: "error",
-        title: "Ссылка не настроена",
-        message: "Заполните анкор и акцептор перед запуском."
-      });
-      return;
-    }
-    setLinkTasksLoading(true);
-    try {
-      await authFetch(`/api/domains/${id}/link/run`, { method: "POST" });
-      setLinkNotice("Запуск добавления ссылки инициирован");
-      showToast({
-        type: "success",
-        title: "Добавление ссылки запущено",
-        message: domain?.url || undefined
-      });
-      await load(true);
-    } catch (err: any) {
-      const msg = err?.message || "Не удалось запустить добавление ссылки";
-      setLinkTasksError(msg);
-      showToast({
-        type: "error",
-        title: "Ошибка запуска",
-        message: msg
-      });
-    } finally {
-      setLinkTasksLoading(false);
-    }
-  };
-
-  const removeLinkTask = async () => {
-    if (!id) return;
-    const domainLinkStatus = domain?.link_status_effective || domain?.link_status;
-    const linkInProgressNow =
-      isLinkTaskInProgress(domainLinkStatus) ||
-      linkTasks.some((task) => isLinkTaskInProgress(task.status));
-    if (linkInProgressNow) {
-      showToast({
-        type: "error",
-        title: "Задача уже выполняется",
-        message: "Дождитесь завершения текущей задачи по ссылке."
-      });
-      return;
-    }
-    if (!canRemoveLink) {
-      showToast({
-        type: "error",
-        title: "Удалять нечего",
-        message: "Ссылка на сайте не найдена."
-      });
-      return;
-    }
-    if (!confirm("Удалить ссылку с сайта?")) return;
-    setLinkTasksError(null);
-    setLinkNotice(null);
-    setLinkTasksLoading(true);
-    try {
-      await authFetch(`/api/domains/${id}/link/remove`, { method: "POST" });
-      setLinkNotice("Запуск удаления ссылки инициирован");
-      showToast({
-        type: "success",
-        title: "Удаление ссылки запущено",
-        message: domain?.url || undefined
-      });
-      await load(true);
-    } catch (err: any) {
-      const msg = err?.message || "Не удалось запустить удаление ссылки";
-      setLinkTasksError(msg);
-      showToast({
-        type: "error",
-        title: "Ошибка удаления",
-        message: msg
-      });
-    } finally {
-      setLinkTasksLoading(false);
-    }
-  };
-
-  const refreshLinkTasks = async () => {
-    if (!id) return;
-    setLinkTasksLoading(true);
-    setLinkTasksError(null);
-    try {
-      const tasks = await authFetch<LinkTask[]>(`/api/domains/${id}/links`);
-      const list = Array.isArray(tasks) ? tasks : [];
-      list.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-      setLinkTasks(list);
-    } catch (err: any) {
-      setLinkTasksError(err?.message || "Не удалось загрузить задачи ссылок");
-    } finally {
-      setLinkTasksLoading(false);
-    }
-  };
-
-  const triggerGeneration = async (forceStep?: string) => {
-    if (!id) return;
-    if (!kw.trim()) {
-      setError("Сначала задайте ключевое слово");
-      return;
-    }
-    const latestGen = latestAttempt || gens[0];
-    if (!forceStep && latestGen?.status === "success") {
-      if (!confirm("Генерация уже завершена. Запустить заново?")) {
-        return;
-      }
-    }
-    setError(null);
-    setLoading(true);
-    setGens((prev) => {
-      if (prev.length === 0) {
-        return prev;
-      }
-      const updated = [...prev];
-      updated[0] = { ...updated[0], status: "processing", progress: 0 };
-      return updated;
-    });
-    setLatestAttempt((prev) => (prev ? { ...prev, status: "processing", progress: 0 } : prev));
-    try {
-      const payload = forceStep ? { force_step: forceStep } : undefined;
-      const headers = payload ? { "Content-Type": "application/json" } : undefined;
-      await authFetch(`/api/domains/${id}/generate`, {
-        method: "POST",
-        headers,
-        body: payload ? JSON.stringify(payload) : undefined
-      });
-      await load(true);
-    } catch (err: any) {
-      const msg = err?.message || "Не удалось запустить генерацию";
-      setError(msg);
-      throw err;
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleMainAction = async () => {
-    try {
-      await triggerGeneration();
-    } catch {
-      // Ошибка уже показана
-    }
-  };
-
-  const handleForceStep = async (stepId: string) => {
-    setPipelineStepInFlight(stepId);
-    try {
-      await triggerGeneration(stepId);
-    } catch {
-      // Ошибка обработана внутри triggerGeneration
-    } finally {
-      setPipelineStepInFlight(null);
-    }
-  };
-
-  const deleteGeneration = async (genId: string) => {
-    if (!confirm("Удалить этот запуск?")) return;
-    setLoading(true);
-    setError(null);
-    try {
-      await del(`/api/generations/${genId}`);
-      await load(true);
-    } catch (err: any) {
-      setError(err?.message || "Не удалось удалить запуск");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const pauseGeneration = async (genId: string) => {
-    if (!confirm("Приостановить выполнение задачи?")) return;
-    setLoading(true);
-    setError(null);
-    try {
-      await patch(`/api/generations/${genId}`, { action: "pause" });
-      await load(true);
-    } catch (err: any) {
-      setError(err?.message || "Не удалось приостановить задачу");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const resumeGeneration = async (genId: string) => {
-    setLoading(true);
-    setError(null);
-    try {
-      await patch(`/api/generations/${genId}`, { action: "resume" });
-      await load(true);
-    } catch (err: any) {
-      setError(err?.message || "Не удалось возобновить задачу");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const cancelGeneration = async (genId: string) => {
-    if (!confirm("Отменить выполнение задачи?")) return;
-    setLoading(true);
-    setError(null);
-    try {
-      await patch(`/api/generations/${genId}`, { action: "cancel" });
-      await load(true);
-    } catch (err: any) {
-      setError(err?.message || "Не удалось отменить задачу");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const activeStatusesList = ["pending", "processing", "pause_requested", "cancelling"];
   const currentAttempt = latestAttempt || gens[0] || null;
   const latestAttemptDetail = currentAttempt?.id ? generationDetails[currentAttempt.id] : undefined;
   const latestSuccessDetail = latestSuccess?.id ? generationDetails[latestSuccess.id] : undefined;
   const latestDisplayProgress = currentAttempt ? computeDisplayProgress(latestAttemptDetail?.artifacts, currentAttempt.progress, currentAttempt.status) : 0;
   const isRegenerate = Boolean(currentAttempt && currentAttempt.status === "success");
-  const mainButtonText = !currentAttempt ? "Запустить генерацию" : isRegenerate ? "Перегенерировать всё" : "Продолжить генерацию";
+  const mainButtonText = getMainGenerationActionLabel(Boolean(currentAttempt), isRegenerate);
   const mainButtonIcon = isRegenerate ? <FiRefreshCw /> : <FiPlay />;
   const mainButtonDisabled = loading || Boolean(currentAttempt && activeStatusesList.includes(currentAttempt.status));
   const visibleLinkTasks = showAllLinkTasks ? linkTasks : linkTasks.slice(0, 2);
@@ -458,7 +235,40 @@ export default function DomainPage() {
     isLinkTaskInProgress(domainLinkStatus) ||
     linkTasks.some((task) => isLinkTaskInProgress(task.status));
   const canRemoveLink = (hasActiveLink || hasLinkInTasks) && !linkInProgress;
-  const linkActionLabel = linkInProgress ? "Задача в работе..." : hasActiveLink ? "Обновить ссылку" : "Добавить ссылку";
+  const linkActionLabel = getLinkActionLabel(hasActiveLink, linkInProgress);
+  const {
+    runLinkTask,
+    removeLinkTask,
+    refreshLinkTasks,
+    handleMainAction,
+    handleForceStep,
+    deleteGeneration,
+    pauseGeneration,
+    resumeGeneration,
+    cancelGeneration,
+    generationFlow,
+    linkFlow
+  } = useDomainAsyncActions({
+    id,
+    kw,
+    domain,
+    gens,
+    latestAttempt,
+    linkTasks,
+    linkAnchor,
+    linkAcceptor,
+    canRemoveLink,
+    load,
+    setLoading,
+    setError,
+    setGens,
+    setLatestAttempt,
+    setPipelineStepInFlight,
+    setLinkTasksLoading,
+    setLinkTasksError,
+    setLinkNotice,
+    setLinkTasks
+  });
   const latestArtifacts = useMemo<Record<string, any> | null>(() => {
     if (latestSuccessDetail?.artifacts && typeof latestSuccessDetail.artifacts === "object") {
       return latestSuccessDetail.artifacts;
@@ -670,118 +480,26 @@ export default function DomainPage() {
 
   return (
     <div className="space-y-4">
-      <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-xl">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-bold">Домен</h1>
-            {domain && (
-              <>
-                <div className="mt-1 text-lg font-semibold">{domain.url}</div>
-                <div className="text-sm text-slate-500 dark:text-slate-400">
-                  Проект: {projectName || "—"} · Статус: <StatusBadge status={domain.status} />
-                </div>
-                <div className="text-sm text-slate-500 dark:text-slate-400 mt-1">Ключевое слово: {domain.main_keyword || "—"}</div>
-                <div className="text-xs text-slate-500 dark:text-slate-400">
-                  Сервер: {domain.server_id || "—"} · Страна: {domain.target_country || "—"} · Язык: {domain.target_language || "—"}
-                </div>
-                {domain.exclude_domains && <div className="text-xs text-slate-500 dark:text-slate-400">Исключить: {domain.exclude_domains}</div>}
-                <div className="text-xs text-slate-500 dark:text-slate-400">
-                  Обновлено: {domain.updated_at ? new Date(domain.updated_at).toLocaleString() : "—"}
-                </div>
-              </>
-            )}
-          </div>
-          <div className="flex gap-2">
-            <button
-              onClick={handleMainAction}
-              disabled={mainButtonDisabled}
-              className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
-            >
-              {mainButtonIcon} {mainButtonText}
-            </button>
-            {currentAttempt && (
-              <>
-                {currentAttempt.status === "paused" && (
-                  <button
-                    onClick={() => resumeGeneration(currentAttempt.id)}
-                    disabled={loading}
-                    className="inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-white px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700 dark:bg-slate-800 dark:text-emerald-300 disabled:opacity-50"
-                  >
-                    <FiPlay /> Возобновить
-                  </button>
-                )}
-                {(currentAttempt.status === "pending" || currentAttempt.status === "processing" || currentAttempt.status === "pause_requested" || currentAttempt.status === "cancelling") && (
-                  <>
-                    {currentAttempt.status !== "cancelling" && (
-                      <button
-                        onClick={() => pauseGeneration(currentAttempt.id)}
-                        disabled={loading || currentAttempt.status === "pause_requested"}
-                        className="inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm font-semibold text-amber-700 hover:bg-amber-50 dark:border-amber-700 dark:bg-slate-800 dark:text-amber-300 disabled:opacity-50"
-                      >
-                        <FiPause /> {currentAttempt.status === "pause_requested" ? "Пауза запрошена..." : "Пауза"}
-                      </button>
-                    )}
-                    <button
-                      onClick={() => cancelGeneration(currentAttempt.id)}
-                      disabled={loading || currentAttempt.status === "cancelling"}
-                      className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 dark:border-red-700 dark:bg-slate-800 dark:text-red-300 disabled:opacity-50"
-                    >
-                      <FiX /> {currentAttempt.status === "cancelling" ? "Отмена..." : "Отменить"}
-                    </button>
-                  </>
-                )}
-                {currentAttempt.status === "cancelled" && (
-                  <button
-                    onClick={() => cancelGeneration(currentAttempt.id)}
-                    disabled={loading}
-                    className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 dark:border-red-700 dark:bg-slate-800 dark:text-red-300 disabled:opacity-50"
-                  >
-                    <FiX /> Отменить
-                  </button>
-                )}
-              </>
-            )}
-            <button
-              onClick={() => load(true)}
-              disabled={loading}
-              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-            >
-              <FiRefreshCw /> Обновить
-            </button>
-            {canOpenEditor ? (
-              <Link
-                href={editorHref}
-                className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              >
-                <FiEdit3 /> Открыть в редакторе
-              </Link>
-            ) : (
-              <span
-                title="Редактор доступен после публикации и синхронизации файлов"
-                className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400"
-              >
-                <FiEdit3 /> Открыть в редакторе
-              </span>
-            )}
-            {domain?.project_id ? (
-              <Link
-                href={`/projects/${domain.project_id}`}
-                className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
-              >
-                ← К проекту
-              </Link>
-            ) : (
-              <button
-                disabled
-                className="inline-flex items-center gap-2 rounded-lg bg-slate-300 px-3 py-2 text-sm font-semibold text-slate-600 cursor-not-allowed"
-              >
-                ← К проекту
-              </button>
-            )}
-          </div>
-        </div>
-        {error && <div className="mt-2 text-red-500 text-sm">{error}</div>}
-      </div>
+      <DomainHeaderActionsSection
+        domain={domain}
+        projectName={projectName}
+        error={error}
+        currentAttempt={currentAttempt}
+        mainButtonText={mainButtonText}
+        mainButtonIcon={mainButtonIcon}
+        mainButtonDisabled={mainButtonDisabled}
+        loading={loading}
+        canOpenEditor={canOpenEditor}
+        editorHref={editorHref}
+        generationFlow={generationFlow}
+        linkFlow={linkFlow}
+        renderStatusBadge={(status) => <StatusBadge status={status} />}
+        onMainAction={handleMainAction}
+        onResumeGeneration={resumeGeneration}
+        onPauseGeneration={pauseGeneration}
+        onCancelGeneration={cancelGeneration}
+        onRefresh={() => load(true)}
+      />
 
       <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow">
         <h3 className="font-semibold mb-3">Этапы генерации</h3>
@@ -944,7 +662,7 @@ export default function DomainPage() {
                 disabled={linkTasksLoading}
                 className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
               >
-                <FiTrash2 /> Удалить ссылку
+                <FiTrash2 /> {DOMAIN_PROJECT_CTA.linkRemove}
               </button>
             ) : (
               <>
@@ -1328,154 +1046,27 @@ export default function DomainPage() {
         </div>
       )}
 
-      <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3">
-        <div className="flex items-center justify-between">
-          <h3 className="font-semibold">Запуски</h3>
-          <span className="text-xs text-slate-500 dark:text-slate-400">Всего: {gens.length}</span>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
-            <thead>
-              <tr className="text-left text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
-                <th className="py-2 pr-4">№</th>
-                <th className="py-2 pr-4">Статус</th>
-                <th className="py-2 pr-4">Прогресс</th>
-                <th className="py-2 pr-4">Обновлено</th>
-                <th className="py-2 pr-4">Действия</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-              {gens.slice(0, visibleGens).map((g, idx) => {
-                const rowProgress = computeDisplayProgress(g.artifacts, g.progress, g.status);
-                return (
-                <tr key={g.id}>
-                  <td className="py-3 pr-4 text-xs text-slate-500 dark:text-slate-400">{idx + 1}</td>
-                  <td className="py-3 pr-4">
-                    <StatusBadge status={g.status} />
-                  </td>
-                  <td className="py-3 pr-4">{rowProgress}%</td>
-                  <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">{g.updated_at ? new Date(g.updated_at).toLocaleString() : "—"}</td>
-                  <td className="py-3 pr-4">
-                    <div className="flex items-center gap-3">
-                    <Link href={`/queue/${g.id}`} className="text-indigo-600 hover:underline">
-                      Открыть
-                    </Link>
-                      {g.status === "paused" && (
-                        <button
-                          onClick={() => resumeGeneration(g.id)}
-                          disabled={loading}
-                          className="text-emerald-500 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300 disabled:opacity-50"
-                          title="Возобновить"
-                        >
-                          <FiPlay className="w-4 h-4" />
-                        </button>
-                      )}
-                      {(g.status === "pending" || g.status === "processing" || g.status === "pause_requested" || g.status === "cancelling") && (
-                        <>
-                          {g.status !== "cancelling" && (
-                            <button
-                              onClick={() => pauseGeneration(g.id)}
-                              disabled={loading || g.status === "pause_requested"}
-                              className="text-amber-500 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300 disabled:opacity-50"
-                              title={g.status === "pause_requested" ? "Пауза запрошена" : "Пауза"}
-                            >
-                              <FiPause className="w-4 h-4" />
-                            </button>
-                          )}
-                          <button
-                            onClick={() => cancelGeneration(g.id)}
-                            disabled={loading || g.status === "cancelling"}
-                            className="text-orange-500 hover:text-orange-700 dark:text-orange-400 dark:hover:text-orange-300 disabled:opacity-50"
-                            title={g.status === "cancelling" ? "Отмена..." : "Отменить"}
-                          >
-                            <FiX className="w-4 h-4" />
-                          </button>
-                        </>
-                      )}
-                      {g.status === "cancelled" && (
-                        <button
-                          onClick={() => cancelGeneration(g.id)}
-                          disabled={loading}
-                          className="text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 disabled:opacity-50"
-                          title="Отменить"
-                        >
-                          <FiX className="w-4 h-4" />
-                        </button>
-                      )}
-                      <button
-                        onClick={() => deleteGeneration(g.id)}
-                        disabled={loading}
-                        className="text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 disabled:opacity-50"
-                        title="Удалить"
-                      >
-                        <FiTrash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              )})}
-              {gens.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="py-4 text-center text-slate-500 dark:text-slate-400">
-                    Запусков пока нет.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-        {gens.length > visibleGens && (
-          <div className="pt-2">
-            <button
-              onClick={() => setVisibleGens((v) => Math.min(gens.length, v + 3))}
-              className="text-sm text-indigo-600 hover:underline"
-            >
-              Показать ещё
-            </button>
-          </div>
-        )}
-      </div>
+      <DomainGenerationStatusSection
+        generations={gens}
+        visibleGenerations={visibleGens}
+        loading={loading}
+        renderStatusBadge={(status) => <StatusBadge status={status} />}
+        computeProgress={(generation) => computeDisplayProgress(generation.artifacts, generation.progress, generation.status)}
+        onResumeGeneration={resumeGeneration}
+        onPauseGeneration={pauseGeneration}
+        onCancelGeneration={cancelGeneration}
+        onDeleteGeneration={deleteGeneration}
+        onShowMore={() => setVisibleGens((v) => Math.min(gens.length, v + 3))}
+      />
 
-      {currentAttempt && currentAttempt.status !== "success" && (
-        <div id="domain-artifacts" className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="font-semibold">Последняя попытка</h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                Статус: <StatusBadge status={currentAttempt.status} /> · Прогресс: {latestDisplayProgress}%
-              </p>
-            </div>
-            <Link href={`/queue/${currentAttempt.id}`} className="text-sm text-indigo-600 hover:underline">
-              Открыть карточку запуска
-            </Link>
-          </div>
-          <AuditReport report={latestAttemptDetail?.artifacts?.audit_report} />
-          <LogsViewer logs={latestAttemptDetail?.logs} />
-          <ArtifactsViewer artifacts={latestAttemptDetail?.artifacts} />
-        </div>
-      )}
-
-      {latestSuccess && (
-        <div
-          id={currentAttempt && currentAttempt.status !== "success" ? undefined : "domain-artifacts"}
-          className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-4"
-        >
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="font-semibold">Последний успешный запуск</h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                Статус: <StatusBadge status={latestSuccess.status} /> · Обновлено: {latestSuccess.updated_at ? new Date(latestSuccess.updated_at).toLocaleString() : "—"}
-              </p>
-            </div>
-            <Link href={`/queue/${latestSuccess.id}`} className="text-sm text-indigo-600 hover:underline">
-              Открыть карточку запуска
-            </Link>
-          </div>
-          <AuditReport report={latestSuccessDetail?.artifacts?.audit_report} />
-          <LogsViewer logs={latestSuccessDetail?.logs} />
-          <ArtifactsViewer artifacts={latestSuccessDetail?.artifacts} />
-        </div>
-      )}
+      <DomainLogsSection
+        currentAttempt={currentAttempt}
+        latestSuccess={latestSuccess}
+        latestAttemptDetail={latestAttemptDetail}
+        latestSuccessDetail={latestSuccessDetail}
+        latestDisplayProgress={latestDisplayProgress}
+        renderStatusBadge={(status) => <StatusBadge status={status} />}
+      />
 
       {showResultHTMLModal && (
         <div className="fixed inset-0 z-50 bg-black/60 px-3 py-6 md:px-8 overflow-auto">
@@ -1642,18 +1233,20 @@ function formatBytes(value?: number): string {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, { text: string; tone: "amber" | "yellow" | "slate" | "orange" | "red" | "green"; icon: ReactNode }> = {
-    pending: { text: "В очереди", tone: "amber", icon: <FiClock /> },
-    processing: { text: "В работе", tone: "amber", icon: <FiPlay /> },
-    pause_requested: { text: "Пауза запрошена", tone: "yellow", icon: <FiPause /> },
-    paused: { text: "Приостановлено", tone: "slate", icon: <FiPause /> },
-    cancelling: { text: "Отмена...", tone: "orange", icon: <FiX /> },
-    cancelled: { text: "Отменено", tone: "red", icon: <FiX /> },
-    success: { text: "Готово", tone: "green", icon: <FiCheck /> },
-    error: { text: "Ошибка", tone: "red", icon: <FiAlertTriangle /> },
-  };
-  const cfg = map[status] || { text: status, tone: "slate" as const, icon: <FiClock /> };
-  return <Badge label={cfg.text} tone={cfg.tone} icon={cfg.icon} className="text-xs" />;
+  const meta = getGenerationStatusMeta(status);
+  const icon =
+    meta.icon === "play"
+      ? <FiPlay />
+      : meta.icon === "pause"
+        ? <FiPause />
+        : meta.icon === "check"
+          ? <FiCheck />
+          : meta.icon === "alert"
+            ? <FiAlertTriangle />
+            : meta.icon === "x"
+              ? <FiX />
+              : <FiClock />;
+  return <Badge label={meta.text} tone={meta.tone} icon={icon} className="text-xs" />;
 }
 
 function LinkTaskStatusBadge({ status }: { status: string }) {

@@ -12,43 +12,34 @@ import { showToast } from "../../../../lib/toastStore";
 import type { QueueItemDTO } from "../../../../types/queue";
 import type { LinkTaskDTO } from "../../../../types/linkTasks";
 import { Badge } from "../../../../components/Badge";
-import { canDeleteLinkTask, canRetryLinkTask, getLinkTaskStatusMeta, isLinkTaskInProgress, normalizeLinkTaskStatus } from "../../../../lib/linkTaskStatus";
+import { canRetryLinkTask, getLinkTaskStatusMeta, isLinkTaskInProgress, normalizeLinkTaskStatus } from "../../../../lib/linkTaskStatus";
+import { FilterDateInput } from "../../../../features/queue-monitoring/components/FilterDateInput";
+import { FilterSelect } from "../../../../features/queue-monitoring/components/FilterSelect";
+import { PaginationControls } from "../../../../features/queue-monitoring/components/PaginationControls";
+import { canDelete, canRetry, canRun } from "../../../../features/queue-monitoring/services/actionGuards";
+import {
+  PROJECT_QUEUE_HISTORY_STATUS_LABELS,
+  PROJECT_QUEUE_STATUS_LABELS,
+  QUEUE_LINK_STATUS_LABELS,
+  hasNextPageByPageSize,
+  resolveQueueTab
+} from "../../../../features/queue-monitoring/services/primitives";
 
 const statusOptions = ["all", "pending", "queued"];
-const STATUS_LABELS: Record<string, string> = {
-  all: "Все",
-  pending: "Ожидает",
-  queued: "В очереди"
-};
-
+const STATUS_FILTER_OPTIONS = statusOptions.map((value) => ({
+  value,
+  label: PROJECT_QUEUE_STATUS_LABELS[value] || value
+}));
 const historyStatusOptions = ["all", "completed", "failed"];
-const HISTORY_STATUS_LABELS: Record<string, string> = {
-  all: "Все",
-  completed: "Обработано",
-  failed: "Ошибка"
-};
-
-const linkStatusOptions = [
-  "all",
-  "pending",
-  "searching",
-  "removing",
-  "inserted",
-  "generated",
-  "removed",
-  "failed"
-];
-
-const LINK_STATUS_LABELS: Record<string, string> = {
-  all: "Все",
-  pending: "Ожидает",
-  searching: "Поиск",
-  removing: "Удаление",
-  inserted: "Вставлено",
-  generated: "Вставлено (ген. текст)",
-  removed: "Удалено",
-  failed: "Ошибка"
-};
+const HISTORY_STATUS_FILTER_OPTIONS = historyStatusOptions.map((value) => ({
+  value,
+  label: PROJECT_QUEUE_HISTORY_STATUS_LABELS[value] || value
+}));
+const linkStatusOptions = ["all", "pending", "searching", "removing", "inserted", "generated", "removed", "failed"];
+const LINK_STATUS_FILTER_OPTIONS = linkStatusOptions.map((value) => ({
+  value,
+  label: QUEUE_LINK_STATUS_LABELS[value] || value
+}));
 
 type Domain = {
   id: string;
@@ -102,8 +93,7 @@ export default function ProjectQueuePage() {
   const [linkSearch, setLinkSearch] = useState("");
   const [linkPage, setLinkPage] = useState(1);
   const linkPageSize = 20;
-  const tabParam = (searchParams.get("tab") || "domains").toLowerCase();
-  const activeTab = tabParam === "links" ? "links" : "domains";
+  const activeTab = resolveQueueTab(searchParams.get("tab"));
 
   useEffect(() => {
     let cancelled = false;
@@ -343,12 +333,15 @@ export default function ProjectQueuePage() {
     setLinkPage(1);
   }, [linkStatusFilter, linkDateFrom, linkDateTo, linkSearch]);
 
-  const genHasNext = items.length === genPageSize;
-  const historyHasNext = historyItems.length === historyPageSize;
-  const linkHasNext = linkTasks.length === linkPageSize;
+  const genHasNext = hasNextPageByPageSize(items.length, genPageSize);
+  const historyHasNext = hasNextPageByPageSize(historyItems.length, historyPageSize);
+  const linkHasNext = hasNextPageByPageSize(linkTasks.length, linkPageSize);
   const visibleItems = filtered;
   const visibleHistoryItems = filteredHistory;
   const visibleLinks = filteredLinks;
+  const cleanupGuard = canDelete({ busy: cleaning, allowed: true });
+  const refreshGuard = canRun({ busy: refreshing });
+  const linkRefreshGuard = canRun({ busy: linkRefreshing });
 
   const handleRemove = async (item: QueueItemDTO) => {
     const domainLabel = item.domain_url || domains[item.domain_id]?.url || "домен";
@@ -499,7 +492,8 @@ export default function ProjectQueuePage() {
             </Link>
             <button
               onClick={handleCleanup}
-              disabled={cleaning}
+              disabled={cleanupGuard.disabled}
+              title={cleanupGuard.reason}
               className="inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm font-semibold text-amber-700 hover:bg-amber-50 dark:border-amber-900/40 dark:bg-slate-800 dark:text-amber-200"
             >
               <FiRefreshCw className={cleaning ? "animate-spin" : ""} />
@@ -507,7 +501,8 @@ export default function ProjectQueuePage() {
             </button>
             <button
               onClick={handleRefresh}
-              disabled={refreshing}
+              disabled={refreshGuard.disabled}
+              title={refreshGuard.reason}
               className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
             >
               <FiRefreshCw className={refreshing ? "animate-spin" : ""} /> Обновить
@@ -547,38 +542,14 @@ export default function ProjectQueuePage() {
       <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3">
         <div className="text-sm font-semibold">Фильтры активной очереди генераций</div>
         <div className="grid gap-3 md:grid-cols-3">
-          <label className="text-sm space-y-1">
-            <span className="text-slate-600 dark:text-slate-300">Фильтр по статусу</span>
-            <select
-              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-            >
-              {statusOptions.map((opt) => (
-                <option key={opt} value={opt}>
-                  {STATUS_LABELS[opt] || opt}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="text-sm space-y-1">
-            <span className="text-slate-600 dark:text-slate-300">Фильтр по дате (от)</span>
-            <input
-              type="date"
-              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-              value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
-            />
-          </label>
-          <label className="text-sm space-y-1">
-            <span className="text-slate-600 dark:text-slate-300">Фильтр по дате (до)</span>
-            <input
-              type="date"
-              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-              value={dateTo}
-              onChange={(e) => setDateTo(e.target.value)}
-            />
-          </label>
+          <FilterSelect
+            label="Фильтр по статусу"
+            value={statusFilter}
+            options={STATUS_FILTER_OPTIONS}
+            onChange={setStatusFilter}
+          />
+          <FilterDateInput label="Фильтр по дате (от)" value={dateFrom} onChange={setDateFrom} />
+          <FilterDateInput label="Фильтр по дате (до)" value={dateTo} onChange={setDateTo} />
         </div>
         <input
           type="search"
@@ -594,38 +565,14 @@ export default function ProjectQueuePage() {
       <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3">
         <div className="text-sm font-semibold">Фильтры истории запусков</div>
         <div className="grid gap-3 md:grid-cols-3">
-          <label className="text-sm space-y-1">
-            <span className="text-slate-600 dark:text-slate-300">Фильтр по статусу</span>
-            <select
-              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-              value={historyStatusFilter}
-              onChange={(e) => setHistoryStatusFilter(e.target.value)}
-            >
-              {historyStatusOptions.map((opt) => (
-                <option key={opt} value={opt}>
-                  {HISTORY_STATUS_LABELS[opt] || opt}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="text-sm space-y-1">
-            <span className="text-slate-600 dark:text-slate-300">Фильтр по дате (от)</span>
-            <input
-              type="date"
-              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-              value={historyDateFrom}
-              onChange={(e) => setHistoryDateFrom(e.target.value)}
-            />
-          </label>
-          <label className="text-sm space-y-1">
-            <span className="text-slate-600 dark:text-slate-300">Фильтр по дате (до)</span>
-            <input
-              type="date"
-              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-              value={historyDateTo}
-              onChange={(e) => setHistoryDateTo(e.target.value)}
-            />
-          </label>
+          <FilterSelect
+            label="Фильтр по статусу"
+            value={historyStatusFilter}
+            options={HISTORY_STATUS_FILTER_OPTIONS}
+            onChange={setHistoryStatusFilter}
+          />
+          <FilterDateInput label="Фильтр по дате (от)" value={historyDateFrom} onChange={setHistoryDateFrom} />
+          <FilterDateInput label="Фильтр по дате (до)" value={historyDateTo} onChange={setHistoryDateTo} />
         </div>
         <input
           type="search"
@@ -641,38 +588,14 @@ export default function ProjectQueuePage() {
       <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3">
         <div className="text-sm font-semibold">Фильтры ссылок</div>
         <div className="grid gap-3 md:grid-cols-3">
-          <label className="text-sm space-y-1">
-            <span className="text-slate-600 dark:text-slate-300">Фильтр по статусу</span>
-            <select
-              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-              value={linkStatusFilter}
-              onChange={(e) => setLinkStatusFilter(e.target.value)}
-            >
-              {linkStatusOptions.map((opt) => (
-                <option key={opt} value={opt}>
-                  {LINK_STATUS_LABELS[opt] || opt}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="text-sm space-y-1">
-            <span className="text-slate-600 dark:text-slate-300">Фильтр по дате (от)</span>
-            <input
-              type="date"
-              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-              value={linkDateFrom}
-              onChange={(e) => setLinkDateFrom(e.target.value)}
-            />
-          </label>
-          <label className="text-sm space-y-1">
-            <span className="text-slate-600 dark:text-slate-300">Фильтр по дате (до)</span>
-            <input
-              type="date"
-              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-              value={linkDateTo}
-              onChange={(e) => setLinkDateTo(e.target.value)}
-            />
-          </label>
+          <FilterSelect
+            label="Фильтр по статусу"
+            value={linkStatusFilter}
+            options={LINK_STATUS_FILTER_OPTIONS}
+            onChange={setLinkStatusFilter}
+          />
+          <FilterDateInput label="Фильтр по дате (от)" value={linkDateFrom} onChange={setLinkDateFrom} />
+          <FilterDateInput label="Фильтр по дате (до)" value={linkDateTo} onChange={setLinkDateTo} />
         </div>
         <input
           type="search"
@@ -695,7 +618,8 @@ export default function ProjectQueuePage() {
             <span className="text-xs text-slate-500 dark:text-slate-400">Всего: {filteredLinks.length}</span>
             <button
               onClick={handleLinkRefresh}
-              disabled={linkRefreshing}
+              disabled={linkRefreshGuard.disabled}
+              title={linkRefreshGuard.reason}
               className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
             >
               <FiRefreshCw className={linkRefreshing ? "animate-spin" : ""} /> Обновить
@@ -731,8 +655,9 @@ export default function ProjectQueuePage() {
                   const domainHref = `/domains/${domain?.id || task.domain_id}`;
                   const actionLabel = (task.action || "insert") === "remove" ? "Удаление" : "Вставка";
                   const normalizedStatus = normalizeLinkTaskStatus(task.status) || task.status;
-                  const canRetry = canRetryLinkTask(task.status);
-                  const canDelete = canDeleteLinkTask(task.status);
+                  const canRetryByStatus = canRetryLinkTask(task.status);
+                  const retryGuard = canRetry({ busy: linkLoading, status: task.status, allowed: canRetryByStatus });
+                  const deleteGuard = canDelete({ busy: linkLoading, status: task.status });
                   const lastLog = task.log_lines?.length ? task.log_lines[task.log_lines.length - 1] : "";
                   const eventText = task.error_message || lastLog || "—";
                   return (
@@ -761,10 +686,11 @@ export default function ProjectQueuePage() {
                           <Link href={{ pathname: `/links/${task.id}` }} className="text-indigo-600 hover:underline">
                             Открыть
                           </Link>
-                          {canRetry && (
+                          {retryGuard.enabled && (
                             <button
                               onClick={() => handleLinkRetry(task)}
-                              disabled={linkLoading}
+                              disabled={retryGuard.disabled}
+                              title={retryGuard.reason}
                               className="inline-flex items-center gap-1 rounded-lg border border-amber-200 bg-white px-2 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:bg-slate-800 dark:text-amber-200"
                             >
                               <FiRotateCw /> Повтор
@@ -772,8 +698,8 @@ export default function ProjectQueuePage() {
                           )}
                           <button
                             onClick={() => handleLinkDelete(task)}
-                            disabled={linkLoading || !canDelete}
-                            title={!canDelete ? "Удаление недоступно для активных задач (ожидает/поиск/удаление)." : undefined}
+                            disabled={deleteGuard.disabled}
+                            title={deleteGuard.reason}
                             className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
                           >
                             <FiTrash2 /> Удалить
@@ -788,25 +714,12 @@ export default function ProjectQueuePage() {
           </div>
         )}
         {filteredLinks.length > 0 && (
-          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-            <span>Страница {linkPage}</span>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setLinkPage((p) => Math.max(1, p - 1))}
-                disabled={linkPage <= 1}
-                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              >
-                Назад
-              </button>
-              <button
-                onClick={() => setLinkPage((p) => p + 1)}
-                disabled={!linkHasNext}
-                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              >
-                Вперёд
-              </button>
-            </div>
-          </div>
+          <PaginationControls
+            page={linkPage}
+            hasNext={linkHasNext}
+            onPrev={() => setLinkPage((p) => Math.max(1, p - 1))}
+            onNext={() => setLinkPage((p) => p + 1)}
+          />
         )}
       </div>
       )}
@@ -838,6 +751,7 @@ export default function ProjectQueuePage() {
                 {visibleItems.map((item) => {
                   const domain = domains[item.domain_id];
                   const domainLabel = item.domain_url || domain?.url || "Домен";
+                  const removeGuard = canDelete({ busy: loading, allowed: true });
                   return (
                     <tr key={item.id}>
                       <td className="py-3 pr-4">
@@ -854,12 +768,13 @@ export default function ProjectQueuePage() {
                       <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">
                         {item.processed_at ? new Date(item.processed_at).toLocaleString() : "—"}
                       </td>
-                      <td className="py-3 pr-4">{STATUS_LABELS[item.status] || item.status}</td>
+                      <td className="py-3 pr-4">{PROJECT_QUEUE_STATUS_LABELS[item.status] || item.status}</td>
                       <td className="py-3 pr-4">{item.priority}</td>
                       <td className="py-3 pr-4 text-right">
                         <button
                           onClick={() => handleRemove(item)}
-                          disabled={loading}
+                          disabled={removeGuard.disabled}
+                          title={removeGuard.reason}
                           className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
                         >
                           <FiTrash2 /> Удалить из очереди
@@ -873,25 +788,12 @@ export default function ProjectQueuePage() {
           </div>
         )}
         {filtered.length > 0 && (
-          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-            <span>Страница {genPage}</span>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setGenPage((p) => Math.max(1, p - 1))}
-                disabled={genPage <= 1}
-                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              >
-                Назад
-              </button>
-              <button
-                onClick={() => setGenPage((p) => p + 1)}
-                disabled={!genHasNext}
-                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              >
-                Вперёд
-              </button>
-            </div>
-          </div>
+          <PaginationControls
+            page={genPage}
+            hasNext={genHasNext}
+            onPrev={() => setGenPage((p) => Math.max(1, p - 1))}
+            onNext={() => setGenPage((p) => p + 1)}
+          />
         )}
       </div>
       )}
@@ -935,7 +837,7 @@ export default function ProjectQueuePage() {
                       <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">
                         {item.processed_at ? new Date(item.processed_at).toLocaleString() : "—"}
                       </td>
-                      <td className="py-3 pr-4">{HISTORY_STATUS_LABELS[item.status] || item.status}</td>
+                      <td className="py-3 pr-4">{PROJECT_QUEUE_HISTORY_STATUS_LABELS[item.status] || item.status}</td>
                       <td
                         className={`py-3 pr-4 max-w-xs truncate ${item.status === "failed" && item.error_message ? "text-red-500" : "text-slate-500 dark:text-slate-400"}`}
                         title={formatQueueHistoryDetails(item)}
@@ -950,25 +852,12 @@ export default function ProjectQueuePage() {
           </div>
         )}
         {filteredHistory.length > 0 && (
-          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-            <span>Страница {historyPage}</span>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setHistoryPage((p) => Math.max(1, p - 1))}
-                disabled={historyPage <= 1}
-                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              >
-                Назад
-              </button>
-              <button
-                onClick={() => setHistoryPage((p) => p + 1)}
-                disabled={!historyHasNext}
-                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              >
-                Вперёд
-              </button>
-            </div>
-          </div>
+          <PaginationControls
+            page={historyPage}
+            hasNext={historyHasNext}
+            onPrev={() => setHistoryPage((p) => Math.max(1, p - 1))}
+            onNext={() => setHistoryPage((p) => p + 1)}
+          />
         )}
       </div>
       )}

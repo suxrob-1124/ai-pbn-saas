@@ -65,6 +65,36 @@ export const PROMPT_VARIABLES = [
     example: "{{ language }}",
     usage: "Код языка (например: sv, en, ru)",
   },
+  {
+    name: "site_context",
+    description: "Сжатый контекст текущего сайта для editor AI",
+    example: "{{ site_context }}",
+    usage: "Включает identity, структуру страниц, дизайн-токены и ключевые файлы",
+  },
+  {
+    name: "task_constraints",
+    description: "Технические ограничения текущей AI-операции",
+    example: "{{ task_constraints }}",
+    usage: "Содержит operation, target_path, context_mode, язык и другие ограничения",
+  },
+  {
+    name: "current_file_path",
+    description: "Путь текущего редактируемого файла",
+    example: "{{ current_file_path }}",
+    usage: "Используется в AI-редактировании файла для точного таргетинга",
+  },
+  {
+    name: "current_file_content",
+    description: "Текущее содержимое редактируемого файла",
+    example: "{{ current_file_content }}",
+    usage: "Передается в AI для изменения существующего файла без потери контекста",
+  },
+  {
+    name: "target_path",
+    description: "Целевой путь создаваемой страницы",
+    example: "{{ target_path }}",
+    usage: "Используется в AI-create-page для генерации файлов в нужный путь",
+  },
 ] as const;
 
 export function PromptVariablesHelp() {

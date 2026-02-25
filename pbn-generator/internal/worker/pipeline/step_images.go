@@ -17,6 +17,19 @@ const (
 	ModelGeminiImage = "gemini-2.5-flash-image"
 )
 
+func isImageModel(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	if model == "" {
+		return false
+	}
+	switch model {
+	case ModelGeminiImage:
+		return true
+	default:
+		return strings.Contains(model, "image")
+	}
+}
+
 type ImageTask struct {
 	Slug   string `json:"slug"`
 	Prompt string `json:"prompt"`
@@ -102,7 +115,10 @@ func (s *ImageGenerationStep) Execute(ctx context.Context, state *PipelineState)
 
 	// Определяем модель для генерации изображений
 	imageModelToUse := promptModel
-	if imageModelToUse == "" {
+	if imageModelToUse == "" || !isImageModel(imageModelToUse) {
+		if imageModelToUse != "" && !isImageModel(imageModelToUse) {
+			state.AppendLog(fmt.Sprintf("Предупреждение: модель %s не поддерживает генерацию изображений, используем %s", imageModelToUse, ModelGeminiImage))
+		}
 		imageModelToUse = ModelGeminiImage
 	}
 	state.AppendLog(fmt.Sprintf("Используется модель для генерации изображений: %s", imageModelToUse))
@@ -169,23 +185,18 @@ func (s *ImageGenerationStep) Execute(ctx context.Context, state *PipelineState)
 			continue
 		}
 
-		// Сохраняем оригинал (предполагаем PNG/JPEG от модели)
-		origEncoded := base64.StdEncoding.EncodeToString(bytesImg)
-		generated = append(generated, GeneratedFile{
-			Path:          fmt.Sprintf("%s.png", safeSlug),
-			ContentBase64: origEncoded,
-		})
-
-		// Пытаемся сконвертировать в WebP
-		if webpBytes, err := convertToWebP(bytesImg); err == nil {
-			webpEncoded := base64.StdEncoding.EncodeToString(webpBytes)
-			generated = append(generated, GeneratedFile{
-				Path:          fmt.Sprintf("%s.webp", safeSlug),
-				ContentBase64: webpEncoded,
-			})
-		} else {
-			state.AppendLog(fmt.Sprintf("⚠️ WebP conversion failed for %s (original slug: %s): %v. Saving only original.", safeSlug, task.Slug, err))
+		// Всегда конвертируем в WebP и сохраняем только WebP-артефакт.
+		webpBytes, err := convertToWebP(bytesImg)
+		if err != nil {
+			state.AppendLog(fmt.Sprintf("⚠️ WebP conversion failed for %s (original slug: %s): %v", safeSlug, task.Slug, err))
+			imageFailures++
+			continue
 		}
+		webpEncoded := base64.StdEncoding.EncodeToString(webpBytes)
+		generated = append(generated, GeneratedFile{
+			Path:          fmt.Sprintf("%s.webp", safeSlug),
+			ContentBase64: webpEncoded,
+		})
 	}
 
 	artifacts := map[string]any{
