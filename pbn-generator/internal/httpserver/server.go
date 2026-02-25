@@ -2239,6 +2239,16 @@ func (s *Server) handleDomainGenerate(w http.ResponseWriter, r *http.Request, do
 	gens, err := s.generations.ListByDomain(r.Context(), domainID)
 	if err == nil && len(gens) > 0 {
 		lastGen := gens[0]
+		updated, _, recoverErr := s.recoverStaleGenerationTransition(r.Context(), lastGen, &d)
+		if recoverErr != nil && s.logger != nil {
+			s.logger.Warnw("failed to recover stale generation transition before run",
+				"generation_id", lastGen.ID,
+				"status", lastGen.Status,
+				"error", recoverErr,
+			)
+		} else {
+			lastGen = updated
+		}
 		if activeStatuses[lastGen.Status] {
 			writeError(w, http.StatusConflict, "generation already running for this domain")
 			return
@@ -2862,13 +2872,33 @@ func (s *Server) handleGenerations(w http.ResponseWriter, r *http.Request) {
 	}
 	domainMap := map[string]string{}
 	if s.domains != nil {
-		for _, g := range list {
-			if _, ok := domainMap[g.DomainID]; ok {
+		domainCache := map[string]*sqlstore.Domain{}
+		for i := range list {
+			g := list[i]
+			domain, cached := domainCache[g.DomainID]
+			if !cached {
+				d, err := s.domains.Get(r.Context(), g.DomainID)
+				if err == nil {
+					dCopy := d
+					domain = &dCopy
+					domainCache[g.DomainID] = domain
+					if strings.TrimSpace(dCopy.URL) != "" {
+						domainMap[g.DomainID] = dCopy.URL
+					}
+				} else {
+					domainCache[g.DomainID] = nil
+				}
+			}
+			updated, _, recoverErr := s.recoverStaleGenerationTransition(r.Context(), g, domain)
+			if recoverErr != nil && s.logger != nil {
+				s.logger.Warnw("failed to recover stale generation transition",
+					"generation_id", g.ID,
+					"status", g.Status,
+					"error", recoverErr,
+				)
 				continue
 			}
-			if d, err := s.domains.Get(r.Context(), g.DomainID); err == nil && strings.TrimSpace(d.URL) != "" {
-				domainMap[g.DomainID] = d.URL
-			}
+			list[i] = updated
 		}
 	}
 	resp := make([]generationDTO, 0, len(list))
@@ -2881,6 +2911,83 @@ func (s *Server) handleGenerations(w http.ResponseWriter, r *http.Request) {
 		resp = append(resp, toGenerationDTOWithDomain(g, url))
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+const defaultGenerationTransitionStaleAfter = 2 * time.Minute
+
+func (s *Server) recoverStaleGenerationTransition(
+	ctx context.Context,
+	gen sqlstore.Generation,
+	domain *sqlstore.Domain,
+) (sqlstore.Generation, bool, error) {
+	status := strings.TrimSpace(gen.Status)
+	if status != "pause_requested" && status != "cancelling" {
+		return gen, false, nil
+	}
+	staleAfter := s.cfg.GenerationTransitionStaleAfter
+	if staleAfter <= 0 {
+		staleAfter = defaultGenerationTransitionStaleAfter
+	}
+	if gen.UpdatedAt.IsZero() || time.Since(gen.UpdatedAt) < staleAfter {
+		return gen, false, nil
+	}
+	if s.domains == nil {
+		return gen, false, nil
+	}
+	if domain == nil {
+		d, err := s.domains.Get(ctx, gen.DomainID)
+		if err != nil {
+			return gen, false, nil
+		}
+		domain = &d
+	}
+
+	nextStatus := "paused"
+	finishedAt := nullableTimePtr(gen.FinishedAt)
+	if status == "cancelling" {
+		nextStatus = "cancelled"
+		if finishedAt == nil {
+			now := time.Now().UTC()
+			finishedAt = &now
+		}
+	}
+
+	if err := s.generations.UpdateFull(
+		ctx,
+		gen.ID,
+		nextStatus,
+		gen.Progress,
+		nil,
+		gen.Logs,
+		gen.Artifacts,
+		nullableTimePtr(gen.StartedAt),
+		finishedAt,
+		nil,
+	); err != nil {
+		return gen, false, err
+	}
+	if status == "cancelling" {
+		if err := s.generations.ClearCheckpoint(ctx, gen.ID); err != nil && s.logger != nil {
+			s.logger.Warnw("failed to clear generation checkpoint on stale cancel recovery",
+				"generation_id", gen.ID,
+				"error", err,
+			)
+		}
+	}
+	if domain != nil {
+		_ = s.domains.UpdateStatus(ctx, gen.DomainID, stableDomainStatusFromDomain(*domain))
+	}
+
+	updated, err := s.generations.Get(ctx, gen.ID)
+	if err == nil {
+		return updated, true, nil
+	}
+	gen.Status = nextStatus
+	gen.UpdatedAt = time.Now().UTC()
+	if nextStatus == "cancelled" && !gen.FinishedAt.Valid {
+		gen.FinishedAt = sql.NullTime{Time: gen.UpdatedAt, Valid: true}
+	}
+	return gen, true, nil
 }
 
 func (s *Server) genQueueForProject(projectID string) string {
@@ -2909,6 +3016,16 @@ func (s *Server) handleGenerationByID(w http.ResponseWriter, r *http.Request) {
 		if _, err := s.authorizeProject(r.Context(), d.ProjectID); err != nil {
 			respondAuthzError(w, err, "forbidden")
 			return
+		}
+		updated, _, recoverErr := s.recoverStaleGenerationTransition(r.Context(), gen, &d)
+		if recoverErr != nil && s.logger != nil {
+			s.logger.Warnw("failed to recover stale generation transition",
+				"generation_id", gen.ID,
+				"status", gen.Status,
+				"error", recoverErr,
+			)
+		} else {
+			gen = updated
 		}
 		writeJSON(w, http.StatusOK, toGenerationDTO(gen))
 	case http.MethodPatch:

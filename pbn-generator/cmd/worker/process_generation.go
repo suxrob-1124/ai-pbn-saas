@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -130,6 +131,51 @@ func processGeneration(
 		}
 	}
 	defer flushLogs(true)
+
+	// runCtx позволяет быстро прерывать длинный шаг по запросу pause/cancel без ожидания конца шага.
+	runCtx, runCancel := context.WithCancel(ctx)
+	defer runCancel()
+
+	stopWatcher := make(chan struct{})
+	var (
+		stopReasonMu sync.Mutex
+		stopReason   string
+	)
+	setStopReason := func(v string) {
+		stopReasonMu.Lock()
+		stopReason = strings.TrimSpace(v)
+		stopReasonMu.Unlock()
+	}
+	getStopReason := func() string {
+		stopReasonMu.Lock()
+		defer stopReasonMu.Unlock()
+		return stopReason
+	}
+
+	go func() {
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopWatcher:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				current, err := genStore.Get(ctx, payload.GenerationID)
+				if err != nil {
+					continue
+				}
+				switch current.Status {
+				case "pause_requested", "cancelling":
+					setStopReason(current.Status)
+					runCancel()
+					return
+				}
+			}
+		}
+	}()
+	defer close(stopWatcher)
 
 	// Загружаем domain и project
 	domain, err := domainStore.Get(ctx, payload.DomainID)
@@ -387,7 +433,32 @@ func processGeneration(
 		}
 		return g.Status, nil
 	}
-	if err := generationPipeline.Run(ctx); err != nil {
+	if err := generationPipeline.Run(runCtx); err != nil {
+		if errors.Is(err, context.Canceled) {
+			reason := getStopReason()
+			if reason == "" {
+				if latest, gerr := genStore.Get(ctx, payload.GenerationID); gerr == nil {
+					reason = strings.TrimSpace(latest.Status)
+				}
+			}
+			switch reason {
+			case "pause_requested":
+				appendLog("Pipeline paused by request")
+				logBytes, _ := json.Marshal(logs)
+				gen, _ := genStore.Get(ctx, payload.GenerationID)
+				_ = genStore.UpdateFull(ctx, payload.GenerationID, "paused", gen.Progress, nil, logBytes, gen.Artifacts, &now, nil, nil)
+				_ = domainStore.UpdateStatus(ctx, payload.DomainID, stableDomainStatus(domain))
+				return nil
+			case "cancelling":
+				appendLog("Pipeline cancelled by request")
+				logBytes, _ := json.Marshal(logs)
+				gen, _ := genStore.Get(ctx, payload.GenerationID)
+				_ = genStore.UpdateFull(ctx, payload.GenerationID, "cancelled", gen.Progress, nil, logBytes, gen.Artifacts, &now, pipeline.PtrTime(time.Now()), nil)
+				_ = genStore.ClearCheckpoint(ctx, payload.GenerationID)
+				_ = domainStore.UpdateStatus(ctx, payload.DomainID, stableDomainStatus(domain))
+				return nil
+			}
+		}
 		if err == pipeline.ErrPipelinePaused {
 			appendLog("Pipeline paused by request")
 			logBytes, _ := json.Marshal(logs)
@@ -407,6 +478,15 @@ func processGeneration(
 		// Обрабатываем ошибки паузы/отмены отдельно
 		if err.Error() == "generation paused" || err.Error() == "generation cancelled" {
 			return nil // Это не ошибка, а нормальное завершение
+		}
+		// Если статус уже зафиксирован как paused/cancelled (например, через API recovery),
+		// не переводим задачу в error даже если pipeline вернул служебную ошибку.
+		if latest, gerr := genStore.Get(ctx, payload.GenerationID); gerr == nil {
+			switch strings.TrimSpace(latest.Status) {
+			case "paused", "cancelled":
+				_ = domainStore.UpdateStatus(ctx, payload.DomainID, stableDomainStatus(domain))
+				return nil
+			}
 		}
 
 		errMsg := err.Error()
