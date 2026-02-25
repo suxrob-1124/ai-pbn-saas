@@ -1,7 +1,9 @@
 "use client";
 
+import Link from "next/link";
+import type { UrlObject } from "url";
 import { useAuthGuard } from "../../lib/useAuth";
-import { FiActivity, FiCheckCircle, FiClock, FiAlertTriangle } from "react-icons/fi";
+import { FiActivity, FiCheckCircle, FiClock, FiAlertTriangle, FiDollarSign } from "react-icons/fi";
 
 export default function MonitoringPage() {
   useAuthGuard();
@@ -28,6 +30,20 @@ export default function MonitoringPage() {
       <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-xl">
         <h2 className="text-xl font-semibold mb-2">Мониторинг</h2>
         <p className="text-sm text-slate-500 dark:text-slate-400">Плейсхолдер под статус сервисов и метрики.</p>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Link
+            href={{ pathname: "/monitoring/indexing" } as UrlObject}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+          >
+            <FiActivity /> Индексация
+          </Link>
+          <Link
+            href={{ pathname: "/monitoring/llm-usage" } as UrlObject}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+          >
+            <FiDollarSign /> LLM Usage
+          </Link>
+        </div>
       </div>
       <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow">
         <div className="space-y-3">

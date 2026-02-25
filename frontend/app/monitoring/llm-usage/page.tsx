@@ -7,6 +7,8 @@ import { useAuthGuard } from "../../../lib/useAuth";
 import type { LLMPricingDTO, LLMUsageEventDTO, LLMUsageFilters, LLMUsageStatsDTO } from "../../../types/llmUsage";
 import { getTotalPages } from "../../../features/queue-monitoring/services/primitives";
 import { canRun } from "../../../features/queue-monitoring/services/actionGuards";
+import { UsageCostValue } from "../../../features/llm-usage/components/UsageCostValue";
+import { UsageTokenSourceBadge } from "../../../features/llm-usage/components/UsageTokenSourceBadge";
 
 const DEFAULT_LIMIT = 50;
 
@@ -106,9 +108,9 @@ export default function LLMUsageMonitoringPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-        <StatCard label="Requests" value={stats?.total_requests ?? 0} />
-        <StatCard label="Tokens" value={stats?.total_tokens ?? 0} />
-        <StatCard label="Estimated cost (USD)" value={(stats?.total_cost_usd ?? 0).toFixed(6)} />
+        <StatCard label="Запросы" value={stats?.total_requests ?? 0} />
+        <StatCard label="Токены" value={stats?.total_tokens ?? 0} />
+        <StatCard label="Стоимость (USD)" value={(stats?.total_cost_usd ?? 0).toFixed(6)} />
       </div>
 
       <div className="rounded-xl border border-slate-200 bg-white/80 p-4 dark:border-slate-800 dark:bg-slate-900/60">
@@ -173,23 +175,8 @@ export default function LLMUsageMonitoringPage() {
                   <td className="py-2 pr-4">{item.operation}</td>
                   <td className="py-2 pr-4">{item.model}</td>
                   <td className="py-2 pr-4">{item.total_tokens ?? "n/a"}</td>
-                  <td className="py-2 pr-4">
-                    {item.estimated_cost_usd != null ? (
-                      item.estimated_cost_usd.toFixed(6)
-                    ) : (
-                      <span title="нет активного тарифа модели на момент запроса">n/a</span>
-                    )}
-                  </td>
-                  <td className="py-2 pr-4">
-                    <div className="flex items-center gap-1">
-                      <span className="rounded bg-slate-100 px-2 py-1 text-xs dark:bg-slate-800">{item.token_source}</span>
-                      {item.token_source !== "provider" && (
-                        <span className="rounded bg-amber-100 px-2 py-1 text-xs text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
-                          estimated
-                        </span>
-                      )}
-                    </div>
-                  </td>
+                  <td className="py-2 pr-4"><UsageCostValue value={item.estimated_cost_usd} /></td>
+                  <td className="py-2 pr-4"><UsageTokenSourceBadge tokenSource={item.token_source} /></td>
                 </tr>
               ))}
               {events.length === 0 && (

@@ -7,6 +7,8 @@ import { FiDollarSign, FiRefreshCw } from "react-icons/fi";
 import { listProjectLLMUsageEvents, listProjectLLMUsageStats } from "../../../../lib/llmUsageApi";
 import { useAuthGuard } from "../../../../lib/useAuth";
 import type { LLMUsageEventDTO, LLMUsageFilters, LLMUsageStatsDTO } from "../../../../types/llmUsage";
+import { UsageCostValue } from "../../../../features/llm-usage/components/UsageCostValue";
+import { UsageTokenSourceBadge } from "../../../../features/llm-usage/components/UsageTokenSourceBadge";
 
 const DEFAULT_LIMIT = 50;
 
@@ -98,9 +100,9 @@ export default function ProjectLLMUsagePage() {
       </div>
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-        <StatCard label="Requests" value={stats?.total_requests ?? 0} />
-        <StatCard label="Tokens" value={stats?.total_tokens ?? 0} />
-        <StatCard label="Estimated cost (USD)" value={(stats?.total_cost_usd ?? 0).toFixed(6)} />
+        <StatCard label="Запросы" value={stats?.total_requests ?? 0} />
+        <StatCard label="Токены" value={stats?.total_tokens ?? 0} />
+        <StatCard label="Стоимость (USD)" value={(stats?.total_cost_usd ?? 0).toFixed(6)} />
       </div>
 
       <div className="rounded-xl border border-slate-200 bg-white/80 p-4 dark:border-slate-800 dark:bg-slate-900/60">
@@ -146,10 +148,8 @@ export default function ProjectLLMUsagePage() {
                     </span>
                   </td>
                   <td className="py-2 pr-4">{item.total_tokens ?? "n/a"}</td>
-                  <td className="py-2 pr-4">{item.estimated_cost_usd != null ? item.estimated_cost_usd.toFixed(6) : "n/a"}</td>
-                  <td className="py-2 pr-4">
-                    <span className="rounded bg-slate-100 px-2 py-1 text-xs dark:bg-slate-800">{item.token_source}</span>
-                  </td>
+                  <td className="py-2 pr-4"><UsageCostValue value={item.estimated_cost_usd} /></td>
+                  <td className="py-2 pr-4"><UsageTokenSourceBadge tokenSource={item.token_source} /></td>
                 </tr>
               ))}
               {items.length === 0 && (
