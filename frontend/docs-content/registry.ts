@@ -139,6 +139,224 @@ export const docsPages = {
       },
     ],
   } satisfies DocsPageContent,
+
+  indexing: {
+    title: "Мониторинг · Индексация",
+    description: "Мониторинг индексации доменов и аналитика по проверкам.",
+    intro:
+      "Отслеживание индексации доменов: ежедневные проверки, история попыток, статистика и календарь.",
+    sections: [
+      {
+        paragraphs: [
+          "Для каждого домена создаётся ежедневная проверка. Результат фиксируется как «в индексе» или «не в индексе», а ошибки переводят задачу в ретраи.",
+          "Обычным пользователям мониторинг доступен из карточки проекта через кнопку «Индексация». Администраторы дополнительно могут открыть глобальный мониторинг через Monitoring → Indexing.",
+        ],
+      },
+      {
+        title: "Как работает проверка",
+        listType: "numbered",
+        listItems: [
+          "Сервис indexchecker запускается по cron @every 1h и выполняет тик.",
+          "Для каждого опубликованного домена создаётся проверка на текущую дату. Уникальность: пара (domain_id, check_date).",
+          "В работу берутся pending/checking проверки с наступившим next_retry_at.",
+          "Для каждой проверки вызывается SERP API с запросом site:<domain> (с punycode-нормализацией).",
+          "При успешном ответе статус становится success, а is_indexed = true/false.",
+          "При ошибке выполняется ретрай или статус переходит в failed_investigation.",
+        ],
+      },
+      {
+        title: "Статусы",
+        listType: "bullet",
+        listItems: [
+          "pending — создана, ожидает запуска",
+          "checking — идёт проверка или запланирован повтор",
+          "success — получен финальный ответ (в индексе/не в индексе)",
+          "failed_investigation — превышен лимит попыток",
+        ],
+        paragraphs: [
+          "Важно: «не в индексе» — это корректный результат и считается успешной проверкой.",
+        ],
+      },
+      {
+        title: "Какие домены участвуют",
+        listType: "bullet",
+        listItems: [
+          "Только опубликованные домены: status = published или заполнен published_at.",
+          "URL домена должен быть задан.",
+        ],
+        paragraphs: [
+          "Для непубликованных доменов проверка и ручной запуск блокируются.",
+        ],
+      },
+      {
+        title: "Алгоритм запроса (SERP)",
+        listType: "bullet",
+        listItems: [
+          "Запрос: site:<domain> (punycode).",
+          "Гео берётся из домена, иначе из проекта, иначе fallback se.",
+          "Таймауты и ретраи SERP используют общие настройки анализатора.",
+          "Файлы с диска не читаются: используется только URL и SERP-ответ.",
+        ],
+      },
+      {
+        title: "Ретраи и расписание",
+        listType: "bullet",
+        listItems: [
+          "Attempt 1: 30 минут",
+          "Attempt 2: 1 час",
+          "Attempt 3: 2 часа",
+          "Attempt 4: 4 часа",
+          "Максимум: 8 попыток в сутки",
+        ],
+        paragraphs: [
+          "Если прошло 24 часа с момента создания проверки или превышен лимит попыток, статус становится failed_investigation.",
+        ],
+      },
+      {
+        title: "История попыток",
+        paragraphs: [
+          "Каждая попытка логируется в index_check_history: result (success/error/timeout), duration_ms, response_data или error_message.",
+          "Эти данные используются для истории в UI и для аналитики.",
+        ],
+      },
+      {
+        title: "Фильтры и сортировка",
+        listType: "bullet",
+        listItems: [
+          "Статусы (multi-select).",
+          "Период from/to.",
+          "Фильтр isIndexed (true/false).",
+          "Поиск по domain_id или URL.",
+          "Сортировка по дате, домену, статусу и другим колонкам.",
+        ],
+      },
+      {
+        title: "Ручной запуск",
+        paragraphs: [
+          "Ручной запуск доступен на уровне домена, проекта и для администратора в глобальном списке.",
+          "После запуска статус сбрасывается в pending и проверка выполняется по расписанию.",
+          "Ручной запуск доступен только для опубликованных доменов.",
+        ],
+      },
+      {
+        title: "Админ-возможности",
+        adminOnly: true,
+        listType: "bullet",
+        listItems: [
+          "Глобальный список всех проверок по всем доменам.",
+          "Фильтр по домену и поиск по URL/ID.",
+          "Запуск проверки вручную для любого домена.",
+          "Отдельный список проблемных проверок (failed_investigation).",
+        ],
+        paragraphs: ["Раздел доступен только пользователям с ролью администратора."],
+      },
+      {
+        title: "Статистика и календарь",
+        paragraphs: [
+          "Агрегаты показывают процент индексации, среднее число попыток до успеха, failed_investigation за период и дневную динамику.",
+        ],
+      },
+    ],
+  } satisfies DocsPageContent,
+
+  indexingApi: {
+    title: "API проверок индексации",
+    description: "Примеры запросов для мониторинга индексации.",
+    intro: "Примеры API-запросов для мониторинга индексации в дополнение к Swagger UI.",
+    sections: [
+      {
+        paragraphs: [
+          "Все запросы требуют cookie access_token. В curl указывайте cookie вручную (значение можно взять из DevTools).",
+        ],
+      },
+      {
+        title: "Список проверок по домену",
+        codeBlocks: [
+          {
+            code: `curl -s \\
+  -H "Cookie: access_token=YOUR_TOKEN" \\
+  "http://localhost:8080/api/domains/{domainId}/index-checks?status=success,checking&is_indexed=true&from=2026-02-01&to=2026-02-12&search=example.com&sort=check_date:desc&limit=20&page=1"`,
+            caption: "Ответ: { items: IndexCheck[], total: number }",
+          },
+        ],
+      },
+      {
+        title: "История попыток",
+        codeBlocks: [
+          {
+            code: `curl -s \\
+  -H "Cookie: access_token=YOUR_TOKEN" \\
+  "http://localhost:8080/api/domains/{domainId}/index-checks/{checkId}/history?limit=50"`,
+          },
+        ],
+      },
+      {
+        title: "Статистика и календарь",
+        codeBlocks: [
+          {
+            code: `curl -s \\
+  -H "Cookie: access_token=YOUR_TOKEN" \\
+  "http://localhost:8080/api/domains/{domainId}/index-checks/stats?from=2026-02-01&to=2026-02-12"`,
+          },
+          {
+            code: `curl -s \\
+  -H "Cookie: access_token=YOUR_TOKEN" \\
+  "http://localhost:8080/api/domains/{domainId}/index-checks/calendar?month=2026-02"`,
+          },
+        ],
+      },
+      {
+        title: "Запуск вручную (домен)",
+        codeBlocks: [
+          {
+            code: `curl -s -X POST \\
+  -H "Cookie: access_token=YOUR_TOKEN" \\
+  "http://localhost:8080/api/domains/{domainId}/index-checks"`,
+            caption: "В ответе доступны поля run_now_enqueued и run_now_error.",
+          },
+        ],
+      },
+      {
+        title: "Проектные проверки",
+        codeBlocks: [
+          {
+            code: `curl -s \\
+  -H "Cookie: access_token=YOUR_TOKEN" \\
+  "http://localhost:8080/api/projects/{projectId}/index-checks?status=success&limit=20&page=1"`,
+          },
+          {
+            code: `curl -s -X POST \\
+  -H "Cookie: access_token=YOUR_TOKEN" \\
+  "http://localhost:8080/api/projects/{projectId}/index-checks"`,
+            caption:
+              "Ответ содержит counters: created, updated, skipped, upsert_failed, enqueued, enqueue_failed.",
+          },
+        ],
+      },
+      {
+        title: "Admin-эндпоинты",
+        codeBlocks: [
+          {
+            code: `curl -s \\
+  -H "Cookie: access_token=YOUR_TOKEN" \\
+  "http://localhost:8080/api/admin/index-checks?domain_id={domainId}&limit=20&page=1"`,
+          },
+          {
+            code: `curl -s -X POST \\
+  -H "Content-Type: application/json" \\
+  -H "Cookie: access_token=YOUR_TOKEN" \\
+  -d '{ "domain_id": "{domainId}" }' \\
+  "http://localhost:8080/api/admin/index-checks/run"`,
+          },
+          {
+            code: `curl -s \\
+  -H "Cookie: access_token=YOUR_TOKEN" \\
+  "http://localhost:8080/api/admin/index-checks/failed?limit=20&page=1"`,
+          },
+        ],
+      },
+    ],
+  } satisfies DocsPageContent,
 };
 
 export type DocsPageKey = keyof typeof docsPages;
