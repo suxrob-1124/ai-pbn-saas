@@ -4,6 +4,7 @@ import { useState } from "react";
 import { FiEdit2, FiRefreshCw, FiTrash2 } from "react-icons/fi";
 import type { ScheduleDTO } from "../types/schedules";
 import { ScheduleTrigger } from "./ScheduleTrigger";
+import { canCancel, canDelete, canRun } from "../features/queue-monitoring/services/actionGuards";
 
 const STRATEGY_LABELS: Record<string, string> = {
   immediate: "Сразу",
@@ -40,6 +41,7 @@ export function ScheduleList({
   onDelete
 }: ScheduleListProps) {
   const [pendingDelete, setPendingDelete] = useState<ScheduleDTO | null>(null);
+  const refreshGuard = canRun({ busy: loading });
   const tz = (timezone || "").trim();
   const formatDateTime = (value?: string) => {
     if (!value) return "—";
@@ -71,7 +73,8 @@ export function ScheduleList({
         <h3 className="font-semibold">{title || "Список расписаний"}</h3>
         <button
           onClick={onRefresh}
-          disabled={loading}
+          disabled={refreshGuard.disabled}
+          title={refreshGuard.reason}
           className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
         >
           <FiRefreshCw /> Обновить
@@ -105,7 +108,14 @@ export function ScheduleList({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-              {schedules.map((sched) => (
+              {schedules.map((sched) => {
+                const runGuard = canRun({ busy: loading });
+                const editGuard = canRun({ busy: loading });
+                const toggleGuard = sched.isActive
+                  ? canCancel({ busy: loading, allowed: true })
+                  : canRun({ busy: loading });
+                const deleteGuard = canDelete({ busy: loading, allowed: true });
+                return (
                 <tr key={sched.id}>
                   <td className="py-3 pr-4 font-medium">{sched.name}</td>
                   <td className="py-3 pr-4">{STRATEGY_LABELS[sched.strategy] || sched.strategy}</td>
@@ -126,31 +136,39 @@ export function ScheduleList({
                     })()}
                   </td>
                   <td className="py-3 pr-4 text-right space-x-2">
-                    <ScheduleTrigger onClick={() => onTrigger(sched)} disabled={loading} />
+                    <ScheduleTrigger
+                      onClick={() => onTrigger(sched)}
+                      disabled={runGuard.disabled}
+                      disabledReason={runGuard.reason}
+                    />
                     <button
                       onClick={() => onEdit(sched)}
-                      disabled={loading}
+                      disabled={editGuard.disabled}
+                      title={editGuard.reason}
                       className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                     >
                       <FiEdit2 /> Редактировать
                     </button>
                     <button
                       onClick={() => onToggle(sched)}
-                      disabled={loading}
+                      disabled={toggleGuard.disabled}
+                      title={toggleGuard.reason}
                       className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                     >
                       {sched.isActive ? "Пауза" : "Активировать"}
                     </button>
                     <button
                       onClick={() => setPendingDelete(sched)}
-                      disabled={loading}
+                      disabled={deleteGuard.disabled}
+                      title={deleteGuard.reason}
                       className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
                     >
                       <FiTrash2 /> Удалить
                     </button>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

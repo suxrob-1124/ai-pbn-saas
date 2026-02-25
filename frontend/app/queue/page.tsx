@@ -12,6 +12,7 @@ import type { LinkTaskDTO } from "../../types/linkTasks";
 import { Badge } from "../../components/Badge";
 import { getLinkTaskStatusMeta, isLinkTaskInProgress, normalizeLinkTaskStatus } from "../../lib/linkTaskStatus";
 import { PaginationControls } from "../../features/queue-monitoring/components/PaginationControls";
+import { canDelete, canRetry, canRun } from "../../features/queue-monitoring/services/actionGuards";
 import {
   QUEUE_LINK_STATUS_LABELS,
   hasNextPageByPageSize,
@@ -245,6 +246,7 @@ function QueuePageContent() {
   const visibleLinks = filteredLinks;
   const genIndexBase = (genPage - 1) * genPageSize;
   const linkIndexBase = (linkPage - 1) * linkPageSize;
+  const refreshGuard = canRun({ busy: loading || linkLoading });
 
   const handleLinkRetry = async (task: LinkTaskDTO) => {
     const domainLabel = linkDomains[task.domain_id] || "домен";
@@ -310,7 +312,8 @@ function QueuePageContent() {
         <div className="flex flex-wrap gap-2">
           <button
             onClick={handleRefresh}
-            disabled={loading || linkLoading}
+            disabled={refreshGuard.disabled}
+            title={refreshGuard.reason}
             className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
           >
             <FiRefreshCw /> Обновить всё
@@ -478,6 +481,8 @@ function QueuePageContent() {
                   const lastLog = task.log_lines?.length ? task.log_lines[task.log_lines.length - 1] : "";
                   const eventText = task.error_message || lastLog || "—";
                   const domainLabel = linkDomains[task.domain_id] || "Домен";
+                  const retryGuard = canRetry({ busy: linkLoading, status: task.status });
+                  const deleteGuard = canDelete({ busy: linkLoading, status: task.status });
                   return (
                     <tr key={task.id}>
                       <td className="py-3 pr-4 text-xs text-slate-500 dark:text-slate-400">
@@ -510,7 +515,8 @@ function QueuePageContent() {
                           {(normalizeLinkTaskStatus(task.status) || task.status) === "failed" && (
                             <button
                               onClick={() => handleLinkRetry(task)}
-                              disabled={linkLoading}
+                              disabled={retryGuard.disabled}
+                              title={retryGuard.reason}
                               className="inline-flex items-center gap-1 rounded-lg border border-amber-200 bg-white px-2 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:bg-slate-800 dark:text-amber-200"
                             >
                               <FiRotateCw /> Повтор
@@ -518,7 +524,8 @@ function QueuePageContent() {
                           )}
                           <button
                             onClick={() => handleLinkDelete(task)}
-                            disabled={linkLoading}
+                            disabled={deleteGuard.disabled}
+                            title={deleteGuard.reason}
                             className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
                           >
                             <FiTrash2 /> Удалить

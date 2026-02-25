@@ -12,10 +12,11 @@ import { showToast } from "../../../../lib/toastStore";
 import type { QueueItemDTO } from "../../../../types/queue";
 import type { LinkTaskDTO } from "../../../../types/linkTasks";
 import { Badge } from "../../../../components/Badge";
-import { canDeleteLinkTask, canRetryLinkTask, getLinkTaskStatusMeta, isLinkTaskInProgress, normalizeLinkTaskStatus } from "../../../../lib/linkTaskStatus";
+import { canRetryLinkTask, getLinkTaskStatusMeta, isLinkTaskInProgress, normalizeLinkTaskStatus } from "../../../../lib/linkTaskStatus";
 import { FilterDateInput } from "../../../../features/queue-monitoring/components/FilterDateInput";
 import { FilterSelect } from "../../../../features/queue-monitoring/components/FilterSelect";
 import { PaginationControls } from "../../../../features/queue-monitoring/components/PaginationControls";
+import { canDelete, canRetry, canRun } from "../../../../features/queue-monitoring/services/actionGuards";
 import {
   PROJECT_QUEUE_HISTORY_STATUS_LABELS,
   PROJECT_QUEUE_STATUS_LABELS,
@@ -338,6 +339,9 @@ export default function ProjectQueuePage() {
   const visibleItems = filtered;
   const visibleHistoryItems = filteredHistory;
   const visibleLinks = filteredLinks;
+  const cleanupGuard = canDelete({ busy: cleaning, allowed: true });
+  const refreshGuard = canRun({ busy: refreshing });
+  const linkRefreshGuard = canRun({ busy: linkRefreshing });
 
   const handleRemove = async (item: QueueItemDTO) => {
     const domainLabel = item.domain_url || domains[item.domain_id]?.url || "домен";
@@ -488,7 +492,8 @@ export default function ProjectQueuePage() {
             </Link>
             <button
               onClick={handleCleanup}
-              disabled={cleaning}
+              disabled={cleanupGuard.disabled}
+              title={cleanupGuard.reason}
               className="inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm font-semibold text-amber-700 hover:bg-amber-50 dark:border-amber-900/40 dark:bg-slate-800 dark:text-amber-200"
             >
               <FiRefreshCw className={cleaning ? "animate-spin" : ""} />
@@ -496,7 +501,8 @@ export default function ProjectQueuePage() {
             </button>
             <button
               onClick={handleRefresh}
-              disabled={refreshing}
+              disabled={refreshGuard.disabled}
+              title={refreshGuard.reason}
               className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
             >
               <FiRefreshCw className={refreshing ? "animate-spin" : ""} /> Обновить
@@ -612,7 +618,8 @@ export default function ProjectQueuePage() {
             <span className="text-xs text-slate-500 dark:text-slate-400">Всего: {filteredLinks.length}</span>
             <button
               onClick={handleLinkRefresh}
-              disabled={linkRefreshing}
+              disabled={linkRefreshGuard.disabled}
+              title={linkRefreshGuard.reason}
               className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
             >
               <FiRefreshCw className={linkRefreshing ? "animate-spin" : ""} /> Обновить
@@ -648,8 +655,9 @@ export default function ProjectQueuePage() {
                   const domainHref = `/domains/${domain?.id || task.domain_id}`;
                   const actionLabel = (task.action || "insert") === "remove" ? "Удаление" : "Вставка";
                   const normalizedStatus = normalizeLinkTaskStatus(task.status) || task.status;
-                  const canRetry = canRetryLinkTask(task.status);
-                  const canDelete = canDeleteLinkTask(task.status);
+                  const canRetryByStatus = canRetryLinkTask(task.status);
+                  const retryGuard = canRetry({ busy: linkLoading, status: task.status, allowed: canRetryByStatus });
+                  const deleteGuard = canDelete({ busy: linkLoading, status: task.status });
                   const lastLog = task.log_lines?.length ? task.log_lines[task.log_lines.length - 1] : "";
                   const eventText = task.error_message || lastLog || "—";
                   return (
@@ -678,10 +686,11 @@ export default function ProjectQueuePage() {
                           <Link href={{ pathname: `/links/${task.id}` }} className="text-indigo-600 hover:underline">
                             Открыть
                           </Link>
-                          {canRetry && (
+                          {retryGuard.enabled && (
                             <button
                               onClick={() => handleLinkRetry(task)}
-                              disabled={linkLoading}
+                              disabled={retryGuard.disabled}
+                              title={retryGuard.reason}
                               className="inline-flex items-center gap-1 rounded-lg border border-amber-200 bg-white px-2 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:bg-slate-800 dark:text-amber-200"
                             >
                               <FiRotateCw /> Повтор
@@ -689,8 +698,8 @@ export default function ProjectQueuePage() {
                           )}
                           <button
                             onClick={() => handleLinkDelete(task)}
-                            disabled={linkLoading || !canDelete}
-                            title={!canDelete ? "Удаление недоступно для активных задач (ожидает/поиск/удаление)." : undefined}
+                            disabled={deleteGuard.disabled}
+                            title={deleteGuard.reason}
                             className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
                           >
                             <FiTrash2 /> Удалить
@@ -742,6 +751,7 @@ export default function ProjectQueuePage() {
                 {visibleItems.map((item) => {
                   const domain = domains[item.domain_id];
                   const domainLabel = item.domain_url || domain?.url || "Домен";
+                  const removeGuard = canDelete({ busy: loading, allowed: true });
                   return (
                     <tr key={item.id}>
                       <td className="py-3 pr-4">
@@ -763,7 +773,8 @@ export default function ProjectQueuePage() {
                       <td className="py-3 pr-4 text-right">
                         <button
                           onClick={() => handleRemove(item)}
-                          disabled={loading}
+                          disabled={removeGuard.disabled}
+                          title={removeGuard.reason}
                           className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
                         >
                           <FiTrash2 /> Удалить из очереди

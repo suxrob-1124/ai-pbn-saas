@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import type { IndexCheckDTO, IndexCheckStatus } from "../types/indexChecks";
+import { canRun } from "../features/queue-monitoring/services/actionGuards";
 
 export type IndexTableProps = {
   checks: IndexCheckDTO[];
@@ -56,6 +57,7 @@ export function IndexTable({
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [sort, setSort] = useState<SortState>({ key: "date", dir: "desc" });
   const [expandedError, setExpandedError] = useState<Record<string, boolean>>({});
+  const refreshGuard = canRun({ busy: loading });
 
   const filtered = useMemo(() => {
     const term = domainFilter.trim().toLowerCase();
@@ -139,7 +141,8 @@ export function IndexTable({
             <button
               type="button"
               onClick={onRefresh}
-              disabled={loading}
+              disabled={refreshGuard.disabled}
+              title={refreshGuard.reason}
               className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
             >
               Обновить
@@ -291,6 +294,7 @@ export function IndexTable({
               visible.map((check) => {
                 const label = check.domain_url || "Домен";
                 const errorOpen = expandedError[check.id];
+                const runNowGuard = canRun({ busy: loading, allowed: Boolean(onRunNow) });
                 return (
                   <tr key={check.id} className="align-top">
                     <td className="py-2 pr-3">
@@ -335,7 +339,8 @@ export function IndexTable({
                         <button
                           type="button"
                           onClick={() => onRunNow?.(check.domain_id)}
-                          disabled={!onRunNow || loading}
+                          disabled={runNowGuard.disabled}
+                          title={runNowGuard.reason}
                           className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                         >
                           Запустить

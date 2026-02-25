@@ -6,6 +6,7 @@ import { listAdminLLMPricing, listAdminLLMUsageEvents, listAdminLLMUsageStats } 
 import { useAuthGuard } from "../../../lib/useAuth";
 import type { LLMPricingDTO, LLMUsageEventDTO, LLMUsageFilters, LLMUsageStatsDTO } from "../../../types/llmUsage";
 import { getTotalPages } from "../../../features/queue-monitoring/services/primitives";
+import { canRun } from "../../../features/queue-monitoring/services/actionGuards";
 
 const DEFAULT_LIMIT = 50;
 
@@ -29,6 +30,7 @@ export default function LLMUsageMonitoringPage() {
 
   const isAdmin = (me?.role || "").toLowerCase() === "admin";
   const totalPages = getTotalPages(total, DEFAULT_LIMIT);
+  const refreshGuard = canRun({ busy: loading });
 
   const filters = useMemo<LLMUsageFilters>(() => {
     const value: LLMUsageFilters = { page, limit: DEFAULT_LIMIT };
@@ -94,7 +96,8 @@ export default function LLMUsageMonitoringPage() {
           </div>
           <button
             onClick={load}
-            disabled={loading}
+            disabled={refreshGuard.disabled}
+            title={refreshGuard.reason}
             className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
           >
             <FiRefreshCw /> Обновить
