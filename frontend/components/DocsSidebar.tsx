@@ -7,7 +7,7 @@ import { useOptionalMe } from "../lib/useAuth";
 
 const sections = [
   {
-    title: "Основы",
+    title: "Старт",
     items: [
       { href: "/docs", label: "Обзор" },
       { href: "/docs/projects", label: "Проекты" },
@@ -15,23 +15,24 @@ const sections = [
     ],
   },
   {
-    title: "Планирование",
+    title: "Редактор и AI",
+    items: [
+      { href: "/docs/editor-ai-studio", label: "Editor и AI Studio" },
+      { href: "/docs/troubleshooting", label: "Диагностика" },
+    ],
+  },
+  {
+    title: "Операции",
     items: [
       { href: "/docs/schedules", label: "Расписания" },
       { href: "/docs/queue", label: "Очередь" },
+      { href: "/docs/links", label: "Ссылки" },
+      { href: "/docs/errors", label: "Ошибки" },
     ],
   },
   {
     title: "Мониторинг",
     items: [{ href: "/docs/indexing", label: "Индексация" }],
-  },
-  {
-    title: "Ссылки и ошибки",
-    items: [
-      { href: "/docs/links", label: "Ссылки" },
-      { href: "/docs/errors", label: "Ошибки" },
-      { href: "/docs/troubleshooting", label: "Troubleshooting" },
-    ],
   },
   {
     title: "API",
