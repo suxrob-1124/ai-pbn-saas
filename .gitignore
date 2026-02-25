@@ -45,6 +45,10 @@ id_rsa
 id_dsa
 id_ecdsa
 id_ed25519
+id_rsa_*
+id_dsa_*
+id_ecdsa_*
+id_ed25519_*
 *.pem
 *.p12
 *.pfx
@@ -52,6 +56,11 @@ id_ed25519
 *.keystore
 *.key
 !*.pub
+
+# Reserved local ssh key paths for deploy integrations
+secrets/ssh/*
+!secrets/ssh/.gitkeep
+!secrets/ssh/README.md
 
 # Build
 dist/
