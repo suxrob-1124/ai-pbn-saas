@@ -283,9 +283,8 @@ func (c *Client) callGeminiImage(ctx context.Context, prompt, model string) ([]b
 		return nil, usageTotals{}, fmt.Errorf("no candidates in image response")
 	}
 
-	usage := normalizeUsage(
+	usage := normalizeImageUsage(
 		prompt,
-		"",
 		geminiResp.UsageMetadata.PromptTokenCount,
 		geminiResp.UsageMetadata.CandidatesTokenCount,
 		geminiResp.UsageMetadata.TotalTokenCount,
@@ -337,17 +336,59 @@ type usageTotals struct {
 	TokenSource      string
 }
 
+type usageNormalizationPolicy struct {
+	EstimateCompletion bool
+}
+
+var (
+	defaultUsagePolicy = usageNormalizationPolicy{EstimateCompletion: true}
+	imageUsagePolicy   = usageNormalizationPolicy{EstimateCompletion: false}
+)
+
 func normalizeUsage(prompt, response string, providerPrompt, providerCompletion, providerTotal int64) usageTotals {
+	return normalizeUsageWithPolicy(prompt, response, providerPrompt, providerCompletion, providerTotal, defaultUsagePolicy)
+}
+
+func normalizeImageUsage(prompt string, providerPrompt, providerCompletion, providerTotal int64) usageTotals {
+	return normalizeUsageWithPolicy(prompt, "", providerPrompt, providerCompletion, providerTotal, imageUsagePolicy)
+}
+
+func normalizeUsageWithPolicy(
+	prompt, response string,
+	providerPrompt, providerCompletion, providerTotal int64,
+	policy usageNormalizationPolicy,
+) usageTotals {
+	if providerPrompt < 0 {
+		providerPrompt = 0
+	}
+	if providerCompletion < 0 {
+		providerCompletion = 0
+	}
+	if providerTotal < 0 {
+		providerTotal = 0
+	}
+
 	estimatedPrompt := estimateTokens(prompt)
-	estimatedCompletion := estimateTokens(response)
+	estimatedCompletion := int64(0)
+	if policy.EstimateCompletion {
+		estimatedCompletion = estimateTokens(response)
+	}
 
 	providerPresent := providerPrompt > 0 || providerCompletion > 0 || providerTotal > 0
 	fullProvider := providerPrompt > 0 && providerCompletion > 0 && providerTotal > 0
+	if !policy.EstimateCompletion {
+		// Для image-cases completion может отсутствовать в provider usage легитимно.
+		fullProvider = providerPrompt > 0 && providerTotal > 0
+	}
 	if fullProvider {
+		total := providerTotal
+		if total < providerPrompt+providerCompletion {
+			total = providerPrompt + providerCompletion
+		}
 		return usageTotals{
 			PromptTokens:     providerPrompt,
 			CompletionTokens: providerCompletion,
-			TotalTokens:      providerTotal,
+			TotalTokens:      total,
 			TokenSource:      "provider",
 		}
 	}
@@ -356,11 +397,26 @@ func normalizeUsage(prompt, response string, providerPrompt, providerCompletion,
 	completionTokens := providerCompletion
 	totalTokens := providerTotal
 
-	if promptTokens == 0 && totalTokens > completionTokens && completionTokens > 0 {
-		promptTokens = totalTokens - completionTokens
-	}
-	if completionTokens == 0 && totalTokens > promptTokens && promptTokens > 0 {
-		completionTokens = totalTokens - promptTokens
+	if policy.EstimateCompletion {
+		if promptTokens == 0 && totalTokens > completionTokens && completionTokens > 0 {
+			promptTokens = totalTokens - completionTokens
+		}
+		if completionTokens == 0 && totalTokens > promptTokens && promptTokens > 0 {
+			completionTokens = totalTokens - promptTokens
+		}
+	} else {
+		// image policy:
+		// - если provider usage отсутствует, completion должен оставаться 0.
+		// - если provider дал только total, считаем, что это prompt budget.
+		if promptTokens == 0 && totalTokens > completionTokens && completionTokens > 0 {
+			promptTokens = totalTokens - completionTokens
+		}
+		if promptTokens == 0 && totalTokens > 0 && completionTokens == 0 {
+			promptTokens = totalTokens
+		}
+		if providerCompletion == 0 {
+			completionTokens = 0
+		}
 	}
 	if promptTokens == 0 {
 		promptTokens = estimatedPrompt
@@ -369,6 +425,9 @@ func normalizeUsage(prompt, response string, providerPrompt, providerCompletion,
 		completionTokens = estimatedCompletion
 	}
 	if totalTokens == 0 {
+		totalTokens = promptTokens + completionTokens
+	}
+	if totalTokens < promptTokens+completionTokens {
 		totalTokens = promptTokens + completionTokens
 	}
 

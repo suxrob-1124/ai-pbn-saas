@@ -12,6 +12,9 @@ func TestEstimateTokens(t *testing.T) {
 	if got := estimateTokens("abcde"); got != 2 {
 		t.Fatalf("expected 2 for 5 chars, got %d", got)
 	}
+	if got := estimateTokens("тест🙂"); got != 2 {
+		t.Fatalf("expected 2 for 5 runes, got %d", got)
+	}
 }
 
 func TestNormalizeUsageProvider(t *testing.T) {
@@ -42,5 +45,53 @@ func TestNormalizeUsageEstimatedAndMixed(t *testing.T) {
 	}
 	if mixed.TotalTokens <= 10 {
 		t.Fatalf("expected computed total tokens in mixed mode, got %d", mixed.TotalTokens)
+	}
+}
+
+func TestNormalizeUsageMixedFromTotalAndCompletion(t *testing.T) {
+	got := normalizeUsage("prompt text", "", 0, 7, 15)
+	if got.TokenSource != "mixed" {
+		t.Fatalf("expected mixed source, got %s", got.TokenSource)
+	}
+	if got.PromptTokens != 8 {
+		t.Fatalf("expected prompt tokens derived from total-completion, got %d", got.PromptTokens)
+	}
+	if got.CompletionTokens != 7 {
+		t.Fatalf("expected completion tokens from provider, got %d", got.CompletionTokens)
+	}
+	if got.TotalTokens != 15 {
+		t.Fatalf("expected provider total tokens to be kept, got %d", got.TotalTokens)
+	}
+}
+
+func TestNormalizeImageUsageEstimatedKeepsCompletionZero(t *testing.T) {
+	got := normalizeImageUsage("image prompt content", 0, 0, 0)
+	if got.TokenSource != "estimated" {
+		t.Fatalf("expected estimated source, got %s", got.TokenSource)
+	}
+	if got.PromptTokens <= 0 {
+		t.Fatalf("expected estimated prompt tokens > 0, got %d", got.PromptTokens)
+	}
+	if got.CompletionTokens != 0 {
+		t.Fatalf("expected image completion tokens to be 0 without provider usage, got %d", got.CompletionTokens)
+	}
+	if got.TotalTokens != got.PromptTokens {
+		t.Fatalf("expected total tokens equal prompt tokens for image estimated mode, got %d vs %d", got.TotalTokens, got.PromptTokens)
+	}
+}
+
+func TestNormalizeImageUsageProviderOnlyTotal(t *testing.T) {
+	got := normalizeImageUsage("image prompt", 0, 0, 12)
+	if got.TokenSource != "mixed" {
+		t.Fatalf("expected mixed source for partial provider usage, got %s", got.TokenSource)
+	}
+	if got.PromptTokens != 12 {
+		t.Fatalf("expected prompt tokens derived from provider total, got %d", got.PromptTokens)
+	}
+	if got.CompletionTokens != 0 {
+		t.Fatalf("expected completion tokens to stay 0, got %d", got.CompletionTokens)
+	}
+	if got.TotalTokens != 12 {
+		t.Fatalf("expected total tokens to stay 12, got %d", got.TotalTokens)
 	}
 }
