@@ -1416,6 +1416,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/FileAISuggestResponse"
+        "400":
+          $ref: "#/components/responses/EditorError"
+        "404":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/EditorError"
+        "502":
+          $ref: "#/components/responses/EditorError"
   /api/domains/{domainId}/files/{fileId}/history:
     get:
       tags: [Files]
@@ -1451,8 +1459,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AIPageSuggestionResponse"
+        "400":
+          $ref: "#/components/responses/EditorError"
         "422":
           description: Невалидный формат ответа AI (strict JSON contract)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EditorErrorResponse"
+        "500":
+          $ref: "#/components/responses/EditorError"
+        "502":
+          $ref: "#/components/responses/EditorError"
   /api/domains/{domainId}/editor/ai-regenerate-asset:
     post:
       tags: [Files]
@@ -1473,23 +1491,13 @@ paths:
               schema:
                 $ref: "#/components/schemas/EditorAIRegenerateAssetResponse"
         "400":
-          description: Ошибка валидации запроса
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/EditorErrorResponse"
+          $ref: "#/components/responses/EditorError"
         "422":
-          description: Ошибка валидации сгенерированного ассета
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/EditorErrorResponse"
+          $ref: "#/components/responses/EditorError"
+        "500":
+          $ref: "#/components/responses/EditorError"
         "502":
-          description: Ошибка генерации изображения
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/EditorErrorResponse"
+          $ref: "#/components/responses/EditorError"
   /api/domains/{domainId}/editor/context-pack:
     get:
       tags: [Files]
@@ -1518,6 +1526,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/EditorContextPackResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/EditorError"
   /api/generations:
     get:
       tags: [Generations]
@@ -2734,6 +2746,12 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+    EditorError:
+      description: Ошибка editor-контура
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/EditorErrorResponse"
   schemas:
     ErrorResponse:
       type: object
