@@ -78,7 +78,8 @@ docker compose up --build
 cd pbn-generator
 export DB_DRIVER=pgx
 export DB_DSN='postgres://auth:auth@localhost:5432/auth?sslmode=disable'
-export JWT_SECRET='dev-secret'
+export JWT_SECRET='your-jwt-secret-changeme'
+export API_KEY_SECRET='your-api-key-secret-changeme'
 go run ./cmd/authserver
 ```
 
@@ -88,6 +89,8 @@ go run ./cmd/authserver
 cd pbn-generator
 export DB_DRIVER=pgx
 export DB_DSN='postgres://auth:auth@localhost:5432/auth?sslmode=disable'
+export JWT_SECRET='your-jwt-secret-changeme'
+export API_KEY_SECRET='your-api-key-secret-changeme'
 export REDIS_ADDR='localhost:6379'
 go run ./cmd/worker
 ```
@@ -98,6 +101,8 @@ go run ./cmd/worker
 cd pbn-generator
 export DB_DRIVER=pgx
 export DB_DSN='postgres://auth:auth@localhost:5432/auth?sslmode=disable'
+export JWT_SECRET='your-jwt-secret-changeme'
+export API_KEY_SECRET='your-api-key-secret-changeme'
 export REDIS_ADDR='localhost:6379'
 go run ./cmd/scheduler
 ```
@@ -108,6 +113,8 @@ go run ./cmd/scheduler
 cd pbn-generator
 export DB_DRIVER=pgx
 export DB_DSN='postgres://auth:auth@localhost:5432/auth?sslmode=disable'
+export JWT_SECRET='your-jwt-secret-changeme'
+export API_KEY_SECRET='your-api-key-secret-changeme'
 go run ./cmd/indexchecker
 ```
 
@@ -125,6 +132,8 @@ npm run dev
 cd pbn-generator
 export DB_DRIVER=pgx
 export DB_DSN='postgres://auth:auth@localhost:5432/auth?sslmode=disable'
+export JWT_SECRET='your-jwt-secret-changeme'
+export API_KEY_SECRET='your-api-key-secret-changeme'
 go run ./cmd/migrate
 ```
 
@@ -169,6 +178,7 @@ go run ./cmd/migrate
 
 - `DB_DSN`, `DB_DRIVER`
 - `JWT_SECRET`, `JWT_ISSUER`
+- `API_KEY_SECRET`
 - `REDIS_ADDR`, `REDIS_PASSWORD`, `REDIS_DB`
 - `ALLOWED_ORIGINS` или `ALLOWED_ORIGIN`
 - `PUBLIC_APP_URL`
@@ -249,4 +259,3 @@ npm run -s verify:project-queue
 ## Лицензия
 
 Пока не задана в репозитории.
-
