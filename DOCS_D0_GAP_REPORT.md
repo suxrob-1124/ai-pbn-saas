@@ -119,7 +119,7 @@
 4. `[x]` `D3.2` OpenAPI schema/error consistency patch.
 5. `[x]` `D2.1` Docs content-layer scaffold.
 6. `[x]` `D2.2` Миграция 2-3 ключевых docs-страниц на новый формат.
-7. `[ ]` `D4.1` Расширение сценариев + troubleshooting.
+7. `[x]` `D4.1` Расширение сценариев + troubleshooting.
 8. `[ ]` `D5.1` CI checks + policy.
 
 ## 7. Критерии завершения блока

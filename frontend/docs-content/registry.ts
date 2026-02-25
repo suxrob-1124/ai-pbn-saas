@@ -21,6 +21,27 @@ export const docsPages = {
           "Держите название проекта коротким — оно отображается в списках.",
         ],
       },
+      {
+        title: "Сценарий manager: запуск проекта с нуля",
+        listType: "numbered",
+        listItems: [
+          "Создайте проект с корректными country/language/timezone.",
+          "Проверьте, что у владельца проекта заполнен API-ключ.",
+          "Импортируйте домены и добавьте main keyword для каждого.",
+          "Настройте schedule генерации и при необходимости link schedule.",
+          "Выполните ручной trigger и проверьте очередь проекта.",
+          "После первых публикаций проверьте страницу индексации проекта.",
+        ],
+      },
+      {
+        title: "Сценарий admin: поддержка проекта",
+        listType: "bullet",
+        listItems: [
+          "Проверьте роль участников проекта и наличие owner.",
+          "Сверьте LLM usage по проекту и активные тарифы модели.",
+          "Проверьте audit rules и системные prompt overrides при массовых сбоях генерации.",
+        ],
+      },
     ],
   } satisfies DocsPageContent,
 
@@ -44,6 +65,17 @@ export const docsPages = {
           "Если домен перегенерирован, ссылка будет добавлена повторно.",
         ],
       },
+      {
+        title: "E2E-сценарий по домену",
+        listType: "numbered",
+        listItems: [
+          "Убедитесь, что домен привязан к проекту с валидным API-ключом владельца.",
+          "Запустите генерацию и дождитесь статуса success в generations.",
+          "Откройте editor и проверьте файлы перед публикацией/правками.",
+          "Запустите link task (run/remove/retry) при необходимости.",
+          "Проверьте индексацию домена и историю попыток в index-checks.",
+        ],
+      },
     ],
   } satisfies DocsPageContent,
 
@@ -65,6 +97,16 @@ export const docsPages = {
           "pending — ожидает постановки в обработку",
           "queued — уже поставлено в очередь воркера",
           "completed/failed — будут удалены при очистке",
+        ],
+      },
+      {
+        title: "Если очередь не двигается",
+        listType: "bullet",
+        listItems: [
+          "Проверьте, что worker подключён к Redis и обрабатывает очередь.",
+          "Проверьте owner API-key у проекта: без него новые задания не стартуют.",
+          "Проверьте schedule limits и фильтры waiting/published для доменов.",
+          "Если элементы зависли в terminal status, выполните queue cleanup.",
         ],
       },
     ],
@@ -114,6 +156,15 @@ export const docsPages = {
           "failed — ошибка обработки",
         ],
       },
+      {
+        title: "Частые причины failed у link tasks",
+        listType: "bullet",
+        listItems: [
+          "Не найдено валидное место вставки в body (слишком агрессивная верстка).",
+          "Домен/файл изменился после предыдущей попытки, snapshot устарел.",
+          "Сетевые ошибки или таймауты при обработке связанных AI-операций.",
+        ],
+      },
     ],
   } satisfies DocsPageContent,
 
@@ -135,6 +186,103 @@ export const docsPages = {
           "Страница проекта → вкладка «Ошибки»",
           "Карточка домена → «Логи ссылок»",
           "Swagger API → endpoints генераций и link tasks",
+        ],
+      },
+      {
+        title: "Карта диагностики (симптом → причина → действие)",
+        listType: "bullet",
+        listItems: [
+          "Generation stuck in processing → worker не завершил stage или ждёт внешний сервис → проверить worker logs, затем retry/cancel.",
+          "Queue item не стартует → нет owner API-key или невалидный статус домена → проверить project owner и domain status.",
+          "Link task failed → не найдено место вставки или контент изменился → выполнить retry с обновлённым контекстом.",
+          "Index check failed_investigation → исчерпаны ретраи за 24 часа → ручной запуск после проверки SERP/доступности домена.",
+          "Editor AI error code invalid_format → ответ модели не прошёл strict JSON → сменить модель/уточнить промпт и повторить.",
+          "Editor asset error image_generation_failed → модель не вернула валидный image payload → повторить с image-capable моделью или загрузить вручную.",
+          "403 на API → недостаточная роль или проект не принадлежит пользователю → проверить роль и membership.",
+        ],
+      },
+      {
+        title: "Отдельный runbook",
+        paragraphs: [
+          "Подробный пошаговый troubleshooting вынесен на страницу «Troubleshooting» в этом разделе документации.",
+        ],
+      },
+    ],
+  } satisfies DocsPageContent,
+
+  troubleshooting: {
+    title: "Troubleshooting",
+    description: "Runbook по типовым сбоям и восстановлению.",
+    intro:
+      "Практическая карта восстановления: что проверить, где смотреть и как безопасно вернуть систему в рабочее состояние.",
+    sections: [
+      {
+        title: "Роли и зона ответственности",
+        listType: "bullet",
+        listItems: [
+          "manager: проверка project/domain настроек, ручные retry/run, анализ логов UI.",
+          "admin: глобальные проверки в monitoring, pricing, prompt/audit-конфигурации и доступах.",
+        ],
+      },
+      {
+        title: "Сценарий 1: генерация не стартует",
+        listType: "numbered",
+        listItems: [
+          "Проверьте owner API-key проекта.",
+          "Проверьте, что домен в корректном статусе для постановки в очередь.",
+          "Откройте project queue и убедитесь, что элемент появился со статусом pending/queued.",
+          "Проверьте worker/redis доступность в ops-окружении.",
+          "Если элемент завис в terminal status, выполните cleanup и повторный trigger.",
+        ],
+      },
+      {
+        title: "Сценарий 2: generation завершился ошибкой",
+        listType: "numbered",
+        listItems: [
+          "Откройте generation logs и зафиксируйте stage ошибки.",
+          "Если ошибка внешнего провайдера/timeout, повторите запуск после короткой паузы.",
+          "Если ошибка воспроизводится, проверьте prompt overrides проекта/домена.",
+          "Для системной деградации эскалируйте администратору с generationId и stage.",
+        ],
+      },
+      {
+        title: "Сценарий 3: link tasks массово в failed",
+        listType: "numbered",
+        listItems: [
+          "Проверьте anchor/acceptor настройки на домене.",
+          "Проверьте актуальность target HTML (после перегенерации структура может измениться).",
+          "Запустите retry для одной задачи и проверьте diff вставки.",
+          "Если проблема системная, проверьте конфигурацию link schedule/limits.",
+        ],
+      },
+      {
+        title: "Сценарий 4: index checks дают failed_investigation",
+        listType: "numbered",
+        listItems: [
+          "Проверьте, что домен опубликован и URL валиден.",
+          "Проверьте фильтры периода и попыток в истории index-check.",
+          "Сделайте ручной run для домена или проекта.",
+          "При повторяемом фейле проверьте доступность SERP-провайдера и сетевые лимиты.",
+        ],
+      },
+      {
+        title: "Сценарий 5: editor AI ошибки",
+        listType: "bullet",
+        listItems: [
+          "invalid_format: модель вернула невалидный JSON. Действие: уточнить инструкцию, сменить модель, повторить.",
+          "image_generation_failed: изображение не сгенерировано. Действие: повторить с image-capable моделью или загрузить вручную.",
+          "asset_validation_failed: ассет не прошёл проверку. Действие: regenerate/upload/skip до разрешения конфликтов.",
+          "operation_locked: уже выполняется in-flight операция. Действие: дождаться завершения и не спамить action.",
+        ],
+      },
+      {
+        title: "Чеклист эскалации (что приложить в задачу)",
+        listType: "bullet",
+        listItems: [
+          "ID сущности: projectId/domainId/generationId/linkTaskId.",
+          "Временной диапазон UTC и шаг воспроизведения.",
+          "Точный текст ошибки/code и скрин или API-response.",
+          "Какие действия уже выполнены (retry/cancel/cleanup/run-now).",
         ],
       },
     ],

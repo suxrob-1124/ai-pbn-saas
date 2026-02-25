@@ -30,6 +30,7 @@ const sections = [
     items: [
       { href: "/docs/links", label: "Ссылки" },
       { href: "/docs/errors", label: "Ошибки" },
+      { href: "/docs/troubleshooting", label: "Troubleshooting" },
     ],
   },
   {
