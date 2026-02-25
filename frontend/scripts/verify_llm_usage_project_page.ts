@@ -15,7 +15,13 @@ assert.ok(page.includes("Estimated cost (USD)"), "Project page must show cost KP
 
 const projectPagePath = path.join(root, "frontend/app/projects/[id]/page.tsx");
 const projectPage = fs.readFileSync(projectPagePath, "utf8");
-assert.ok(projectPage.includes("/usage"), "Project page must contain usage route link");
-assert.ok(projectPage.includes("LLM Usage"), "Project page must contain LLM Usage CTA label");
+const projectHeaderActionsPath = path.join(
+  root,
+  "frontend/features/domain-project/components/ProjectHeaderActionsSection.tsx"
+);
+const projectHeaderActions = fs.readFileSync(projectHeaderActionsPath, "utf8");
+const usageLinkSource = `${projectPage}\n${projectHeaderActions}`;
+assert.ok(usageLinkSource.includes("/usage"), "Project scope must contain usage route link");
+assert.ok(usageLinkSource.includes("LLM Usage"), "Project scope must contain LLM Usage CTA label");
 
 console.log("OK");

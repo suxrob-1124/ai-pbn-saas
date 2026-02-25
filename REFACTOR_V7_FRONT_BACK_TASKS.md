@@ -524,6 +524,72 @@
 2. Нет сквозной e2e-корреляции `request_id` между `httpserver` и `worker` логами (корреляция частично ручная).
 3. Сохранены разные текстовые формулировки user-facing ошибок в части legacy endpoint-ов; формат payload уже унифицирован, но тексты требуют отдельной нормализации.
 
+### Wave 5 — LLM usage accounting
+1. Подготовить data-model и store слой для usage/pricing.
+2. Нормализовать usage metadata и fallback policy в LLM клиенте.
+3. Инструментировать generation/editor/link операции usage-событиями.
+4. Добавить admin/project usage API и frontend usage-экраны.
+5. Закрыть wave regression и синхронизировать план.
+
+### Wave 5 status (W5.1–W5.7, 25.02.2026)
+
+1. `completed` — `W5.1` data model + migrations:
+- добавлены схемы `llm_usage_events`, `llm_model_pricing`, индексы под фильтры отчетов.
+- добавлен seed активных тарифов gemini.
+- добавлен store-слой `LLMUsageStore`/`ModelPricingStore`.
+
+2. `completed` — `W5.2` usage normalization:
+- usage metadata нормализованы (`prompt/completion/total tokens`, `token_source`).
+- включен fallback policy оценки токенов/стоимости.
+- unit-тесты `internal/llm` для parsing/estimation/mixed-case проходят.
+
+3. `completed` — `W5.3` instrumentation:
+- generation pipeline, editor AI и link worker логируют usage events.
+- для error-case создаются события со статусом `error` и доступной metadata.
+- snapshot цен фиксируется на момент запроса.
+
+4. `completed` — `W5.4` admin/project usage API:
+- добавлены/стабилизированы:
+  - `GET /api/admin/llm-usage/events`
+  - `GET /api/admin/llm-usage/stats`
+  - `GET /api/admin/llm-pricing`
+  - `PUT /api/admin/llm-pricing/:model`
+  - `GET /api/projects/:id/llm-usage/events`
+  - `GET /api/projects/:id/llm-usage/stats`
+- добавлены фильтры/пагинация/group_by.
+- добавлено тест-покрытие auth + scope + filters + pagination.
+
+5. `completed` — `W5.5` frontend usage pages:
+- страницы:
+  - `/monitoring/llm-usage` (admin)
+  - `/projects/[id]/usage` (project scope)
+- отображаются KPI, таблица событий, фильтры, пагинация.
+- добавлены `estimated` badge и `n/a` tooltip для отсутствующей стоимости.
+- интегрированы переходы в monitoring/project navigation.
+
+6. `completed` — `W5.7` regression + release readiness:
+- backend green:
+  - `go test ./internal/llm ./internal/store/sqlstore ./internal/httpserver ./cmd/worker`
+- frontend green:
+  - `npx tsc --noEmit`
+  - `verify:llm-usage-admin-page`
+  - `verify:llm-usage-project-page`
+  - `verify:llm-usage-filters-pagination`
+  - `verify:llm-usage-cost-badges`
+  - `verify:file-editor-route`
+  - `verify:ai-editor-panel`
+  - `verify:ai-create-page-wizard`
+  - `verify:ai-asset-resolution-actions`
+  - `verify:ai-apply-plan-safety`
+- дополнительно подтвержден project/admin scope:
+  - `go test ./internal/httpserver -run 'Test(AdminLLMUsageEventsAuthFiltersAndPagination|ProjectLLMUsageEventsForOwnerAndManager|ProjectLLMUsageEventsForbiddenForNonMember|ProjectLLMUsageStatsGroupBy)'`
+
+### Wave 5 leftovers / residual risks
+
+1. Для generation/editor/link usage нет отдельного e2e smoke c реальной БД и последовательными ручными операциями в одном сценарии; текущая уверенность основана на unit/integration regression и наличии instrumentation в коде.
+2. Проверка корректности cost при смене цен в коротком временном окне требует отдельного integration теста с контролируемым `active_from/active_to`.
+3. Часть verify-скриптов usage чувствительна к рефакторингу структуры UI-файлов (string-based asserts); при следующей декомпозиции стоит перевести их на более устойчивые проверки.
+
 ### Definition of Done для этапа "весь проект"
 1. Нет страниц-«монолитов» на 1500+ строк без модульного деления.
 2. Все долгие действия имеют прозрачный жизненный цикл в UI.

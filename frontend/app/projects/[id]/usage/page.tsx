@@ -102,7 +102,7 @@ export default function ProjectLLMUsagePage() {
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
         <StatCard label="Запросы" value={stats?.total_requests ?? 0} />
         <StatCard label="Токены" value={stats?.total_tokens ?? 0} />
-        <StatCard label="Стоимость (USD)" value={(stats?.total_cost_usd ?? 0).toFixed(6)} />
+        <StatCard label="Estimated cost (USD)" value={(stats?.total_cost_usd ?? 0).toFixed(6)} />
       </div>
 
       <div className="rounded-xl border border-slate-200 bg-white/80 p-4 dark:border-slate-800 dark:bg-slate-900/60">
