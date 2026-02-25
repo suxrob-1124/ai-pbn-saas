@@ -1033,15 +1033,6 @@ func readCredentialsWithCaptcha(r *http.Request) (auth.Credentials, string, stri
 	return auth.Credentials{Email: payload.Email, Password: payload.Password}, payload.CaptchaID, captchaToken, nil
 }
 
-func ensureJSON(w http.ResponseWriter, r *http.Request) bool {
-	ct := strings.ToLower(r.Header.Get("Content-Type"))
-	if !strings.HasPrefix(ct, "application/json") {
-		writeError(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json")
-		return false
-	}
-	return true
-}
-
 // --- Projects / Domains / Generations ---
 
 func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
@@ -6225,29 +6216,6 @@ func hasProjectPermission(userRole string, memberRole string, requiredRole strin
 	return userLevel >= requiredLevel
 }
 
-func parseLimitParam(r *http.Request, fallback int, max int) int {
-	limit := fallback
-	if v := strings.TrimSpace(r.URL.Query().Get("limit")); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			if max > 0 && n > max {
-				n = max
-			}
-			limit = n
-		}
-	}
-	return limit
-}
-
-func parsePageParam(r *http.Request, fallback int) int {
-	page := fallback
-	if v := strings.TrimSpace(r.URL.Query().Get("page")); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			page = n
-		}
-	}
-	return page
-}
-
 func parseIndexCheckFilters(r *http.Request, fallbackLimit int, maxLimit int) sqlstore.IndexCheckFilters {
 	limit := parseLimitParam(r, fallbackLimit, maxLimit)
 	page := parsePageParam(r, 1)
@@ -7780,16 +7748,6 @@ func (s *Server) withLogging(next http.Handler) http.Handler {
 			"request_id", rid,
 		)
 	})
-}
-
-func writeJSON(w http.ResponseWriter, status int, payload any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(payload)
-}
-
-func writeError(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, map[string]string{"error": message})
 }
 
 func clientIP(r *http.Request) string {

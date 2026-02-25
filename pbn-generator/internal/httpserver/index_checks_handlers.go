@@ -3,7 +3,6 @@ package httpserver
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -600,15 +599,10 @@ func (s *Server) handleAdminIndexChecksRun(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "index checks not configured")
 		return
 	}
-	if !ensureJSON(w, r) {
-		return
-	}
 	var body struct {
 		DomainID string `json:"domain_id"`
 	}
-	defer r.Body.Close()
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid body")
+	if !decodeJSONBody(w, r, &body) {
 		return
 	}
 	domainID := strings.TrimSpace(body.DomainID)

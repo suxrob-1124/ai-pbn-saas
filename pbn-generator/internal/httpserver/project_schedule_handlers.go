@@ -66,9 +66,6 @@ func (s *Server) handleProjectSchedules(w http.ResponseWriter, r *http.Request, 
 		}
 		writeJSON(w, http.StatusOK, resp)
 	case http.MethodPost:
-		if !ensureJSON(w, r) {
-			return
-		}
 		if err := requireApprovedUser(user); err != nil {
 			writeError(w, http.StatusForbidden, err.Error())
 			return
@@ -81,7 +78,6 @@ func (s *Server) handleProjectSchedules(w http.ResponseWriter, r *http.Request, 
 			writeError(w, http.StatusConflict, "schedule already exists for project")
 			return
 		}
-		defer r.Body.Close()
 		var body struct {
 			Name        string          `json:"name"`
 			Description *string         `json:"description"`
@@ -90,8 +86,7 @@ func (s *Server) handleProjectSchedules(w http.ResponseWriter, r *http.Request, 
 			IsActive    *bool           `json:"isActive"`
 			Timezone    *string         `json:"timezone"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid body")
+		if !decodeJSONBody(w, r, &body) {
 			return
 		}
 		name := strings.TrimSpace(body.Name)
@@ -209,9 +204,6 @@ func (s *Server) handleProjectScheduleByID(w http.ResponseWriter, r *http.Reques
 		}
 		writeJSON(w, http.StatusOK, toScheduleDTO(*sched))
 	case http.MethodPatch:
-		if !ensureJSON(w, r) {
-			return
-		}
 		if err := requireApprovedUser(user); err != nil {
 			writeError(w, http.StatusForbidden, err.Error())
 			return
@@ -220,7 +212,6 @@ func (s *Server) handleProjectScheduleByID(w http.ResponseWriter, r *http.Reques
 			writeError(w, http.StatusForbidden, "insufficient permissions: editor role required")
 			return
 		}
-		defer r.Body.Close()
 		var body struct {
 			Name        *string          `json:"name"`
 			Description *string          `json:"description"`
@@ -229,8 +220,7 @@ func (s *Server) handleProjectScheduleByID(w http.ResponseWriter, r *http.Reques
 			IsActive    *bool            `json:"isActive"`
 			Timezone    *string          `json:"timezone"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid body")
+		if !decodeJSONBody(w, r, &body) {
 			return
 		}
 		var updates sqlstore.ScheduleUpdates
@@ -439,9 +429,6 @@ func (s *Server) handleProjectLinkSchedule(w http.ResponseWriter, r *http.Reques
 		}
 		writeJSON(w, http.StatusOK, dto)
 	case http.MethodPut:
-		if !ensureJSON(w, r) {
-			return
-		}
 		if err := requireApprovedUser(user); err != nil {
 			writeError(w, http.StatusForbidden, err.Error())
 			return
@@ -450,15 +437,13 @@ func (s *Server) handleProjectLinkSchedule(w http.ResponseWriter, r *http.Reques
 			writeError(w, http.StatusForbidden, "insufficient permissions: editor role required")
 			return
 		}
-		defer r.Body.Close()
 		var body struct {
 			Name     string          `json:"name"`
 			Config   json.RawMessage `json:"config"`
 			IsActive *bool           `json:"isActive"`
 			Timezone *string         `json:"timezone"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid body")
+		if !decodeJSONBody(w, r, &body) {
 			return
 		}
 		name := strings.TrimSpace(body.Name)

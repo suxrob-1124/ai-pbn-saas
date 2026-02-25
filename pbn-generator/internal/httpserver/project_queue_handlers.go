@@ -4,9 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
-	"strconv"
 	"strings"
-	"time"
 
 	"obzornik-pbn-generator/internal/store/sqlstore"
 )
@@ -45,19 +43,9 @@ func (s *Server) handleProjectQueue(w http.ResponseWriter, r *http.Request, proj
 		return
 	}
 
-	limit := 50
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 200 {
-			limit = n
-		}
-	}
-	search := strings.TrimSpace(r.URL.Query().Get("search"))
-	page := 1
-	if v := strings.TrimSpace(r.URL.Query().Get("page")); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			page = n
-		}
-	}
+	limit := parseLimitParam(r, 50, 200)
+	search := queryParamTrim(r, "search")
+	page := parsePageParam(r, 1)
 	offset := (page - 1) * limit
 
 	items, err := s.genQueue.ListByProjectPage(r.Context(), projectID, limit, offset, search)
@@ -117,49 +105,30 @@ func (s *Server) handleProjectQueueHistory(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	limit := 50
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 200 {
-			limit = n
-		}
-	}
-	page := 1
-	if v := strings.TrimSpace(r.URL.Query().Get("page")); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			page = n
-		}
-	}
+	limit := parseLimitParam(r, 50, 200)
+	page := parsePageParam(r, 1)
 	offset := (page - 1) * limit
-	search := strings.TrimSpace(r.URL.Query().Get("search"))
+	search := queryParamTrim(r, "search")
 
 	var statusFilter *string
-	if rawStatus := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status"))); rawStatus != "" && rawStatus != "all" {
+	if rawStatus := strings.ToLower(queryParamTrim(r, "status")); rawStatus != "" && rawStatus != "all" {
 		if rawStatus != "completed" && rawStatus != "failed" {
-			writeError(w, http.StatusBadRequest, "invalid history status")
+			writeErrorWithCode(w, http.StatusBadRequest, "invalid_status", "invalid history status", map[string]any{
+				"param":   "status",
+				"allowed": []string{"all", "completed", "failed"},
+			})
 			return
 		}
 		statusFilter = &rawStatus
 	}
 
-	var dateFrom *time.Time
-	if raw := strings.TrimSpace(r.URL.Query().Get("date_from")); raw != "" {
-		parsed, err := time.Parse("2006-01-02", raw)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid date_from")
-			return
-		}
-		utc := parsed.UTC()
-		dateFrom = &utc
+	dateFrom, ok := parseDateQueryUTC(w, r, "date_from", false)
+	if !ok {
+		return
 	}
-	var dateTo *time.Time
-	if raw := strings.TrimSpace(r.URL.Query().Get("date_to")); raw != "" {
-		parsed, err := time.Parse("2006-01-02", raw)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid date_to")
-			return
-		}
-		utcEnd := parsed.UTC().Add(24*time.Hour - time.Nanosecond)
-		dateTo = &utcEnd
+	dateTo, ok := parseDateQueryUTC(w, r, "date_to", true)
+	if !ok {
+		return
 	}
 
 	items, err := s.genQueue.ListHistoryByProjectPage(r.Context(), projectID, limit, offset, search, statusFilter, dateFrom, dateTo)

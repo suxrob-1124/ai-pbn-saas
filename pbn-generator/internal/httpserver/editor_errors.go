@@ -17,15 +17,7 @@ const (
 )
 
 func writeEditorError(w http.ResponseWriter, status int, code editorErrorCode, message string, details any) {
-	payload := map[string]any{
-		"error":   message,
-		"code":    string(code),
-		"message": message,
-	}
-	if details != nil {
-		payload["details"] = details
-	}
-	writeJSON(w, status, payload)
+	writeErrorWithCode(w, status, string(code), message, details)
 }
 
 func writeEditorContextPackError(w http.ResponseWriter, err error) {
