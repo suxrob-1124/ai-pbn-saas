@@ -125,6 +125,7 @@ func fetchSerp(ctx context.Context, keyword, country, lang string, limit int) ([
 	retries := serpRetries()
 	var raw map[string]any
 	var lastErr error
+	client := &http.Client{Timeout: timeout}
 	for attempt := 0; attempt <= retries; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"?"+params.Encode(), nil)
 		if err != nil {
@@ -132,14 +133,13 @@ func fetchSerp(ctx context.Context, keyword, country, lang string, limit int) ([
 		}
 		req.Header.Set("accept", "application/json")
 
-		client := &http.Client{Timeout: timeout}
 		resp, err := client.Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("serp request failed for keyword %q: %v", keyword, err)
 			if ue, ok := err.(*url.Error); ok && ue.Err != nil {
 				lastErr = fmt.Errorf("serp request failed for keyword %q: %v", keyword, ue.Err)
 			}
-			if isTimeoutErr(err) && attempt < retries {
+			if isRetriableSerpErr(err) && attempt < retries {
 				backoff := time.Duration(2*(attempt+1)) * time.Second
 				select {
 				case <-time.After(backoff):
@@ -150,11 +150,35 @@ func fetchSerp(ctx context.Context, keyword, country, lang string, limit int) ([
 			}
 			return nil, nil, lastErr
 		}
-		defer resp.Body.Close()
 		if resp.StatusCode >= 400 {
+			_ = resp.Body.Close()
 			return nil, nil, fmt.Errorf("serp status %d for keyword %q", resp.StatusCode, keyword)
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+			_ = resp.Body.Close()
+			lastErr = fmt.Errorf("serp decode failed for keyword %q: %v", keyword, err)
+			if isRetriableSerpErr(err) && attempt < retries {
+				backoff := time.Duration(2*(attempt+1)) * time.Second
+				select {
+				case <-time.After(backoff):
+					continue
+				case <-ctx.Done():
+					return nil, nil, ctx.Err()
+				}
+			}
+			return nil, nil, lastErr
+		}
+		if err := resp.Body.Close(); err != nil {
+			lastErr = fmt.Errorf("serp body close failed for keyword %q: %v", keyword, err)
+			if isRetriableSerpErr(err) && attempt < retries {
+				backoff := time.Duration(2*(attempt+1)) * time.Second
+				select {
+				case <-time.After(backoff):
+					continue
+				case <-ctx.Done():
+					return nil, nil, ctx.Err()
+				}
+			}
 			return nil, nil, err
 		}
 		lastErr = nil
@@ -222,6 +246,32 @@ func isTimeoutErr(err error) bool {
 		return true
 	}
 	return strings.Contains(err.Error(), "Client.Timeout exceeded")
+}
+
+func isRetriableSerpErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if isTimeoutErr(err) {
+		return true
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		if netErr.Timeout() {
+			return true
+		}
+		if temporaryErr, ok := any(netErr).(interface{ Temporary() bool }); ok && temporaryErr.Temporary() {
+			return true
+		}
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "unexpected eof") ||
+		strings.Contains(msg, "connection reset by peer") ||
+		strings.Contains(msg, "broken pipe") ||
+		strings.Contains(msg, "http2: client connection lost")
 }
 
 func crawlPages(ctx context.Context, items []SerpItem, lang, keyword string, excludes map[string]struct{}, limit, workers int, logf func(string)) []PageRow {

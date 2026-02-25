@@ -3,6 +3,8 @@ package indexchecker
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -82,5 +84,32 @@ func TestSerpCheckerReturnsErrorOnBadStatus(t *testing.T) {
 	checker := SerpChecker{BaseURL: server.URL + "/api/v1/ranking/parse"}
 	if _, err := checker.Check(context.Background(), "example.com", "se"); err == nil {
 		t.Fatal("expected error on bad status")
+	}
+}
+
+func TestIsRetriableSerpErr(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "nil", err: nil, want: false},
+		{name: "eof", err: io.EOF, want: true},
+		{name: "unexpected eof", err: io.ErrUnexpectedEOF, want: true},
+		{name: "wrapped eof", err: errors.New("read tcp: unexpected EOF"), want: true},
+		{name: "non retriable", err: errors.New("payload invalid"), want: false},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := isRetriableSerpErr(tc.err)
+			if got != tc.want {
+				t.Fatalf("want %v, got %v for err=%v", tc.want, got, tc.err)
+			}
+		})
 	}
 }

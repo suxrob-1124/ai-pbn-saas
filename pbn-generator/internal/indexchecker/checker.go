@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -88,7 +89,7 @@ func (s *SerpChecker) Check(ctx context.Context, domain string, geo string) (boo
 			if ue, ok := err.(*url.Error); ok && ue.Err != nil {
 				lastErr = fmt.Errorf("serp request failed for domain %q: %v", puny, ue.Err)
 			}
-			if isTimeoutErr(err) && attempt < retries {
+			if isRetriableSerpErr(err) && attempt < retries {
 				backoff := time.Duration(2*(attempt+1)) * time.Second
 				select {
 				case <-time.After(backoff):
@@ -100,14 +101,39 @@ func (s *SerpChecker) Check(ctx context.Context, domain string, geo string) (boo
 			return false, lastErr
 		}
 
-		if resp.Body != nil {
-			defer resp.Body.Close()
+		if resp.Body == nil {
+			return false, fmt.Errorf("serp response body is empty for domain %q", puny)
 		}
 		if resp.StatusCode >= 400 {
+			_ = resp.Body.Close()
 			return false, fmt.Errorf("serp status %d for domain %q", resp.StatusCode, puny)
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
-			return false, err
+			_ = resp.Body.Close()
+			lastErr = fmt.Errorf("serp decode failed for domain %q: %v", puny, err)
+			if isRetriableSerpErr(err) && attempt < retries {
+				backoff := time.Duration(2*(attempt+1)) * time.Second
+				select {
+				case <-time.After(backoff):
+					continue
+				case <-ctx.Done():
+					return false, ctx.Err()
+				}
+			}
+			return false, lastErr
+		}
+		if err := resp.Body.Close(); err != nil {
+			lastErr = fmt.Errorf("serp body close failed for domain %q: %v", puny, err)
+			if isRetriableSerpErr(err) && attempt < retries {
+				backoff := time.Duration(2*(attempt+1)) * time.Second
+				select {
+				case <-time.After(backoff):
+					continue
+				case <-ctx.Done():
+					return false, ctx.Err()
+				}
+			}
+			return false, lastErr
 		}
 		lastErr = nil
 		break
@@ -190,4 +216,30 @@ func isTimeoutErr(err error) bool {
 		return true
 	}
 	return strings.Contains(err.Error(), "Client.Timeout exceeded")
+}
+
+func isRetriableSerpErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if isTimeoutErr(err) {
+		return true
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		if netErr.Timeout() {
+			return true
+		}
+		if temporaryErr, ok := any(netErr).(interface{ Temporary() bool }); ok && temporaryErr.Temporary() {
+			return true
+		}
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "unexpected eof") ||
+		strings.Contains(msg, "connection reset by peer") ||
+		strings.Contains(msg, "broken pipe") ||
+		strings.Contains(msg, "http2: client connection lost")
 }
