@@ -113,14 +113,14 @@
 
 ## 6. Предложенный порядок микро-шагов
 
-1. `D1.1` README skeleton rewrite (без OpenAPI правок).
-2. `D1.2` README factual sync (команды/пути/разделы).
-3. `D3.1` OpenAPI missing endpoints patch (P0).
-4. `D3.2` OpenAPI schema/error consistency patch.
-5. `D2.1` Docs content-layer scaffold.
-6. `D2.2` Миграция 2-3 ключевых docs-страниц на новый формат.
-7. `D4.1` Расширение сценариев + troubleshooting.
-8. `D5.1` CI checks + policy.
+1. `[x]` `D1.1` README skeleton rewrite (без OpenAPI правок).
+2. `[x]` `D1.2` README factual sync (команды/пути/разделы).
+3. `[x]` `D3.1` OpenAPI missing endpoints patch (P0).
+4. `[ ]` `D3.2` OpenAPI schema/error consistency patch.
+5. `[ ]` `D2.1` Docs content-layer scaffold.
+6. `[ ]` `D2.2` Миграция 2-3 ключевых docs-страниц на новый формат.
+7. `[ ]` `D4.1` Расширение сценариев + troubleshooting.
+8. `[ ]` `D5.1` CI checks + policy.
 
 ## 7. Критерии завершения блока
 

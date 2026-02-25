@@ -150,6 +150,222 @@ paths:
                 $ref: "#/components/schemas/UserMe"
         "401":
           $ref: "#/components/responses/Error"
+  /api/captcha:
+    get:
+      tags: [Auth]
+      summary: Получить challenge для CAPTCHA
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CaptchaResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+  /api/profile:
+    post:
+      tags: [Auth]
+      summary: Обновить профиль пользователя
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProfileUpdateRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+  /api/profile/api-key:
+    post:
+      tags: [Auth]
+      summary: Сохранить API-ключ профиля
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProfileAPIKeyRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "408":
+          $ref: "#/components/responses/Error"
+    delete:
+      tags: [Auth]
+      summary: Удалить API-ключ профиля
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+  /api/password:
+    post:
+      tags: [Auth]
+      summary: Смена пароля
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangePasswordRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+  /api/email/change/request:
+    post:
+      tags: [Auth]
+      summary: Запросить смену email
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailChangeRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+  /api/email/change/confirm:
+    post:
+      tags: [Auth]
+      summary: Подтвердить смену email
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TokenRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusEmailResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+  /api/verify/request:
+    post:
+      tags: [Auth]
+      summary: Запросить подтверждение email
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailCaptchaRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+  /api/verify/confirm:
+    post:
+      tags: [Auth]
+      summary: Подтвердить email по токену
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TokenRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+  /api/password/reset/request:
+    post:
+      tags: [Auth]
+      summary: Запросить сброс пароля
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailCaptchaRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+  /api/password/reset/confirm:
+    post:
+      tags: [Auth]
+      summary: Подтвердить сброс пароля
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasswordResetConfirmRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "400":
+          $ref: "#/components/responses/Error"
   /api/dashboard:
     get:
       tags: [Dashboard]
@@ -248,6 +464,91 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ProjectSummary"
+  /api/projects/{projectId}/prompts:
+    get:
+      tags: [Projects]
+      summary: Prompt overrides проекта
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PromptOverridesResponse"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+  /api/projects/{projectId}/prompts/{stage}:
+    get:
+      tags: [Projects]
+      summary: Prompt overrides проекта (совместимо со stage path)
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - $ref: "#/components/parameters/PromptStage"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PromptOverridesResponse"
+    put:
+      tags: [Projects]
+      summary: Сохранить override проекта для stage
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - $ref: "#/components/parameters/PromptStage"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PromptOverrideWriteRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+    delete:
+      tags: [Projects]
+      summary: Удалить override проекта для stage
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - $ref: "#/components/parameters/PromptStage"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
   /api/projects/{projectId}/domains:
     get:
       tags: [Domains]
@@ -716,6 +1017,118 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DomainSummary"
+  /api/domains/{domainId}/prompts:
+    get:
+      tags: [Domains]
+      summary: Prompt overrides домена
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PromptOverridesResponse"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+  /api/domains/{domainId}/prompts/{stage}:
+    get:
+      tags: [Domains]
+      summary: Prompt overrides домена (совместимо со stage path)
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+        - $ref: "#/components/parameters/PromptStage"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PromptOverridesResponse"
+    put:
+      tags: [Domains]
+      summary: Сохранить override домена для stage
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+        - $ref: "#/components/parameters/PromptStage"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PromptOverrideWriteRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+    delete:
+      tags: [Domains]
+      summary: Удалить override домена для stage
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+        - $ref: "#/components/parameters/PromptStage"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+  /api/domains/{domainId}/deployments:
+    get:
+      tags: [Domains]
+      summary: История попыток деплоя домена
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DeploymentAttempt"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
   /api/domains/{domainId}/links:
     get:
       tags: [Links]
@@ -1040,6 +1453,43 @@ paths:
                 $ref: "#/components/schemas/AIPageSuggestionResponse"
         "422":
           description: Невалидный формат ответа AI (strict JSON contract)
+  /api/domains/{domainId}/editor/ai-regenerate-asset:
+    post:
+      tags: [Files]
+      summary: AI-регенерация изображения ассета
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EditorAIRegenerateAssetRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EditorAIRegenerateAssetResponse"
+        "400":
+          description: Ошибка валидации запроса
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EditorErrorResponse"
+        "422":
+          description: Ошибка валидации сгенерированного ассета
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EditorErrorResponse"
+        "502":
+          description: Ошибка генерации изображения
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EditorErrorResponse"
   /api/domains/{domainId}/editor/context-pack:
     get:
       tags: [Files]
@@ -2257,6 +2707,12 @@ components:
       required: true
       schema:
         type: string
+    PromptStage:
+      in: path
+      name: stage
+      required: true
+      schema:
+        type: string
     AuditCode:
       in: path
       name: code
@@ -2362,6 +2818,84 @@ components:
         apiKeyPrefix:
           type: string
       required: [email, role, isApproved, verified, hasApiKey]
+    CaptchaResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        question:
+          type: string
+        ttl:
+          type: integer
+      required: [id, question, ttl]
+    StatusResponse:
+      type: object
+      properties:
+        status:
+          type: string
+      required: [status]
+    StatusEmailResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        email:
+          type: string
+      required: [status, email]
+    ProfileUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        avatarUrl:
+          type: string
+      additionalProperties: false
+    ProfileAPIKeyRequest:
+      type: object
+      properties:
+        apiKey:
+          type: string
+      required: [apiKey]
+    ChangePasswordRequest:
+      type: object
+      properties:
+        currentPassword:
+          type: string
+        newPassword:
+          type: string
+      required: [currentPassword, newPassword]
+    EmailChangeRequest:
+      type: object
+      properties:
+        newEmail:
+          type: string
+      required: [newEmail]
+    TokenRequest:
+      type: object
+      properties:
+        token:
+          type: string
+      required: [token]
+    EmailCaptchaRequest:
+      type: object
+      properties:
+        email:
+          type: string
+        captchaId:
+          type: string
+        captchaAnswer:
+          type: string
+        captchaToken:
+          type: string
+      required: [email]
+    PasswordResetConfirmRequest:
+      type: object
+      properties:
+        token:
+          type: string
+        newPassword:
+          type: string
+      required: [token, newPassword]
     Project:
       type: object
       properties:
@@ -3435,6 +3969,175 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/LinkTask"
+    PromptOverrideWriteRequest:
+      type: object
+      properties:
+        body:
+          type: string
+        model:
+          type: string
+          nullable: true
+        based_on_prompt_id:
+          type: string
+          nullable: true
+      required: [body]
+    PromptOverride:
+      type: object
+      properties:
+        id:
+          type: string
+        scope_type:
+          type: string
+        scope_id:
+          type: string
+        stage:
+          type: string
+        body:
+          type: string
+        model:
+          type: string
+          nullable: true
+        based_on_prompt_id:
+          type: string
+          nullable: true
+        updated_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required: [id, scope_type, scope_id, stage, body, updated_by, created_at, updated_at]
+    ResolvedPrompt:
+      type: object
+      properties:
+        stage:
+          type: string
+        source:
+          type: string
+        prompt_id:
+          type: string
+          nullable: true
+        override_id:
+          type: string
+          nullable: true
+        body:
+          type: string
+        model:
+          type: string
+          nullable: true
+        based_on_prompt_id:
+          type: string
+          nullable: true
+      required: [stage, source, body]
+    PromptOverridesResponse:
+      type: object
+      properties:
+        overrides:
+          type: array
+          items:
+            $ref: "#/components/schemas/PromptOverride"
+        resolved:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResolvedPrompt"
+      required: [overrides, resolved]
+    DeploymentAttempt:
+      type: object
+      properties:
+        id:
+          type: string
+        domain_id:
+          type: string
+        generation_id:
+          type: string
+        mode:
+          type: string
+        target_path:
+          type: string
+        owner_before:
+          type: string
+          nullable: true
+        owner_after:
+          type: string
+          nullable: true
+        status:
+          type: string
+        error_message:
+          type: string
+          nullable: true
+        file_count:
+          type: integer
+        total_size_bytes:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+      required: [id, domain_id, generation_id, mode, target_path, status, file_count, total_size_bytes, created_at]
+    EditorAIRegenerateAssetRequest:
+      type: object
+      properties:
+        path:
+          type: string
+        prompt:
+          type: string
+        instruction:
+          type: string
+        mime_type:
+          type: string
+        model:
+          type: string
+        context_mode:
+          type: string
+          enum: [auto, manual, hybrid]
+        context_files:
+          type: array
+          items:
+            type: string
+      oneOf:
+        - required: [path, prompt]
+        - required: [path, instruction]
+    EditorAIRegenerateAssetResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [regenerated]
+        file:
+          $ref: "#/components/schemas/File"
+        warnings:
+          type: array
+          items:
+            type: string
+        prompt_trace:
+          type: object
+          additionalProperties: true
+        token_usage:
+          $ref: "#/components/schemas/TokenUsage"
+        context_pack_meta:
+          $ref: "#/components/schemas/ContextPackMeta"
+      required: [status, file, warnings, prompt_trace, token_usage, context_pack_meta]
+    EditorErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+          enum: [invalid_format, image_generation_failed, context_too_large, operation_locked, asset_validation_failed, forbidden_path]
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+          nullable: true
+      required: [error, code, message]
     ScheduleTriggerResult:
       type: object
       properties:
