@@ -84,6 +84,16 @@ func TestProjectQueueList(t *testing.T) {
 		if rec.Code != http.StatusMethodNotAllowed {
 			t.Fatalf("expected 405, got %d: %s", rec.Code, rec.Body.String())
 		}
+		var payload map[string]any
+		if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode error payload: %v", err)
+		}
+		if payload["code"] != "method_not_allowed" {
+			t.Fatalf("expected code method_not_allowed, got %v", payload["code"])
+		}
+		if payload["message"] != "method not allowed" {
+			t.Fatalf("expected message method not allowed, got %v", payload["message"])
+		}
 	})
 }
 
@@ -149,6 +159,13 @@ func TestQueueDelete(t *testing.T) {
 		s.handleQueueItem(rec, req)
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode error payload: %v", err)
+		}
+		if payload["code"] != "not_found" {
+			t.Fatalf("expected code not_found, got %v", payload["code"])
 		}
 	})
 }

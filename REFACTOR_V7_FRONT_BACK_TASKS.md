@@ -495,6 +495,35 @@
 3. Стандартизировать typed errors и API payload ошибок.
 4. Зафиксировать единый контракт логирования и диагностики.
 
+### Wave 4 status (W4.1–W4.3, 25.02.2026)
+
+1. `completed` — `W4.1` handler modular split:
+- доменные хендлеры вынесены из `server.go` в отдельные файлы (`project_*`, `index_checks`, `editor_*` контуры).
+- в `server.go` оставлены маршрутизация и минимальный dispatch.
+
+2. `completed` — `W4.2` parse/validate/respond + typed errors:
+- общие parse/query/body helpers централизованы в `http_utils.go`.
+- unified error envelope для non-editor и typed editor errors подключены в новых модулях без изменений API-роутов.
+
+3. `completed` — `W4.3` logging/diagnostics contract + regression:
+- для `httpserver` зафиксирован единый request/error log-контракт (`request_id`, `error_code`, `error_message`, `error_kind`, `error_details`).
+- policy уровней: `4xx => warn`, `5xx => error`.
+- для non-editor ответов диагностические `details` не отдаются в клиентский payload, но сохраняются в логах; editor envelope оставлен совместимым (`details?`).
+- regression подтвержден:
+  - `go test ./internal/httpserver ./internal/store/sqlstore ./cmd/worker`
+  - `npx tsc --noEmit`
+  - `verify:file-editor-route`
+  - `verify:ai-editor-panel`
+  - `verify:ai-create-page-wizard`
+  - `verify:ai-asset-resolution-actions`
+  - `verify:ai-apply-plan-safety`
+
+### Wave 4 leftovers / residual risks
+
+1. `server.go` заметно уменьшен, но остаются legacy handler-блоки, требующие дальнейшего распила в следующей волне.
+2. Нет сквозной e2e-корреляции `request_id` между `httpserver` и `worker` логами (корреляция частично ручная).
+3. Сохранены разные текстовые формулировки user-facing ошибок в части legacy endpoint-ов; формат payload уже унифицирован, но тексты требуют отдельной нормализации.
+
 ### Definition of Done для этапа "весь проект"
 1. Нет страниц-«монолитов» на 1500+ строк без модульного деления.
 2. Все долгие действия имеют прозрачный жизненный цикл в UI.

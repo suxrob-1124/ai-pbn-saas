@@ -1322,6 +1322,151 @@ func TestGenerationAction_CancelPending(t *testing.T) {
 	}
 }
 
+func TestGenerationByID_RecoversStaleCancelling(t *testing.T) {
+	s := setupServer(t)
+
+	projectID := "project-stale-cancel"
+	domainID := "domain-stale-cancel"
+	genID := "gen-stale-cancel"
+	now := time.Now().UTC()
+	s.projects.(*stubProjectStore).projects[projectID] = sqlstore.Project{
+		ID:        projectID,
+		UserEmail: "owner@example.com",
+		Name:      "Project",
+		Status:    "active",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	s.domains.(*stubDomainStore).domains[domainID] = sqlstore.Domain{
+		ID:          domainID,
+		ProjectID:   projectID,
+		URL:         "example.com",
+		MainKeyword: "keyword",
+		Status:      "processing",
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	started := now.Add(-20 * time.Minute)
+	s.generations.(*stubGenerationStore).generations[genID] = sqlstore.Generation{
+		ID:        genID,
+		DomainID:  domainID,
+		Status:    "cancelling",
+		Progress:  10,
+		CreatedAt: now.Add(-30 * time.Minute),
+		UpdatedAt: now.Add(-3 * time.Minute),
+		StartedAt: sql.NullTime{Time: started, Valid: true},
+	}
+
+	adminCtx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: "admin@example.com",
+		Role:  "admin",
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/generations/"+genID, nil).WithContext(adminCtx)
+	rec := httptest.NewRecorder()
+	s.handleGenerationByID(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var dto generationDTO
+	if err := json.NewDecoder(rec.Body).Decode(&dto); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if dto.Status != "cancelled" {
+		t.Fatalf("expected dto status cancelled, got %s", dto.Status)
+	}
+	gen := s.generations.(*stubGenerationStore).generations[genID]
+	if gen.Status != "cancelled" {
+		t.Fatalf("expected stored status cancelled, got %s", gen.Status)
+	}
+	if !gen.FinishedAt.Valid {
+		t.Fatalf("expected finished_at to be set")
+	}
+	domain := s.domains.(*stubDomainStore).domains[domainID]
+	if domain.Status != "waiting" {
+		t.Fatalf("expected domain waiting after stale cancel recovery, got %s", domain.Status)
+	}
+}
+
+func TestDomainGenerate_RecoversStaleCancellingBeforeActiveCheck(t *testing.T) {
+	s := setupServer(t)
+	cfg := s.cfg
+	cfg.APIKeySecret = "test-secret-key"
+	users := newStubUserStore()
+	s.svc = auth.NewService(auth.ServiceDeps{
+		Config:             cfg,
+		Users:              users,
+		Sessions:           newStubSessionStore(),
+		VerificationTokens: newStubVerificationStore(),
+		ResetTokens:        newStubResetStore(),
+		Captchas:           newStubCaptchaStore(),
+		Mailer:             stubMailer{},
+		Logger:             zap.NewNop().Sugar(),
+	})
+
+	const (
+		projectID = "project-stale-cancel-run"
+		domainID  = "domain-stale-cancel-run"
+		genID     = "gen-stale-cancel-run"
+		owner     = "owner@example.com"
+		admin     = "admin@example.com"
+	)
+	now := time.Now().UTC()
+	users.users[owner] = "pass"
+	users.verified[owner] = true
+	users.roles[owner] = "manager"
+	users.approved[owner] = true
+	users.users[admin] = "pass"
+	users.verified[admin] = true
+	users.roles[admin] = "admin"
+	users.approved[admin] = true
+	if err := users.SetAPIKey(context.Background(), admin, []byte("enc-key"), now); err != nil {
+		t.Fatalf("set admin api key: %v", err)
+	}
+
+	s.projects.(*stubProjectStore).projects[projectID] = sqlstore.Project{
+		ID:        projectID,
+		UserEmail: owner,
+		Name:      "Project",
+		Status:    "active",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	s.domains.(*stubDomainStore).domains[domainID] = sqlstore.Domain{
+		ID:          domainID,
+		ProjectID:   projectID,
+		URL:         "example.com",
+		MainKeyword: "keyword",
+		Status:      "processing",
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	s.generations.(*stubGenerationStore).generations[genID] = sqlstore.Generation{
+		ID:        genID,
+		DomainID:  domainID,
+		Status:    "cancelling",
+		Progress:  10,
+		CreatedAt: now.Add(-30 * time.Minute),
+		UpdatedAt: now.Add(-3 * time.Minute),
+	}
+
+	adminCtx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
+		Email: admin,
+		Role:  "admin",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/domains/"+domainID+"/generate", strings.NewReader(`{}`)).WithContext(adminCtx)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.handleDomainGenerate(rec, req, domainID)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202 after stale transition recovery, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if recovered := s.generations.(*stubGenerationStore).generations[genID]; recovered.Status != "cancelled" {
+		t.Fatalf("expected previous generation cancelled, got %s", recovered.Status)
+	}
+}
+
 func TestGenerationAction_ResumeRollbackOnEnqueueFail(t *testing.T) {
 	s := setupServer(t)
 
