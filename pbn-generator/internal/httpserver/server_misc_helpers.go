@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"obzornik-pbn-generator/internal/domainfs"
 	"obzornik-pbn-generator/internal/store/sqlstore"
 )
 
@@ -22,6 +23,13 @@ func minInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func (s *Server) SetContentBackend(backend domainfs.SiteContentBackend) {
+	if backend == nil {
+		return
+	}
+	s.contentBackend = backend
 }
 
 func stableDomainStatusFromDomain(domain sqlstore.Domain) string {

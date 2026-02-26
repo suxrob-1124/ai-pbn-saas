@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -12,6 +14,7 @@ import (
 	"obzornik-pbn-generator/internal/auth"
 	"obzornik-pbn-generator/internal/config"
 	"obzornik-pbn-generator/internal/db"
+	"obzornik-pbn-generator/internal/domainfs"
 	"obzornik-pbn-generator/internal/httpserver"
 	"obzornik-pbn-generator/internal/notify"
 	"obzornik-pbn-generator/internal/store/sqlstore"
@@ -96,6 +99,14 @@ func main() {
 		modelPricingStore,
 		taskClient,
 	)
+	contentBackend, sshPool, err := buildContentBackend(cfg)
+	if err != nil {
+		logger.Fatalf("failed to init content backend: %v", err)
+	}
+	if sshPool != nil {
+		defer sshPool.Close()
+	}
+	srv.SetContentBackend(contentBackend)
 	handler := srv.Handler()
 
 	go startSessionCleanup(svc, cfg.SessionCleanInterval)
@@ -119,6 +130,45 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = server.Shutdown(ctx)
+}
+
+func buildContentBackend(cfg config.Config) (domainfs.SiteContentBackend, *domainfs.SSHPool, error) {
+	localBackend := domainfs.NewLocalFSBackend(cfg.DeployBaseDir)
+	if !strings.EqualFold(strings.TrimSpace(cfg.DeployMode), "ssh_remote") {
+		return localBackend, nil, nil
+	}
+
+	targets, err := domainfs.ParseDeployTargetsJSON(cfg.DeployTargetsJSON)
+	if err != nil {
+		return nil, nil, err
+	}
+	for alias, target := range targets {
+		if strings.TrimSpace(target.KeyPath) == "" {
+			target.KeyPath = strings.TrimSpace(cfg.DeploySSHKeyPath)
+			targets[alias] = target
+		}
+	}
+	if len(targets) == 0 {
+		return nil, nil, fmt.Errorf("DEPLOY_TARGETS_JSON must contain at least one target for ssh_remote")
+	}
+
+	pool, err := domainfs.NewSSHPool(domainfs.SSHPoolConfig{
+		MaxOpen:        cfg.DeploySSHPoolMaxOpen,
+		MaxIdle:        cfg.DeploySSHPoolMaxIdle,
+		IdleTTL:        cfg.DeploySSHPoolIdleTTL,
+		DialTimeout:    cfg.DeployTimeout,
+		KnownHostsPath: cfg.DeployKnownHostsPath,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	sshBackend, err := domainfs.NewSSHBackend(pool, targets)
+	if err != nil {
+		_ = pool.Close()
+		return nil, nil, err
+	}
+	return domainfs.NewRouterBackend(localBackend, sshBackend), pool, nil
 }
 
 func startSessionCleanup(svc *auth.Service, interval time.Duration) {

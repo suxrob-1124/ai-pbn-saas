@@ -49,7 +49,7 @@ func New(cfg config.Config, svc *auth.Service, logger *zap.SugaredLogger, projec
 		auditRules:      auditRules,
 		siteFiles:       siteFiles,
 		fileEdits:       fileEdits,
-		contentBackend:  domainfs.NewLocalFSBackend("server"),
+		contentBackend:  domainfs.NewLocalFSBackend(cfg.DeployBaseDir),
 		linkTasks:       linkTasks,
 		genQueue:        genQueue,
 		indexChecks:     indexChecks,
