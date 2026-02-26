@@ -24,13 +24,14 @@ function allowed(): ActionGuard {
 
 type GuardOptions = {
   busy?: boolean;
+  busyReason?: string;
   allowed?: boolean;
   reason?: string;
 };
 
 export function canRun(options: GuardOptions = {}): ActionGuard {
   if (options.busy) {
-    return blocked(GUARD_REASON.busy);
+    return blocked(options.busyReason || GUARD_REASON.busy);
   }
   if (options.allowed === false) {
     return blocked(options.reason || GUARD_REASON.unavailable);
@@ -44,7 +45,7 @@ type RetryGuardOptions = GuardOptions & {
 
 export function canRetry(options: RetryGuardOptions = {}): ActionGuard {
   if (options.busy) {
-    return blocked(GUARD_REASON.busy);
+    return blocked(options.busyReason || GUARD_REASON.busy);
   }
   const byStatus = options.status ? canRetryLinkTask(options.status) : true;
   const isAllowed = options.allowed ?? byStatus;
@@ -60,7 +61,7 @@ type DeleteGuardOptions = GuardOptions & {
 
 export function canDelete(options: DeleteGuardOptions = {}): ActionGuard {
   if (options.busy) {
-    return blocked(GUARD_REASON.busy);
+    return blocked(options.busyReason || GUARD_REASON.busy);
   }
   const byStatus = options.status ? canDeleteLinkTask(options.status) : true;
   const isAllowed = options.allowed ?? byStatus;
@@ -87,7 +88,7 @@ const CANCELABLE_STATUSES = new Set([
 
 export function canCancel(options: CancelGuardOptions = {}): ActionGuard {
   if (options.busy) {
-    return blocked(GUARD_REASON.busy);
+    return blocked(options.busyReason || GUARD_REASON.busy);
   }
   const normalizedStatus = (options.status || "").trim().toLowerCase();
   const byStatus = normalizedStatus ? CANCELABLE_STATUSES.has(normalizedStatus) : true;
@@ -97,4 +98,3 @@ export function canCancel(options: CancelGuardOptions = {}): ActionGuard {
   }
   return allowed();
 }
-

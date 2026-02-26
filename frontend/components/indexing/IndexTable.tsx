@@ -6,6 +6,7 @@ import { FiChevronDown, FiChevronUp } from "react-icons/fi";
 import type { IndexCheckDTO, IndexCheckHistoryDTO } from "../../types/indexChecks";
 import { IndexCheckHistoryCard } from "../IndexCheckHistoryCard";
 import { Badge } from "../Badge";
+import type { ActionGuard } from "../../features/queue-monitoring/services/actionGuards";
 import { getIndexCheckStatusMeta } from "../../features/queue-monitoring/services/statusMeta";
 import { TableStateRow } from "../../features/queue-monitoring/components/TableState";
 
@@ -36,6 +37,7 @@ export type IndexTableProps = {
   sort: IndexCheckSort;
   onSortChange?: (sort: IndexCheckSort) => void;
   onRunNow?: (domainId: string) => void;
+  runNowGuard?: (domainId: string) => ActionGuard;
 };
 
 /** Таблица проверок индексации с поддержкой истории. */
@@ -51,7 +53,8 @@ export function IndexTable({
   formatDateTime,
   sort,
   onSortChange,
-  onRunNow
+  onRunNow,
+  runNowGuard
 }: IndexTableProps) {
   const handleSort = (key: IndexCheckSortKey) => {
     if (!onSortChange) {
@@ -131,6 +134,8 @@ export function IndexTable({
                             <button
                               type="button"
                               onClick={() => onRunNow(check.domain_id)}
+                              disabled={runNowGuard?.(check.domain_id).disabled}
+                              title={runNowGuard?.(check.domain_id).reason}
                               className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                             >
                               Запустить

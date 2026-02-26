@@ -12,6 +12,7 @@ import { useAuthGuard } from "../../../lib/useAuth";
 import { authFetchCached, invalidateAuthCache } from "../../../lib/http";
 import { useDebouncedValue } from "../../../lib/useDebouncedValue";
 import { showToast } from "../../../lib/toastStore";
+import { useActionLocks } from "../../../features/editor-v3/hooks/useActionLocks";
 import { PaginationControls } from "../../../features/queue-monitoring/components/PaginationControls";
 import { canRun } from "../../../features/queue-monitoring/services/actionGuards";
 import {
@@ -124,10 +125,22 @@ function IndexingMonitoringContent() {
   const [historyLoading, setHistoryLoading] = useState<Record<string, boolean>>({});
   const [historyError, setHistoryError] = useState<Record<string, string | null>>({});
   const [openHistory, setOpenHistory] = useState<Record<string, boolean>>({});
+  const { isLocked, lockReason, runLocked } = useActionLocks();
 
   const domainScope = domainFilter.trim();
   const permissionDenied = !authLoading && !isAdmin && !projectId && !domainScope;
   const querySnapshot = searchParams.toString();
+  const refreshLockKey = projectId
+    ? `monitoring:indexing:project:${projectId}:refresh`
+    : domainScope
+      ? `monitoring:indexing:domain:${domainScope}:refresh`
+      : "monitoring:indexing:global:refresh";
+  const manualRunLockKey = projectId
+    ? `monitoring:indexing:project:${projectId}:run-manual`
+    : domainScope
+      ? `monitoring:indexing:domain:${domainScope}:run-manual`
+      : "monitoring:indexing:run-manual";
+  const adminRunNowLockKey = (domainId: string) => `monitoring:indexing:admin:${domainId}:run-now`;
 
   useEffect(() => {
     let cancelled = false;
@@ -382,38 +395,44 @@ function IndexingMonitoringContent() {
   };
 
   const handleManualRun = async () => {
-    setError(null);
-    try {
-      invalidateAuthCache("index-checks/stats");
-      invalidateAuthCache("index-checks/calendar");
-      if (domainScope) {
-        const result = await runManual(domainScope);
-        if (result.run_now_enqueued === false) {
-          const pendingLabel = getIndexCheckStatusMeta("pending").label;
-          showToast({
-            type: "warning",
-            title: `Проверка поставлена в статус «${pendingLabel}»`,
-            message: result.run_now_error || "Немедленная постановка в очередь не удалась, обработка продолжится по плановому циклу."
-          });
+    await runLocked(
+      manualRunLockKey,
+      async () => {
+        setError(null);
+        try {
+          invalidateAuthCache("index-checks/stats");
+          invalidateAuthCache("index-checks/calendar");
+          if (domainScope) {
+            const result = await runManual(domainScope);
+            if (result.run_now_enqueued === false) {
+              const pendingLabel = getIndexCheckStatusMeta("pending").label;
+              showToast({
+                type: "warning",
+                title: `Проверка поставлена в статус «${pendingLabel}»`,
+                message: result.run_now_error || "Немедленная постановка в очередь не удалась, обработка продолжится по плановому циклу."
+              });
+            }
+          } else if (projectId) {
+            const result = await runManualProject(projectId);
+            const enqueueFailed = result.enqueue_failed || 0;
+            const upsertFailed = result.upsert_failed || 0;
+            if (enqueueFailed > 0 || upsertFailed > 0) {
+              showToast({
+                type: "warning",
+                title: "Часть проверок выполнена с ошибками",
+                message: `Успешно поставлено: ${result.enqueued || 0}, ошибок upsert: ${upsertFailed}, ошибок enqueue: ${enqueueFailed}.`
+              });
+            }
+          } else {
+            return;
+          }
+          await Promise.all([loadChecks(), loadStats(), loadCalendar()]);
+        } catch (err: any) {
+          setError(err?.message || "Не удалось запустить проверку");
         }
-      } else if (projectId) {
-        const result = await runManualProject(projectId);
-        const enqueueFailed = result.enqueue_failed || 0;
-        const upsertFailed = result.upsert_failed || 0;
-        if (enqueueFailed > 0 || upsertFailed > 0) {
-          showToast({
-            type: "warning",
-            title: "Часть проверок выполнена с ошибками",
-            message: `Успешно поставлено: ${result.enqueued || 0}, ошибок upsert: ${upsertFailed}, ошибок enqueue: ${enqueueFailed}.`
-          });
-        }
-      } else {
-        return;
-      }
-      await Promise.all([loadChecks(), loadStats(), loadCalendar()]);
-    } catch (err: any) {
-      setError(err?.message || "Не удалось запустить проверку");
-    }
+      },
+      "Запуск уже выполняется."
+    );
   };
 
   const canShowFailedAlert = isAdmin && !projectId;
@@ -511,25 +530,40 @@ function IndexingMonitoringContent() {
       if (!isAdmin) {
         return;
       }
-      setError(null);
-      try {
-        invalidateAuthCache("index-checks/stats");
-        invalidateAuthCache("index-checks/calendar");
-        const result = await runAdminManual(domainId);
-        if (result.run_now_enqueued === false) {
-          const pendingLabel = getIndexCheckStatusMeta("pending").label;
-          showToast({
-            type: "warning",
-            title: `Проверка поставлена в статус «${pendingLabel}»`,
-            message: result.run_now_error || "Немедленная постановка в очередь не удалась, обработка продолжится по плановому циклу."
-          });
-        }
-        await Promise.all([loadChecks(), loadStats(), loadCalendar(), loadFailed()]);
-      } catch (err: any) {
-        setError(err?.message || "Не удалось запустить проверку");
-      }
+      await runLocked(
+        adminRunNowLockKey(domainId),
+        async () => {
+          setError(null);
+          try {
+            invalidateAuthCache("index-checks/stats");
+            invalidateAuthCache("index-checks/calendar");
+            const result = await runAdminManual(domainId);
+            if (result.run_now_enqueued === false) {
+              const pendingLabel = getIndexCheckStatusMeta("pending").label;
+              showToast({
+                type: "warning",
+                title: `Проверка поставлена в статус «${pendingLabel}»`,
+                message: result.run_now_error || "Немедленная постановка в очередь не удалась, обработка продолжится по плановому циклу."
+              });
+            }
+            await Promise.all([loadChecks(), loadStats(), loadCalendar(), loadFailed()]);
+          } catch (err: any) {
+            setError(err?.message || "Не удалось запустить проверку");
+          }
+        },
+        "Запуск уже выполняется."
+      );
     },
-    [isAdmin, loadCalendar, loadChecks, loadFailed, loadStats]
+    [isAdmin, loadCalendar, loadChecks, loadFailed, loadStats, runLocked]
+  );
+
+  const getAdminRunNowGuard = useCallback(
+    (domainId: string) =>
+      canRun({
+        busy: loading || isLocked(adminRunNowLockKey(domainId)),
+        busyReason: lockReason(adminRunNowLockKey(domainId))
+      }),
+    [isLocked, loading, lockReason]
   );
 
   const appliedFilters = useMemo<IndexFiltersValue>(
@@ -577,9 +611,15 @@ function IndexingMonitoringContent() {
   };
 
   const handleRefresh = async () => {
-    invalidateAuthCache("index-checks/stats");
-    invalidateAuthCache("index-checks/calendar");
-    await Promise.all([loadChecks(), loadFailed(), loadStats(), loadCalendar()]);
+    await runLocked(
+      refreshLockKey,
+      async () => {
+        invalidateAuthCache("index-checks/stats");
+        invalidateAuthCache("index-checks/calendar");
+        await Promise.all([loadChecks(), loadFailed(), loadStats(), loadCalendar()]);
+      },
+      "Обновление уже выполняется."
+    );
   };
 
   const visibleChecks = checks;
@@ -587,8 +627,14 @@ function IndexingMonitoringContent() {
   const hasNextPage = hasNextPageByTotal(page, limit, totalChecks);
   const totalPages = getTotalPages(totalChecks, limit);
   const pageLabel = Math.min(page, totalPages);
-  const refreshGuard = canRun({ busy: loading });
-  const manualRunGuard = canRun({ busy: loading });
+  const refreshGuard = canRun({
+    busy: loading || isLocked(refreshLockKey),
+    busyReason: lockReason(refreshLockKey)
+  });
+  const manualRunGuard = canRun({
+    busy: loading || isLocked(manualRunLockKey),
+    busyReason: lockReason(manualRunLockKey)
+  });
 
   useEffect(() => {
     if (page > totalPages) {
@@ -616,7 +662,7 @@ function IndexingMonitoringContent() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button
-              onClick={loadChecks}
+              onClick={handleRefresh}
               className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
               type="button"
               disabled={refreshGuard.disabled}
@@ -714,6 +760,7 @@ function IndexingMonitoringContent() {
               sort={sort}
               onSortChange={handleSortChange}
               onRunNow={isAdmin && !projectId ? handleAdminRunNow : undefined}
+              runNowGuard={isAdmin && !projectId ? getAdminRunNowGuard : undefined}
             />
             <div className="mt-4">
               <PaginationControls

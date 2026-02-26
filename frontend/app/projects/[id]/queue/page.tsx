@@ -9,6 +9,7 @@ import { deleteLinkTask, listLinkTasks, retryLinkTask } from "../../../../lib/li
 import { authFetch } from "../../../../lib/http";
 import { useAuthGuard } from "../../../../lib/useAuth";
 import { showToast } from "../../../../lib/toastStore";
+import { useActionLocks } from "../../../../features/editor-v3/hooks/useActionLocks";
 import type { QueueItemDTO } from "../../../../types/queue";
 import type { LinkTaskDTO } from "../../../../types/linkTasks";
 import { Badge } from "../../../../components/Badge";
@@ -102,6 +103,15 @@ export default function ProjectQueuePage() {
   const [linkPage, setLinkPage] = useState(1);
   const linkPageSize = 20;
   const activeTab = resolveQueueTab(searchParams.get("tab"));
+  const { isLocked, lockReason, runLocked } = useActionLocks();
+
+  const scopeId = projectId || "unknown";
+  const cleanupLockKey = `project:${scopeId}:queue:cleanup`;
+  const refreshLockKey = `project:${scopeId}:queue:refresh`;
+  const linkRefreshLockKey = `project:${scopeId}:queue:links:refresh`;
+  const removeQueueItemLockKey = (itemId: string) => `project:${scopeId}:queue:item:${itemId}:delete`;
+  const linkRetryLockKey = (taskId: string) => `project:${scopeId}:queue:link:${taskId}:retry`;
+  const linkDeleteLockKey = (taskId: string) => `project:${scopeId}:queue:link:${taskId}:delete`;
 
   useEffect(() => {
     let cancelled = false;
@@ -316,116 +326,165 @@ export default function ProjectQueuePage() {
   const visibleItems = filtered;
   const visibleHistoryItems = filteredHistory;
   const visibleLinks = filteredLinks;
-  const cleanupGuard = canDelete({ busy: cleaning, allowed: true });
-  const refreshGuard = canRun({ busy: refreshing });
-  const linkRefreshGuard = canRun({ busy: linkRefreshing });
+  const cleanupGuard = canDelete({
+    busy: cleaning || isLocked(cleanupLockKey),
+    busyReason: lockReason(cleanupLockKey),
+    allowed: true
+  });
+  const refreshGuard = canRun({
+    busy: refreshing || isLocked(refreshLockKey),
+    busyReason: lockReason(refreshLockKey)
+  });
+  const linkRefreshGuard = canRun({
+    busy: linkRefreshing || isLocked(linkRefreshLockKey),
+    busyReason: lockReason(linkRefreshLockKey)
+  });
 
   const handleRemove = async (item: QueueItemDTO) => {
     const domainLabel = item.domain_url || domains[item.domain_id]?.url || "домен";
     if (!confirm(`Удалить из очереди домен ${domainLabel}?`)) return;
-    setLoading(true);
-    setError(null);
-    try {
-      await deleteQueueItem(item.id);
-      showToast({
-        type: "success",
-        title: "Удалено из очереди",
-        message: domainLabel
-      });
-      await load();
-    } catch (err: any) {
-      const msg = err?.message || "Не удалось удалить из очереди";
-      setError(msg);
-      showToast({ type: "error", title: "Ошибка удаления", message: msg });
-    } finally {
-      setLoading(false);
-    }
+    const lockKey = removeQueueItemLockKey(item.id);
+    await runLocked(
+      lockKey,
+      async () => {
+        setLoading(true);
+        setError(null);
+        try {
+          await deleteQueueItem(item.id);
+          showToast({
+            type: "success",
+            title: "Удалено из очереди",
+            message: domainLabel
+          });
+          await load();
+        } catch (err: any) {
+          const msg = err?.message || "Не удалось удалить из очереди";
+          setError(msg);
+          showToast({ type: "error", title: "Ошибка удаления", message: msg });
+        } finally {
+          setLoading(false);
+        }
+      },
+      "Удаление уже выполняется."
+    );
   };
 
   const handleLinkRetry = async (task: LinkTaskDTO) => {
     const domainLabel = domains[task.domain_id]?.url || "домен";
     if (!confirm(`Повторить задачу ссылки для домена ${domainLabel}?`)) return;
-    setLinkLoading(true);
-    setLinkError(null);
-    try {
-      await retryLinkTask(task.id);
-      showToast({
-        type: "success",
-        title: "Повтор поставлен в очередь",
-        message: domainLabel
-      });
-      await loadLinkTasks();
-    } catch (err: any) {
-      const msg = err?.message || "Не удалось повторить задачу ссылки";
-      setLinkError(msg);
-      showToast({ type: "error", title: "Ошибка повтора", message: msg });
-    } finally {
-      setLinkLoading(false);
-    }
+    const lockKey = linkRetryLockKey(task.id);
+    await runLocked(
+      lockKey,
+      async () => {
+        setLinkLoading(true);
+        setLinkError(null);
+        try {
+          await retryLinkTask(task.id);
+          showToast({
+            type: "success",
+            title: "Повтор поставлен в очередь",
+            message: domainLabel
+          });
+          await loadLinkTasks();
+        } catch (err: any) {
+          const msg = err?.message || "Не удалось повторить задачу ссылки";
+          setLinkError(msg);
+          showToast({ type: "error", title: "Ошибка повтора", message: msg });
+        } finally {
+          setLinkLoading(false);
+        }
+      },
+      "Повтор уже выполняется."
+    );
   };
 
   const handleLinkDelete = async (task: LinkTaskDTO) => {
     const domainLabel = domains[task.domain_id]?.url || "домен";
     if (!confirm(`Удалить задачу ссылки для домена ${domainLabel}?`)) return;
-    setLinkLoading(true);
-    setLinkError(null);
-    try {
-      await deleteLinkTask(task.id);
-      showToast({
-        type: "success",
-        title: "Задача ссылки удалена",
-        message: domainLabel
-      });
-      await loadLinkTasks();
-    } catch (err: any) {
-      const msg = err?.message || "Не удалось удалить задачу ссылки";
-      setLinkError(msg);
-      showToast({ type: "error", title: "Ошибка удаления", message: msg });
-    } finally {
-      setLinkLoading(false);
-    }
+    const lockKey = linkDeleteLockKey(task.id);
+    await runLocked(
+      lockKey,
+      async () => {
+        setLinkLoading(true);
+        setLinkError(null);
+        try {
+          await deleteLinkTask(task.id);
+          showToast({
+            type: "success",
+            title: "Задача ссылки удалена",
+            message: domainLabel
+          });
+          await loadLinkTasks();
+        } catch (err: any) {
+          const msg = err?.message || "Не удалось удалить задачу ссылки";
+          setLinkError(msg);
+          showToast({ type: "error", title: "Ошибка удаления", message: msg });
+        } finally {
+          setLinkLoading(false);
+        }
+      },
+      "Удаление уже выполняется."
+    );
   };
 
   const handleCleanup = async () => {
     if (!projectId) return;
     if (!confirm("Очистить устаревшие элементы очереди?")) return;
-    setCleaning(true);
-    setError(null);
-    try {
-      const res = await cleanupQueue(projectId);
-      showToast({
-        type: "success",
-        title: "Очистка очереди",
-        message: `Удалено: ${res?.removed ?? 0}`
-      });
-      await load();
-    } catch (err: any) {
-      const msg = err?.message || "Не удалось очистить очередь";
-      setError(msg);
-      showToast({ type: "error", title: "Ошибка очистки", message: msg });
-    } finally {
-      setCleaning(false);
-    }
+    await runLocked(
+      cleanupLockKey,
+      async () => {
+        setCleaning(true);
+        setError(null);
+        try {
+          const res = await cleanupQueue(projectId);
+          showToast({
+            type: "success",
+            title: "Очистка очереди",
+            message: `Удалено: ${res?.removed ?? 0}`
+          });
+          await load();
+        } catch (err: any) {
+          const msg = err?.message || "Не удалось очистить очередь";
+          setError(msg);
+          showToast({ type: "error", title: "Ошибка очистки", message: msg });
+        } finally {
+          setCleaning(false);
+        }
+      },
+      "Очистка уже выполняется."
+    );
   };
 
   const handleRefresh = async () => {
     if (!projectId) return;
-    setRefreshing(true);
-    try {
-      await Promise.all([load({ silent: true }), loadHistory({ silent: true })]);
-    } finally {
-      setRefreshing(false);
-    }
+    await runLocked(
+      refreshLockKey,
+      async () => {
+        setRefreshing(true);
+        try {
+          await Promise.all([load({ silent: true }), loadHistory({ silent: true })]);
+        } finally {
+          setRefreshing(false);
+        }
+      },
+      "Обновление уже выполняется."
+    );
   };
 
   const handleLinkRefresh = async () => {
     if (!projectId) return;
-    setLinkRefreshing(true);
-    try {
-      await loadLinkTasks({ silent: true });
-    } finally {
-      setLinkRefreshing(false);
-    }
+    await runLocked(
+      linkRefreshLockKey,
+      async () => {
+        setLinkRefreshing(true);
+        try {
+          await loadLinkTasks({ silent: true });
+        } finally {
+          setLinkRefreshing(false);
+        }
+      },
+      "Обновление уже выполняется."
+    );
   };
 
   return (
@@ -633,8 +692,19 @@ export default function ProjectQueuePage() {
                   const actionLabel = (task.action || "insert") === "remove" ? "Удаление" : "Вставка";
                   const normalizedStatus = normalizeLinkTaskStatus(task.status) || task.status;
                   const canRetryByStatus = canRetryLinkTask(task.status);
-                  const retryGuard = canRetry({ busy: linkLoading, status: task.status, allowed: canRetryByStatus });
-                  const deleteGuard = canDelete({ busy: linkLoading, status: task.status });
+                  const retryKey = linkRetryLockKey(task.id);
+                  const deleteKey = linkDeleteLockKey(task.id);
+                  const retryGuard = canRetry({
+                    busy: linkLoading || isLocked(retryKey),
+                    busyReason: lockReason(retryKey),
+                    status: task.status,
+                    allowed: canRetryByStatus
+                  });
+                  const deleteGuard = canDelete({
+                    busy: linkLoading || isLocked(deleteKey),
+                    busyReason: lockReason(deleteKey),
+                    status: task.status
+                  });
                   const lastLog = task.log_lines?.length ? task.log_lines[task.log_lines.length - 1] : "";
                   const eventText = task.error_message || lastLog || "—";
                   return (
@@ -731,7 +801,12 @@ export default function ProjectQueuePage() {
                 {!loading && visibleItems.map((item) => {
                   const domain = domains[item.domain_id];
                   const domainLabel = item.domain_url || domain?.url || "Домен";
-                  const removeGuard = canDelete({ busy: loading, allowed: true });
+                  const removeKey = removeQueueItemLockKey(item.id);
+                  const removeGuard = canDelete({
+                    busy: loading || isLocked(removeKey),
+                    busyReason: lockReason(removeKey),
+                    allowed: true
+                  });
                   return (
                     <tr key={item.id}>
                       <td className="py-3 pr-4">

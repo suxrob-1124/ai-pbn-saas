@@ -11,6 +11,7 @@ import { showToast } from "../../lib/toastStore";
 import type { LinkTaskDTO } from "../../types/linkTasks";
 import { Badge } from "../../components/Badge";
 import { getLinkTaskStatusMeta, isLinkTaskInProgress, type LinkTaskCanonicalStatus } from "../../lib/linkTaskStatus";
+import { useActionLocks } from "../../features/editor-v3/hooks/useActionLocks";
 import { FilterSearchInput } from "../../features/queue-monitoring/components/FilterSearchInput";
 import { PaginationControls } from "../../features/queue-monitoring/components/PaginationControls";
 import { TableState } from "../../features/queue-monitoring/components/TableState";
@@ -72,6 +73,11 @@ function QueuePageContent() {
   const [linkDomains, setLinkDomains] = useState<Record<string, string>>({});
   const searchParams = useSearchParams();
   const activeTab = resolveQueueTab(searchParams.get("tab"));
+  const { isLocked, lockReason, runLocked } = useActionLocks();
+
+  const refreshLockKey = "queue:global:refresh";
+  const linkRetryLockKey = (taskId: string) => `queue:global:link:${taskId}:retry`;
+  const linkDeleteLockKey = (taskId: string) => `queue:global:link:${taskId}:delete`;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -169,8 +175,14 @@ function QueuePageContent() {
   }, [linkFilter, linkPage, linkPageSize, linkSearch, me]);
 
   const handleRefresh = useCallback(async () => {
-    await Promise.all([load(), loadLinks()]);
-  }, [load, loadLinks]);
+    await runLocked(
+      refreshLockKey,
+      async () => {
+        await Promise.all([load(), loadLinks()]);
+      },
+      "Обновление уже выполняется."
+    );
+  }, [load, loadLinks, runLocked]);
 
   useEffect(() => {
     load();
@@ -254,50 +266,67 @@ function QueuePageContent() {
   const visibleLinks = filteredLinks;
   const genIndexBase = (genPage - 1) * genPageSize;
   const linkIndexBase = (linkPage - 1) * linkPageSize;
-  const refreshGuard = canRun({ busy: loading || linkLoading });
+  const refreshGuard = canRun({
+    busy: loading || linkLoading || isLocked(refreshLockKey),
+    busyReason: lockReason(refreshLockKey)
+  });
 
   const handleLinkRetry = async (task: LinkTaskDTO) => {
     const domainLabel = linkDomains[task.domain_id] || "домен";
     if (!confirm(`Повторить задачу ссылки для домена ${domainLabel}?`)) return;
-    setLinkLoading(true);
-    setLinkError(null);
-    try {
-      await retryLinkTask(task.id);
-      showToast({
-        type: "success",
-        title: "Повтор поставлен в очередь",
-        message: domainLabel
-      });
-      await loadLinks();
-    } catch (err: any) {
-      const msg = err?.message || "Не удалось повторить задачу ссылки";
-      setLinkError(msg);
-      showToast({ type: "error", title: "Ошибка повтора", message: msg });
-    } finally {
-      setLinkLoading(false);
-    }
+    const lockKey = linkRetryLockKey(task.id);
+    await runLocked(
+      lockKey,
+      async () => {
+        setLinkLoading(true);
+        setLinkError(null);
+        try {
+          await retryLinkTask(task.id);
+          showToast({
+            type: "success",
+            title: "Повтор поставлен в очередь",
+            message: domainLabel
+          });
+          await loadLinks();
+        } catch (err: any) {
+          const msg = err?.message || "Не удалось повторить задачу ссылки";
+          setLinkError(msg);
+          showToast({ type: "error", title: "Ошибка повтора", message: msg });
+        } finally {
+          setLinkLoading(false);
+        }
+      },
+      "Повтор уже выполняется."
+    );
   };
 
   const handleLinkDelete = async (task: LinkTaskDTO) => {
     const domainLabel = linkDomains[task.domain_id] || "домен";
     if (!confirm(`Удалить задачу ссылки для домена ${domainLabel}?`)) return;
-    setLinkLoading(true);
-    setLinkError(null);
-    try {
-      await deleteLinkTask(task.id);
-      showToast({
-        type: "success",
-        title: "Задача ссылки удалена",
-        message: domainLabel
-      });
-      await loadLinks();
-    } catch (err: any) {
-      const msg = err?.message || "Не удалось удалить задачу ссылки";
-      setLinkError(msg);
-      showToast({ type: "error", title: "Ошибка удаления", message: msg });
-    } finally {
-      setLinkLoading(false);
-    }
+    const lockKey = linkDeleteLockKey(task.id);
+    await runLocked(
+      lockKey,
+      async () => {
+        setLinkLoading(true);
+        setLinkError(null);
+        try {
+          await deleteLinkTask(task.id);
+          showToast({
+            type: "success",
+            title: "Задача ссылки удалена",
+            message: domainLabel
+          });
+          await loadLinks();
+        } catch (err: any) {
+          const msg = err?.message || "Не удалось удалить задачу ссылки";
+          setLinkError(msg);
+          showToast({ type: "error", title: "Ошибка удаления", message: msg });
+        } finally {
+          setLinkLoading(false);
+        }
+      },
+      "Удаление уже выполняется."
+    );
   };
 
   return (
@@ -496,8 +525,18 @@ function QueuePageContent() {
                   const lastLog = task.log_lines?.length ? task.log_lines[task.log_lines.length - 1] : "";
                   const eventText = task.error_message || lastLog || "—";
                   const domainLabel = linkDomains[task.domain_id] || "Домен";
-                  const retryGuard = canRetry({ busy: linkLoading, status: task.status });
-                  const deleteGuard = canDelete({ busy: linkLoading, status: task.status });
+                  const retryKey = linkRetryLockKey(task.id);
+                  const deleteKey = linkDeleteLockKey(task.id);
+                  const retryGuard = canRetry({
+                    busy: linkLoading || isLocked(retryKey),
+                    busyReason: lockReason(retryKey),
+                    status: task.status
+                  });
+                  const deleteGuard = canDelete({
+                    busy: linkLoading || isLocked(deleteKey),
+                    busyReason: lockReason(deleteKey),
+                    status: task.status
+                  });
                   return (
                     <tr key={task.id}>
                       <td className="py-3 pr-4 text-xs text-slate-500 dark:text-slate-400">
