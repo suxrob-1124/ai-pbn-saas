@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -467,20 +466,6 @@ func (s *Server) handleDomainEditorAIRegenerateAsset(w http.ResponseWriter, r *h
 		}
 	}
 
-	domainDir, err := domainFilesDir(domain.URL)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid domain")
-		return
-	}
-	fullPath := filepath.Join(domainDir, filepath.FromSlash(cleanPath))
-	if err := ensurePathWithin(domainDir, fullPath); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid path")
-		return
-	}
-	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not create parent directory")
-		return
-	}
 	existing, getErr := s.siteFiles.GetByPath(r.Context(), domain.ID, cleanPath)
 	if getErr != nil && !errors.Is(getErr, sql.ErrNoRows) {
 		writeError(w, http.StatusInternalServerError, "could not load file")
@@ -488,10 +473,10 @@ func (s *Server) handleDomainEditorAIRegenerateAsset(w http.ResponseWriter, r *h
 	}
 	var oldContent []byte
 	if existing != nil {
-		oldContent, _ = os.ReadFile(fullPath)
+		oldContent, _ = s.readDomainFileBytesFromBackend(r.Context(), domain, cleanPath)
 		_ = s.fileEdits.CreateRevision(r.Context(), buildRevision(existing, oldContent, "ai", requesterEmail, "baseline before ai regenerate asset"))
 	}
-	if err := os.WriteFile(fullPath, imageBytes, 0o644); err != nil {
+	if err := s.writeDomainFileBytesToBackend(r.Context(), domain, cleanPath, imageBytes); err != nil {
 		writeError(w, http.StatusInternalServerError, "could not write file")
 		return
 	}

@@ -8,11 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/url"
-	"os"
 	"path"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -84,7 +83,7 @@ func (s *Server) handleDomainFiles(w http.ResponseWriter, r *http.Request, domai
 					resp = append(resp, item)
 				}
 			}
-			if dirs, err := listDomainDirs(domain); err == nil {
+			if dirs, err := s.listDomainDirs(r.Context(), domain); err == nil {
 				now := time.Now().UTC()
 				for _, dirPath := range dirs {
 					if _, exists := indexByPath[dirPath]; exists {
@@ -372,25 +371,15 @@ func (s *Server) handleCreateDomainFile(w http.ResponseWriter, r *http.Request, 
 		writeEditorError(w, http.StatusBadRequest, editorErrForbiddenPath, err.Error(), nil)
 		return
 	}
-	domainDir, err := domainFilesDir(domain.URL)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid domain")
-		return
-	}
-	fullPath := filepath.Join(domainDir, filepath.FromSlash(cleanPath))
-	if err := ensurePathWithin(domainDir, fullPath); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid path")
-		return
-	}
-	if _, err := os.Stat(fullPath); err == nil {
+	if _, err := s.statDomainPathInBackend(r.Context(), domain, cleanPath); err == nil {
 		writeError(w, http.StatusConflict, "path already exists")
 		return
-	} else if err != nil && !os.IsNotExist(err) {
+	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		writeError(w, http.StatusInternalServerError, "could not inspect path")
 		return
 	}
 	if kind == "dir" {
-		if err := os.MkdirAll(fullPath, 0o755); err != nil {
+		if err := s.ensureDomainDirInBackend(r.Context(), domain, cleanPath); err != nil {
 			writeError(w, http.StatusInternalServerError, "could not create directory")
 			return
 		}
@@ -403,11 +392,7 @@ func (s *Server) handleCreateDomainFile(w http.ResponseWriter, r *http.Request, 
 		writeEditorError(w, http.StatusBadRequest, editorErrAssetValidationFail, err.Error(), nil)
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not create parent directory")
-		return
-	}
-	if err := os.WriteFile(fullPath, newBytes, 0o644); err != nil {
+	if err := s.writeDomainFileBytesToBackend(r.Context(), domain, cleanPath, newBytes); err != nil {
 		writeError(w, http.StatusInternalServerError, "could not write file")
 		return
 	}
@@ -471,20 +456,6 @@ func (s *Server) handleUploadDomainFile(w http.ResponseWriter, r *http.Request, 
 		writeEditorError(w, http.StatusBadRequest, editorErrAssetValidationFail, "file too large", nil)
 		return
 	}
-	domainDir, err := domainFilesDir(domain.URL)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid domain")
-		return
-	}
-	fullPath := filepath.Join(domainDir, filepath.FromSlash(cleanPath))
-	if err := ensurePathWithin(domainDir, fullPath); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid path")
-		return
-	}
-	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not create parent directory")
-		return
-	}
 	existing, getErr := s.siteFiles.GetByPath(r.Context(), domain.ID, cleanPath)
 	if getErr != nil && !errors.Is(getErr, sql.ErrNoRows) {
 		writeError(w, http.StatusInternalServerError, "could not load file")
@@ -492,10 +463,10 @@ func (s *Server) handleUploadDomainFile(w http.ResponseWriter, r *http.Request, 
 	}
 	var oldContent []byte
 	if existing != nil {
-		oldContent, _ = os.ReadFile(fullPath)
+		oldContent, _ = s.readDomainFileBytesFromBackend(r.Context(), domain, cleanPath)
 		_ = s.fileEdits.CreateRevision(r.Context(), buildRevision(existing, oldContent, "manual", editedBy, "baseline before upload"))
 	}
-	if err := os.WriteFile(fullPath, content, 0o644); err != nil {
+	if err := s.writeDomainFileBytesToBackend(r.Context(), domain, cleanPath, content); err != nil {
 		writeError(w, http.StatusInternalServerError, "could not save upload")
 		return
 	}
@@ -607,19 +578,9 @@ func (s *Server) handleUpdateFile(w http.ResponseWriter, r *http.Request, domain
 		writeJSON(w, http.StatusConflict, resp)
 		return
 	}
-	domainDir, err := domainFilesDir(domain.URL)
+	oldContent, err := s.readDomainFileBytesFromBackend(r.Context(), domain, relPath)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid domain")
-		return
-	}
-	fullPath := filepath.Join(domainDir, filepath.FromSlash(relPath))
-	if err := ensurePathWithin(domainDir, fullPath); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid path")
-		return
-	}
-	oldContent, err := os.ReadFile(fullPath)
-	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			writeError(w, http.StatusNotFound, "file not found")
 			return
 		}
@@ -633,11 +594,7 @@ func (s *Server) handleUpdateFile(w http.ResponseWriter, r *http.Request, domain
 		writeEditorError(w, http.StatusBadRequest, editorErrInvalidFormat, err.Error(), nil)
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not write file")
-		return
-	}
-	if err := os.WriteFile(fullPath, newBytes, 0o644); err != nil {
+	if err := s.writeDomainFileBytesToBackend(r.Context(), domain, relPath, newBytes); err != nil {
 		writeError(w, http.StatusInternalServerError, "could not write file")
 		return
 	}
@@ -700,31 +657,12 @@ func (s *Server) handleMoveFile(w http.ResponseWriter, r *http.Request, domain s
 		writeJSON(w, http.StatusOK, map[string]string{"status": "moved"})
 		return
 	}
-	domainDir, err := domainFilesDir(domain.URL)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid domain")
-		return
-	}
-	oldFull := filepath.Join(domainDir, filepath.FromSlash(oldPath))
-	newFull := filepath.Join(domainDir, filepath.FromSlash(newPath))
-	if err := ensurePathWithin(domainDir, oldFull); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid path")
-		return
-	}
-	if err := ensurePathWithin(domainDir, newFull); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid new_path")
-		return
-	}
-	if _, err := os.Stat(newFull); err == nil {
+	if _, err := s.statDomainPathInBackend(r.Context(), domain, newPath); err == nil {
 		writeError(w, http.StatusConflict, "destination already exists")
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(newFull), 0o755); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not prepare destination")
-		return
-	}
-	if err := os.Rename(oldFull, newFull); err != nil {
-		if os.IsNotExist(err) {
+	if err := s.moveDomainPathInBackend(r.Context(), domain, oldPath, newPath); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
 			writeError(w, http.StatusNotFound, "file not found")
 			return
 		}
@@ -758,22 +696,8 @@ func (s *Server) handleMoveFile(w http.ResponseWriter, r *http.Request, domain s
 }
 
 func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request, domain sqlstore.Domain, relPath, deletedBy string, hardDelete bool, recursiveDelete bool) {
-	domainDir, err := domainFilesDir(domain.URL)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid domain")
-		return
-	}
-	fullPath := filepath.Join(domainDir, filepath.FromSlash(relPath))
-	if err := ensurePathWithin(domainDir, fullPath); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid path")
-		return
-	}
 	softDeleteSingle := func(file sqlstore.SiteFile) error {
-		fileFull := filepath.Join(domainDir, filepath.FromSlash(file.Path))
-		if err := ensurePathWithin(domainDir, fileFull); err != nil {
-			return err
-		}
-		if content, err := os.ReadFile(fileFull); err == nil {
+		if content, err := s.readDomainFileBytesFromBackend(r.Context(), domain, file.Path); err == nil {
 			_ = s.fileEdits.CreateRevision(r.Context(), buildRevision(&file, content, "manual", deletedBy, "baseline before delete"))
 			beforeHash := sha256.Sum256(content)
 			_ = s.fileEdits.Create(r.Context(), sqlstore.FileEdit{
@@ -785,17 +709,13 @@ func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request, domain
 				ContentBeforeHash: sql.NullString{String: hex.EncodeToString(beforeHash[:]), Valid: true},
 			})
 		}
-		if err := os.Remove(fileFull); err != nil && !os.IsNotExist(err) {
+		if err := s.deleteDomainPathInBackend(r.Context(), domain, file.Path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
 		return s.siteFiles.SoftDelete(r.Context(), file.ID, sqlstore.NullableString(deletedBy), sqlstore.NullableString("deleted from editor"))
 	}
 	hardDeleteSingle := func(file sqlstore.SiteFile) error {
-		fileFull := filepath.Join(domainDir, filepath.FromSlash(file.Path))
-		if err := ensurePathWithin(domainDir, fileFull); err != nil {
-			return err
-		}
-		if err := os.Remove(fileFull); err != nil && !os.IsNotExist(err) {
+		if err := s.deleteDomainPathInBackend(r.Context(), domain, file.Path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
 		return s.siteFiles.Delete(r.Context(), file.ID)
@@ -825,12 +745,12 @@ func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request, domain
 		writeError(w, http.StatusInternalServerError, "could not list files")
 		return
 	}
-	info, statErr := os.Stat(fullPath)
-	if statErr != nil && !os.IsNotExist(statErr) {
+	info, statErr := s.statDomainPathInBackend(r.Context(), domain, relPath)
+	if statErr != nil && !errors.Is(statErr, fs.ErrNotExist) {
 		writeError(w, http.StatusInternalServerError, "could not inspect path")
 		return
 	}
-	if statErr == nil && !info.IsDir() {
+	if statErr == nil && !info.IsDir {
 		writeError(w, http.StatusNotFound, "file not found")
 		return
 	}
@@ -849,7 +769,7 @@ func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request, domain
 		nested = append(nested, f)
 	}
 
-	isDirectoryTarget := (statErr == nil && info.IsDir()) || len(nested) > 0 || len(dirMetadata) > 0
+	isDirectoryTarget := (statErr == nil && info.IsDir) || len(nested) > 0 || len(dirMetadata) > 0
 	if !isDirectoryTarget {
 		writeError(w, http.StatusNotFound, "file not found")
 		return
@@ -860,8 +780,8 @@ func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request, domain
 		return
 	}
 
-	if len(nested) == 0 && statErr == nil && info.IsDir() && !recursiveDelete {
-		entries, readErr := os.ReadDir(fullPath)
+	if len(nested) == 0 && statErr == nil && info.IsDir && !recursiveDelete {
+		entries, readErr := s.readDomainDirInBackend(r.Context(), domain, relPath)
 		if readErr != nil {
 			writeError(w, http.StatusInternalServerError, "could not inspect directory")
 			return
@@ -893,14 +813,14 @@ func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request, domain
 		}
 	}
 
-	if statErr == nil && info.IsDir() {
+	if statErr == nil && info.IsDir {
 		if recursiveDelete {
-			if err := os.RemoveAll(fullPath); err != nil && !os.IsNotExist(err) {
+			if err := s.deleteDomainPathRecursiveInBackend(r.Context(), domain, relPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
 				writeError(w, http.StatusInternalServerError, "could not remove directory")
 				return
 			}
 		} else {
-			if err := os.Remove(fullPath); err != nil && !os.IsNotExist(err) {
+			if err := s.deleteDomainPathInBackend(r.Context(), domain, relPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
 				writeError(w, http.StatusInternalServerError, "could not remove directory")
 				return
 			}
@@ -943,21 +863,7 @@ func (s *Server) handleRestoreFile(w http.ResponseWriter, r *http.Request, domai
 		return
 	}
 	latest := revisions[0]
-	domainDir, err := domainFilesDir(domain.URL)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid domain")
-		return
-	}
-	fullPath := filepath.Join(domainDir, filepath.FromSlash(relPath))
-	if err := ensurePathWithin(domainDir, fullPath); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid path")
-		return
-	}
-	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not create parent directory")
-		return
-	}
-	if err := os.WriteFile(fullPath, latest.Content, 0o644); err != nil {
+	if err := s.writeDomainFileBytesToBackend(r.Context(), domain, relPath, latest.Content); err != nil {
 		writeError(w, http.StatusInternalServerError, "could not restore file")
 		return
 	}
@@ -1041,19 +947,9 @@ func (s *Server) handleRevertFile(w http.ResponseWriter, r *http.Request, domain
 		writeError(w, http.StatusBadRequest, "revision does not belong to file")
 		return
 	}
-	domainDir, err := domainFilesDir(domain.URL)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid domain")
-		return
-	}
-	fullPath := filepath.Join(domainDir, filepath.FromSlash(relPath))
-	if err := ensurePathWithin(domainDir, fullPath); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid path")
-		return
-	}
-	oldContent, _ := os.ReadFile(fullPath)
+	oldContent, _ := s.readDomainFileBytesFromBackend(r.Context(), domain, relPath)
 	_ = s.fileEdits.CreateRevision(r.Context(), buildRevision(file, oldContent, "manual", editedBy, "baseline before revert"))
-	if err := os.WriteFile(fullPath, rev.Content, 0o644); err != nil {
+	if err := s.writeDomainFileBytesToBackend(r.Context(), domain, relPath, rev.Content); err != nil {
 		writeError(w, http.StatusInternalServerError, "could not write file")
 		return
 	}

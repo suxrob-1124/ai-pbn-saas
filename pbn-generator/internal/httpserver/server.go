@@ -6,6 +6,7 @@ import (
 
 	"obzornik-pbn-generator/internal/auth"
 	"obzornik-pbn-generator/internal/config"
+	"obzornik-pbn-generator/internal/domainfs"
 	"obzornik-pbn-generator/internal/store/sqlstore"
 	"obzornik-pbn-generator/internal/tasks"
 )
@@ -48,6 +49,7 @@ func New(cfg config.Config, svc *auth.Service, logger *zap.SugaredLogger, projec
 		auditRules:      auditRules,
 		siteFiles:       siteFiles,
 		fileEdits:       fileEdits,
+		contentBackend:  domainfs.NewLocalFSBackend("server"),
 		linkTasks:       linkTasks,
 		genQueue:        genQueue,
 		indexChecks:     indexChecks,

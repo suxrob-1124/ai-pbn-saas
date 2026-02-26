@@ -11,6 +11,7 @@ import (
 
 	"obzornik-pbn-generator/internal/auth"
 	"obzornik-pbn-generator/internal/config"
+	"obzornik-pbn-generator/internal/domainfs"
 	"obzornik-pbn-generator/internal/store/sqlstore"
 	"obzornik-pbn-generator/internal/tasks"
 )
@@ -195,6 +196,7 @@ type Server struct {
 	auditRules      *sqlstore.AuditStore
 	siteFiles       SiteFileStore
 	fileEdits       FileEditStore
+	contentBackend  domainfs.SiteContentBackend
 	linkTasks       LinkTaskStore
 	genQueue        GenQueueStore
 	indexChecks     IndexCheckStore
