@@ -7,6 +7,7 @@ import type { IndexCheckDTO, IndexCheckHistoryDTO } from "../../types/indexCheck
 import { IndexCheckHistoryCard } from "../IndexCheckHistoryCard";
 import { Badge } from "../Badge";
 import { getIndexCheckStatusMeta } from "../../features/queue-monitoring/services/statusMeta";
+import { TableStateRow } from "../../features/queue-monitoring/components/TableState";
 
 export type IndexCheckSortKey =
   | "domain"
@@ -80,18 +81,14 @@ export function IndexTable({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-            {loading ? (
-              <tr>
-                <td colSpan={8} className="py-6 text-center text-slate-500 dark:text-slate-400">
-                  Загрузка...
-                </td>
-              </tr>
-            ) : checks.length === 0 ? (
-              <tr>
-                <td colSpan={8} className="py-6 text-center text-slate-500 dark:text-slate-400">
-                  Нет данных
-                </td>
-              </tr>
+            {loading || checks.length === 0 ? (
+              <TableStateRow
+                colSpan={8}
+                loading={Boolean(loading)}
+                empty={!loading && checks.length === 0}
+                loadingText="Загрузка..."
+                emptyText="Нет данных"
+              />
             ) : (
               checks.map((check) => {
                 const isOpen = Boolean(openHistory[check.id]);

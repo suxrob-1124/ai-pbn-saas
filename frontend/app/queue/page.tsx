@@ -11,8 +11,11 @@ import { showToast } from "../../lib/toastStore";
 import type { LinkTaskDTO } from "../../types/linkTasks";
 import { Badge } from "../../components/Badge";
 import { getLinkTaskStatusMeta, isLinkTaskInProgress, type LinkTaskCanonicalStatus } from "../../lib/linkTaskStatus";
+import { FilterSearchInput } from "../../features/queue-monitoring/components/FilterSearchInput";
 import { PaginationControls } from "../../features/queue-monitoring/components/PaginationControls";
+import { TableState } from "../../features/queue-monitoring/components/TableState";
 import { canDelete, canRetry, canRun } from "../../features/queue-monitoring/services/actionGuards";
+import { matchesSearch } from "../../features/queue-monitoring/services/filters";
 import {
   hasNextPageByPageSize,
   resolveQueueTab
@@ -197,17 +200,12 @@ function QueuePageContent() {
   }, [items, linkTasks, load, loadLinks]);
 
   const filtered = useMemo(() => {
-    const term = search.trim().toLowerCase();
     return items.filter((i) => {
       const normalizedStatus = normalizeGenerationStatusForFilter(i.status);
       if (filter !== "all" && normalizedStatus !== filter) {
         return false;
       }
-      if (!term) {
-        return true;
-      }
-      const label = (i.domain_url || "").toLowerCase();
-      return label.includes(term);
+      return matchesSearch(i.domain_url, search);
     });
   }, [filter, items, search]);
 
@@ -224,17 +222,12 @@ function QueuePageContent() {
   }, [items]);
 
   const filteredLinks = useMemo(() => {
-    const term = linkSearch.trim().toLowerCase();
     return linkTasks.filter((task) => {
       const normalizedStatus = normalizeLinkQueueStatus(task.status) || (task.status || "").trim().toLowerCase();
       if (linkFilter !== "all" && normalizedStatus !== linkFilter) {
         return false;
       }
-      if (!term) {
-        return true;
-      }
-      const label = (linkDomains[task.domain_id] || "").toLowerCase();
-      return label.includes(term);
+      return matchesSearch(linkDomains[task.domain_id], linkSearch);
     });
   }, [linkFilter, linkTasks, linkSearch, linkDomains]);
 
@@ -379,17 +372,17 @@ function QueuePageContent() {
             />
           ))}
         </div>
-        <input
-          type="search"
+        <FilterSearchInput
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={setSearch}
           placeholder="Поиск по домену"
-          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+          label="Поиск"
         />
-        {loading && <div className="text-sm text-slate-500 dark:text-slate-400">Загрузка...</div>}
-        {!loading && filtered.length === 0 && (
-          <div className="text-sm text-slate-500 dark:text-slate-400">Запусков пока нет.</div>
-        )}
+        <TableState
+          loading={loading}
+          empty={!loading && filtered.length === 0}
+          emptyText="Запусков пока нет."
+        />
         {!loading && filtered.length > 0 && (
           <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
@@ -403,8 +396,8 @@ function QueuePageContent() {
                 <th className="py-2 pr-4">Действия</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                {visibleGenerations.map((g, idx) => (
+              <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                {!loading && visibleGenerations.map((g, idx) => (
                 <tr key={g.id}>
                   <td className="py-3 pr-4 text-xs text-slate-500 dark:text-slate-400">
                     {genIndexBase + idx + 1}
@@ -431,8 +424,8 @@ function QueuePageContent() {
                     </Link>
                   </td>
                 </tr>
-              ))}
-            </tbody>
+                ))}
+              </tbody>
           </table>
         </div>
         )}
@@ -470,19 +463,19 @@ function QueuePageContent() {
             />
           ))}
         </div>
-        <input
-          type="search"
+        <FilterSearchInput
           value={linkSearch}
-          onChange={(e) => setLinkSearch(e.target.value)}
+          onChange={setLinkSearch}
           placeholder="Поиск по домену"
-          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+          label="Поиск"
         />
-        {linkError && <div className="text-sm text-red-500">{linkError}</div>}
-        {linkLoading && <div className="text-sm text-slate-500 dark:text-slate-400">Загрузка...</div>}
-        {!linkLoading && filteredLinks.length === 0 && (
-          <div className="text-sm text-slate-500 dark:text-slate-400">Задач ссылок нет.</div>
-        )}
-        {!linkLoading && filteredLinks.length > 0 && (
+        <TableState
+          loading={linkLoading}
+          error={linkError}
+          empty={!linkLoading && !linkError && filteredLinks.length === 0}
+          emptyText="Задач ссылок нет."
+        />
+        {!linkLoading && !linkError && filteredLinks.length > 0 && (
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
@@ -498,7 +491,7 @@ function QueuePageContent() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                {visibleLinks.map((task, idx) => {
+                {!linkLoading && !linkError && visibleLinks.map((task, idx) => {
                   const actionLabel = (task.action || "insert") === "remove" ? "Удаление" : "Вставка";
                   const lastLog = task.log_lines?.length ? task.log_lines[task.log_lines.length - 1] : "";
                   const eventText = task.error_message || lastLog || "—";

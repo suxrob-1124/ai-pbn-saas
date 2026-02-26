@@ -7,6 +7,9 @@ import {
   getIndexCheckStatusMeta,
   normalizeIndexCheckStatusList
 } from "../features/queue-monitoring/services/statusMeta";
+import { FilterDateInput } from "../features/queue-monitoring/components/FilterDateInput";
+import { FilterSearchInput } from "../features/queue-monitoring/components/FilterSearchInput";
+import { FilterSelect } from "../features/queue-monitoring/components/FilterSelect";
 
 export type IndexFiltersValue = {
   statuses: IndexCheckStatus[];
@@ -30,6 +33,11 @@ export type IndexFiltersBarProps = {
 };
 
 const DEFAULT_STATUS_OPTIONS: IndexCheckStatus[] = [...INDEX_CHECK_STATUS_KEYS];
+const INDEXED_OPTIONS = [
+  { value: "all", label: "Любой" },
+  { value: "true", label: "Да" },
+  { value: "false", label: "Нет" }
+] as const;
 
 const buildDefaultValue = (): IndexFiltersValue => ({
   statuses: [],
@@ -106,57 +114,38 @@ export function IndexFiltersBar({
             ))}
           </div>
         </div>
-        <div>
-          <label className="text-xs text-slate-500 dark:text-slate-400">С даты</label>
-          <input
-            type="date"
-            value={draft.from}
-            onChange={(e) => setDraft((prev) => ({ ...prev, from: e.target.value }))}
-            className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-800 dark:bg-slate-950"
-            disabled={disabled}
-          />
-        </div>
-        <div>
-          <label className="text-xs text-slate-500 dark:text-slate-400">По дату</label>
-          <input
-            type="date"
-            value={draft.to}
-            onChange={(e) => setDraft((prev) => ({ ...prev, to: e.target.value }))}
-            className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-800 dark:bg-slate-950"
-            disabled={disabled}
-          />
-        </div>
-        <div>
-          <label className="text-xs text-slate-500 dark:text-slate-400">В индексе</label>
-          <select
-            value={draft.isIndexed}
-            onChange={(e) => setDraft((prev) => ({ ...prev, isIndexed: e.target.value as "all" | "true" | "false" }))}
-            className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-800 dark:bg-slate-950"
-            disabled={disabled}
-          >
-            <option value="all">Любой</option>
-            <option value="true">Да</option>
-            <option value="false">Нет</option>
-          </select>
-        </div>
+        <FilterDateInput
+          label="С даты"
+          value={draft.from}
+          disabled={disabled}
+          onChange={(value) => setDraft((prev) => ({ ...prev, from: value }))}
+        />
+        <FilterDateInput
+          label="По дату"
+          value={draft.to}
+          disabled={disabled}
+          onChange={(value) => setDraft((prev) => ({ ...prev, to: value }))}
+        />
+        <FilterSelect
+          label="В индексе"
+          value={draft.isIndexed}
+          disabled={disabled}
+          options={[...INDEXED_OPTIONS]}
+          onChange={(value) => setDraft((prev) => ({ ...prev, isIndexed: value as "all" | "true" | "false" }))}
+        />
       </div>
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-        <div>
-          <label className="text-xs text-slate-500 dark:text-slate-400">Поиск (URL)</label>
-          <input
-            type="text"
-            value={draft.search}
-            onChange={(e) => {
-              const next = e.target.value;
-              setDraft((prev) => ({ ...prev, search: next }));
-              onSearchChange?.(next);
-            }}
-            placeholder="example.com"
-            className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-800 dark:bg-slate-950"
-            disabled={disabled}
-          />
-        </div>
+        <FilterSearchInput
+          label="Поиск (URL)"
+          value={draft.search}
+          placeholder="example.com"
+          disabled={disabled}
+          onChange={(next) => {
+            setDraft((prev) => ({ ...prev, search: next }));
+            onSearchChange?.(next);
+          }}
+        />
         <div className="flex items-end gap-2">
           <button
             type="button"

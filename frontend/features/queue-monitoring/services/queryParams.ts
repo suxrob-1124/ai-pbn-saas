@@ -7,6 +7,21 @@ export function readPositiveIntParam(params: QueryReader, key: string, fallback:
   return Number.isFinite(raw) && raw > 0 ? raw : fallback;
 }
 
+export function readStringParam(params: QueryReader, key: string, fallback = ""): string {
+  const raw = params.get(key);
+  return raw === null ? fallback : raw;
+}
+
+export function readEnumParam<T extends string>(
+  params: QueryReader,
+  key: string,
+  allowed: readonly T[],
+  fallback: T
+): T {
+  const raw = (params.get(key) || "").trim() as T;
+  return allowed.includes(raw) ? raw : fallback;
+}
+
 export function setOptionalParam(
   params: URLSearchParams,
   key: string,
@@ -33,4 +48,3 @@ export function setOptionalNumberParam(
   }
   params.set(key, String(value));
 }
-

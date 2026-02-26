@@ -15,7 +15,9 @@ import { showToast } from "../../../lib/toastStore";
 import { PaginationControls } from "../../../features/queue-monitoring/components/PaginationControls";
 import { canRun } from "../../../features/queue-monitoring/services/actionGuards";
 import {
+  readEnumParam,
   readPositiveIntParam,
+  readStringParam,
   setOptionalNumberParam,
   setOptionalParam
 } from "../../../features/queue-monitoring/services/queryParams";
@@ -60,6 +62,7 @@ const DEFAULT_LIMIT = 20;
 const SEARCH_DEBOUNCE_MS = 400;
 const DEFAULT_SORT: IndexCheckSort = { key: "check_date", dir: "desc" };
 const DEFAULT_SORT_PARAM = sortToParam(DEFAULT_SORT);
+const INDEXED_FILTER_VALUES = ["all", "true", "false"] as const;
 
 export default function IndexingMonitoringPage() {
   return (
@@ -101,13 +104,13 @@ function IndexingMonitoringContent() {
   const [statusFilter, setStatusFilter] = useState<IndexCheckStatus[]>(() =>
     parseStatusParam(searchParams.get("status"))
   );
-  const [indexedFilter, setIndexedFilter] = useState<"all" | "true" | "false">(
-    (searchParams.get("isIndexed") as "all" | "true" | "false") || "all"
+  const [indexedFilter, setIndexedFilter] = useState<"all" | "true" | "false">(() =>
+    readEnumParam(searchParams, "isIndexed", INDEXED_FILTER_VALUES, "all")
   );
-  const [domainFilter, setDomainFilter] = useState(searchParams.get("domainId") || "");
-  const [dateFrom, setDateFrom] = useState(searchParams.get("from") || "");
-  const [dateTo, setDateTo] = useState(searchParams.get("to") || "");
-  const [search, setSearch] = useState(searchParams.get("search") || "");
+  const [domainFilter, setDomainFilter] = useState(() => readStringParam(searchParams, "domainId"));
+  const [dateFrom, setDateFrom] = useState(() => readStringParam(searchParams, "from"));
+  const [dateTo, setDateTo] = useState(() => readStringParam(searchParams, "to"));
+  const [search, setSearch] = useState(() => readStringParam(searchParams, "search"));
   const debouncedSearch = useDebouncedValue(search, SEARCH_DEBOUNCE_MS);
   const [sort, setSort] = useState<IndexCheckSort>(() => parseSortParam(searchParams.get("sort")));
   const [page, setPage] = useState(() => {
@@ -265,11 +268,11 @@ function IndexingMonitoringContent() {
 
   useEffect(() => {
     const statusParam = parseStatusParam(searchParams.get("status"));
-    const searchParam = searchParams.get("search") || "";
-    const fromParam = searchParams.get("from") || "";
-    const toParam = searchParams.get("to") || "";
-    const domainParam = searchParams.get("domainId") || "";
-    const indexedParam = (searchParams.get("isIndexed") || "all") as "all" | "true" | "false";
+    const searchParam = readStringParam(searchParams, "search");
+    const fromParam = readStringParam(searchParams, "from");
+    const toParam = readStringParam(searchParams, "to");
+    const domainParam = readStringParam(searchParams, "domainId");
+    const indexedParam = readEnumParam(searchParams, "isIndexed", INDEXED_FILTER_VALUES, "all");
     const sortParam = parseSortParam(searchParams.get("sort"));
     const nextPage = readPositiveIntParam(searchParams, "page", 1);
     const nextLimit = readPositiveIntParam(searchParams, "limit", DEFAULT_LIMIT);

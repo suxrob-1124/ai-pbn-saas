@@ -14,9 +14,12 @@ import type { LinkTaskDTO } from "../../../../types/linkTasks";
 import { Badge } from "../../../../components/Badge";
 import { canRetryLinkTask, getLinkTaskStatusMeta, isLinkTaskInProgress, normalizeLinkTaskStatus } from "../../../../lib/linkTaskStatus";
 import { FilterDateInput } from "../../../../features/queue-monitoring/components/FilterDateInput";
+import { FilterSearchInput } from "../../../../features/queue-monitoring/components/FilterSearchInput";
 import { FilterSelect } from "../../../../features/queue-monitoring/components/FilterSelect";
 import { PaginationControls } from "../../../../features/queue-monitoring/components/PaginationControls";
+import { TableState } from "../../../../features/queue-monitoring/components/TableState";
 import { canDelete, canRetry, canRun } from "../../../../features/queue-monitoring/services/actionGuards";
+import { matchesDateRange, matchesSearch } from "../../../../features/queue-monitoring/services/filters";
 import {
   hasNextPageByPageSize,
   resolveQueueTab
@@ -255,76 +258,43 @@ export default function ProjectQueuePage() {
   }, [projectId, linkTasks]);
 
   const filtered = useMemo(() => {
-    const fromDate = dateFrom ? new Date(`${dateFrom}T00:00:00`) : null;
-    const toDate = dateTo ? new Date(`${dateTo}T23:59:59`) : null;
-    const term = search.trim().toLowerCase();
     return items.filter((item) => {
       const normalizedStatus = normalizeProjectQueueActiveStatus(item.status) || item.status;
       if (statusFilter !== "all" && normalizedStatus !== statusFilter) {
         return false;
       }
-      const scheduled = new Date(item.scheduled_for);
-      if (fromDate && scheduled < fromDate) {
+      if (!matchesDateRange(item.scheduled_for, { from: dateFrom, to: dateTo })) {
         return false;
-      }
-      if (toDate && scheduled > toDate) {
-        return false;
-      }
-      if (!term) {
-        return true;
       }
       const domain = domains[item.domain_id];
-      const label = (item.domain_url || domain?.url || item.domain_id || "").toLowerCase();
-      return label.includes(term);
+      return matchesSearch(item.domain_url || domain?.url || item.domain_id, search);
     });
   }, [items, statusFilter, dateFrom, dateTo, search, domains]);
 
   const filteredLinks = useMemo(() => {
-    const fromDate = linkDateFrom ? new Date(`${linkDateFrom}T00:00:00`) : null;
-    const toDate = linkDateTo ? new Date(`${linkDateTo}T23:59:59`) : null;
-    const term = linkSearch.trim().toLowerCase();
     return linkTasks.filter((task) => {
       const normalizedStatus = normalizeLinkTaskStatus(task.status) || task.status;
       if (linkStatusFilter !== "all" && normalizedStatus !== linkStatusFilter) {
         return false;
       }
-      const scheduled = new Date(task.scheduled_for);
-      if (fromDate && scheduled < fromDate) {
+      if (!matchesDateRange(task.scheduled_for, { from: linkDateFrom, to: linkDateTo })) {
         return false;
       }
-      if (toDate && scheduled > toDate) {
-        return false;
-      }
-      if (!term) {
-        return true;
-      }
-      const label = (domains[task.domain_id]?.url || task.domain_id || "").toLowerCase();
-      return label.includes(term);
+      return matchesSearch(domains[task.domain_id]?.url || task.domain_id, linkSearch);
     });
   }, [linkTasks, linkStatusFilter, linkDateFrom, linkDateTo, linkSearch, domains]);
 
   const filteredHistory = useMemo(() => {
-    const fromDate = historyDateFrom ? new Date(`${historyDateFrom}T00:00:00`) : null;
-    const toDate = historyDateTo ? new Date(`${historyDateTo}T23:59:59`) : null;
-    const term = historySearch.trim().toLowerCase();
     return historyItems.filter((item) => {
       const normalizedStatus = normalizeProjectQueueHistoryStatus(item.status) || item.status;
       if (historyStatusFilter !== "all" && normalizedStatus !== historyStatusFilter) {
         return false;
       }
-      const scheduled = new Date(item.scheduled_for);
-      if (fromDate && scheduled < fromDate) {
+      if (!matchesDateRange(item.scheduled_for, { from: historyDateFrom, to: historyDateTo })) {
         return false;
-      }
-      if (toDate && scheduled > toDate) {
-        return false;
-      }
-      if (!term) {
-        return true;
       }
       const domain = domains[item.domain_id];
-      const label = (item.domain_url || domain?.url || item.domain_id || "").toLowerCase();
-      return label.includes(term);
+      return matchesSearch(item.domain_url || domain?.url || item.domain_id, historySearch);
     });
   }, [historyItems, historyStatusFilter, historyDateFrom, historyDateTo, historySearch, domains]);
 
@@ -558,12 +528,11 @@ export default function ProjectQueuePage() {
           <FilterDateInput label="Фильтр по дате (от)" value={dateFrom} onChange={setDateFrom} />
           <FilterDateInput label="Фильтр по дате (до)" value={dateTo} onChange={setDateTo} />
         </div>
-        <input
-          type="search"
+        <FilterSearchInput
+          label="Поиск"
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={setSearch}
           placeholder="Поиск по домену"
-          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
         />
       </div>
       )}
@@ -581,12 +550,11 @@ export default function ProjectQueuePage() {
           <FilterDateInput label="Фильтр по дате (от)" value={historyDateFrom} onChange={setHistoryDateFrom} />
           <FilterDateInput label="Фильтр по дате (до)" value={historyDateTo} onChange={setHistoryDateTo} />
         </div>
-        <input
-          type="search"
+        <FilterSearchInput
+          label="Поиск"
           value={historySearch}
-          onChange={(e) => setHistorySearch(e.target.value)}
+          onChange={setHistorySearch}
           placeholder="Поиск по домену в истории"
-          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
         />
       </div>
       )}
@@ -604,12 +572,11 @@ export default function ProjectQueuePage() {
           <FilterDateInput label="Фильтр по дате (от)" value={linkDateFrom} onChange={setLinkDateFrom} />
           <FilterDateInput label="Фильтр по дате (до)" value={linkDateTo} onChange={setLinkDateTo} />
         </div>
-        <input
-          type="search"
+        <FilterSearchInput
+          label="Поиск"
           value={linkSearch}
-          onChange={(e) => setLinkSearch(e.target.value)}
+          onChange={setLinkSearch}
           placeholder="Поиск по домену"
-          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
         />
       </div>
       )}
@@ -633,15 +600,18 @@ export default function ProjectQueuePage() {
             </button>
           </div>
         </div>
-        {linkError && <div className="text-sm text-red-500">{linkError}</div>}
         {linkPermissionDenied && (
           <div className="text-sm text-amber-600 dark:text-amber-400">Недостаточно прав для просмотра задач ссылок.</div>
         )}
-        {linkLoading && <div className="text-sm text-slate-500 dark:text-slate-400">Загрузка...</div>}
-        {!linkLoading && !linkPermissionDenied && filteredLinks.length === 0 && (
-          <div className="text-sm text-slate-500 dark:text-slate-400">Очередь ссылок пуста.</div>
+        {!linkPermissionDenied && (
+          <TableState
+            loading={linkLoading}
+            error={linkError}
+            empty={!linkLoading && !linkError && filteredLinks.length === 0}
+            emptyText="Очередь ссылок пуста."
+          />
         )}
-        {!linkLoading && !linkPermissionDenied && filteredLinks.length > 0 && (
+        {!linkLoading && !linkError && !linkPermissionDenied && filteredLinks.length > 0 && (
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
@@ -656,7 +626,7 @@ export default function ProjectQueuePage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                {visibleLinks.map((task) => {
+                {!linkLoading && !linkError && visibleLinks.map((task) => {
                   const domain = domains[task.domain_id];
                   const domainLabel = domain?.url || "Домен";
                   const domainHref = `/domains/${domain?.id || task.domain_id}`;
@@ -737,9 +707,12 @@ export default function ProjectQueuePage() {
           <h3 className="font-semibold">Очередь генераций</h3>
           <span className="text-xs text-slate-500 dark:text-slate-400">Всего: {filtered.length}</span>
         </div>
-        {loading && <div className="text-sm text-slate-500 dark:text-slate-400">Загрузка...</div>}
-        {!loading && !permissionDenied && filtered.length === 0 && (
-          <div className="text-sm text-slate-500 dark:text-slate-400">Очередь пуста.</div>
+        {!permissionDenied && (
+          <TableState
+            loading={loading}
+            empty={!loading && filtered.length === 0}
+            emptyText="Очередь пуста."
+          />
         )}
         {!loading && !permissionDenied && filtered.length > 0 && (
           <div className="overflow-x-auto">
@@ -755,7 +728,7 @@ export default function ProjectQueuePage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                {visibleItems.map((item) => {
+                {!loading && visibleItems.map((item) => {
                   const domain = domains[item.domain_id];
                   const domainLabel = item.domain_url || domain?.url || "Домен";
                   const removeGuard = canDelete({ busy: loading, allowed: true });
@@ -811,9 +784,12 @@ export default function ProjectQueuePage() {
           <h3 className="font-semibold">История запусков</h3>
           <span className="text-xs text-slate-500 dark:text-slate-400">Всего: {filteredHistory.length}</span>
         </div>
-        {historyLoading && <div className="text-sm text-slate-500 dark:text-slate-400">Загрузка...</div>}
-        {!historyLoading && !permissionDenied && filteredHistory.length === 0 && (
-          <div className="text-sm text-slate-500 dark:text-slate-400">История запусков пуста.</div>
+        {!permissionDenied && (
+          <TableState
+            loading={historyLoading}
+            empty={!historyLoading && filteredHistory.length === 0}
+            emptyText="История запусков пуста."
+          />
         )}
         {!historyLoading && !permissionDenied && filteredHistory.length > 0 && (
           <div className="overflow-x-auto">
@@ -828,7 +804,7 @@ export default function ProjectQueuePage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                {visibleHistoryItems.map((item) => {
+                {!historyLoading && visibleHistoryItems.map((item) => {
                   const domain = domains[item.domain_id];
                   const domainLabel = item.domain_url || domain?.url || "Домен";
                   return (
