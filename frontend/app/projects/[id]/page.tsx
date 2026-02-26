@@ -25,6 +25,8 @@ import type { ScheduleFormValue } from "../../../lib/scheduleFormValidation";
 import { Badge } from "../../../components/Badge";
 import { getDomainLinkStatusMeta } from "../../../lib/linkTaskStatus";
 import { getGenerationStatusMeta } from "../../../features/domain-project/services/statusCta";
+import { canEditPromptOverrides, hasLinkSettings } from "../../../features/domain-project/services/actionGuards";
+import { getDomainLinkBadgeStatus, getEffectiveDomainLinkStatus } from "../../../features/domain-project/services/statusMeta";
 import { useProjectAsyncActions } from "../../../features/domain-project/hooks/useProjectAsyncActions";
 import { ProjectHeaderActionsSection } from "../../../features/domain-project/components/ProjectHeaderActionsSection";
 import { ProjectDomainsSection } from "../../../features/domain-project/components/ProjectDomainsSection";
@@ -64,11 +66,6 @@ type Domain = {
   link_ready_at?: string;
   updated_at?: string;
 };
-
-const effectiveDomainLinkStatus = (
-  domain: { link_status_effective?: string; link_status?: string } | null | undefined
-) =>
-  domain?.link_status_effective || domain?.link_status || "";
 
 type Generation = {
   id: string;
@@ -453,7 +450,7 @@ export default function ProjectDetailPage() {
 
   const isPermissionError = (message: string) =>
     /permission|access denied|admin only|forbidden/i.test(message);
-  const canEditPrompts = myRole === "admin" || myRole === "owner" || myRole === "editor";
+  const canEditPrompts = canEditPromptOverrides(myRole);
 
   const resolvedProjectTimezone = (projectTimezone || project?.timezone || "UTC").trim() || "UTC";
 
@@ -1360,7 +1357,7 @@ export default function ProjectDetailPage() {
             onUpdateKeyword={updateKeyword}
             onLinkEditChange={(domainId, value) => setLinkEdits((prev) => ({ ...prev, [domainId]: value }))}
             onUpdateLinkSettings={updateLinkSettings}
-            getEffectiveLinkStatus={effectiveDomainLinkStatus}
+            getEffectiveLinkStatus={getEffectiveDomainLinkStatus}
             renderStatusBadge={(status) => <StatusBadge status={status} />}
             renderLinkStatusBadge={(domain) => <LinkStatusBadge domain={domain} />}
             renderRunsList={(runs) => <RunsList runs={runs as Generation[]} />}
@@ -1728,8 +1725,8 @@ function LinkStatusBadge({
 }: {
   domain: { link_anchor_text?: string; link_acceptor_url?: string; link_status?: string; link_status_effective?: string; link_last_task_id?: string };
 }) {
-  const hasSettings = Boolean((domain.link_anchor_text || "").trim()) && Boolean((domain.link_acceptor_url || "").trim());
-  const status = domain.link_status_effective || domain.link_status || (domain.link_last_task_id ? "pending" : "ready");
+  const hasSettings = hasLinkSettings(domain.link_anchor_text, domain.link_acceptor_url);
+  const status = getDomainLinkBadgeStatus(domain);
   const meta = getDomainLinkStatusMeta(status, hasSettings);
   const icon =
     meta.icon === "refresh" ? <FiRefreshCw /> : meta.icon === "check" ? <FiCheck /> : meta.icon === "alert" ? <FiPauseCircle /> : <FiClock />;

@@ -11,9 +11,11 @@ import { FiClock, FiPlay, FiCheck, FiAlertTriangle, FiRefreshCw, FiTrash2, FiPau
 import { PromptOverridesPanel } from "../../../components/PromptOverridesPanel";
 import PipelineSteps from "../../../components/PipelineSteps";
 import { computeDisplayProgress } from "../../../lib/pipelineProgress";
-import { getLinkTaskStatusMeta, hasInsertedLink, isLinkTaskInProgress, normalizeLinkTaskStatus } from "../../../lib/linkTaskStatus";
+import { getLinkTaskStatusMeta, normalizeLinkTaskStatus } from "../../../lib/linkTaskStatus";
 import { Badge } from "../../../components/Badge";
-import { DOMAIN_PROJECT_CTA, getGenerationStatusMeta, getLinkActionLabel, getMainGenerationActionLabel } from "../../../features/domain-project/services/statusCta";
+import { DOMAIN_PROJECT_CTA, getGenerationStatusMeta, getLinkActionLabel } from "../../../features/domain-project/services/statusCta";
+import { canEditPromptOverrides, canOpenDomainEditor, isMainGenerationActionDisabled } from "../../../features/domain-project/services/actionGuards";
+import { deriveDomainLinkActionMeta, deriveMainGenerationMeta, getLinkTaskSteps } from "../../../features/domain-project/services/statusMeta";
 import { useDomainAsyncActions } from "../../../features/domain-project/hooks/useDomainAsyncActions";
 import { ActionFlowBanner } from "../../../features/domain-project/components/ActionFlowBanner";
 import { DomainHeaderActionsSection } from "../../../features/domain-project/components/DomainHeaderActionsSection";
@@ -216,25 +218,14 @@ export default function DomainPage() {
     }
   };
 
-  const activeStatusesList = ["pending", "processing", "pause_requested", "cancelling"];
-  const currentAttempt = latestAttempt || gens[0] || null;
+  const { currentAttempt, isRegenerate, mainButtonText } = deriveMainGenerationMeta(latestAttempt, gens);
   const latestAttemptDetail = currentAttempt?.id ? generationDetails[currentAttempt.id] : undefined;
   const latestSuccessDetail = latestSuccess?.id ? generationDetails[latestSuccess.id] : undefined;
   const latestDisplayProgress = currentAttempt ? computeDisplayProgress(latestAttemptDetail?.artifacts, currentAttempt.progress, currentAttempt.status) : 0;
-  const isRegenerate = Boolean(currentAttempt && currentAttempt.status === "success");
-  const mainButtonText = getMainGenerationActionLabel(Boolean(currentAttempt), isRegenerate);
   const mainButtonIcon = isRegenerate ? <FiRefreshCw /> : <FiPlay />;
-  const mainButtonDisabled = loading || Boolean(currentAttempt && activeStatusesList.includes(currentAttempt.status));
+  const mainButtonDisabled = isMainGenerationActionDisabled(loading, currentAttempt?.status);
   const visibleLinkTasks = showAllLinkTasks ? linkTasks : linkTasks.slice(0, 2);
-  const domainLinkStatus = domain?.link_status_effective || domain?.link_status;
-  const normalizedLinkStatus = normalizeLinkTaskStatus(domainLinkStatus);
-  const hasActiveLink = hasInsertedLink(domainLinkStatus);
-  const hasLinkInTasks =
-    !normalizedLinkStatus && linkTasks.some((task) => (task.action || "insert") !== "remove" && hasInsertedLink(task.status));
-  const linkInProgress =
-    isLinkTaskInProgress(domainLinkStatus) ||
-    linkTasks.some((task) => isLinkTaskInProgress(task.status));
-  const canRemoveLink = (hasActiveLink || hasLinkInTasks) && !linkInProgress;
+  const { hasActiveLink, linkInProgress, canRemoveLink } = deriveDomainLinkActionMeta(domain, linkTasks);
   const linkActionLabel = getLinkActionLabel(hasActiveLink, linkInProgress);
   const {
     runLinkTask,
@@ -292,14 +283,10 @@ export default function DomainPage() {
   ) || Boolean(latestSuccessSummary.has_final_html || latestSuccessSummary.has_zip_archive || latestSuccessSummary.has_generated_files);
   const finalHTML = useMemo(() => getArtifactText(latestArtifacts, "final_html") || getArtifactText(latestArtifacts, "html_raw"), [latestArtifacts]);
   const zipArchive = useMemo(() => getArtifactText(latestArtifacts, "zip_archive"), [latestArtifacts]);
-  const canOpenEditor = Boolean(
-    domain &&
-      domain.status === "published" &&
-      ((typeof domain.file_count === "number" && domain.file_count > 0) || Boolean(domain.published_at))
-  );
+  const canOpenEditor = canOpenDomainEditor(domain);
   const showResultBlock = Boolean(latestSuccess) || hasArtifacts || domain?.status === "published";
   const resultSourceLabel = effectiveLegacyDecodeMeta ? "Legacy Decoded" : "Generated";
-  const canEditPrompts = myRole === "admin" || myRole === "owner" || myRole === "editor";
+  const canEditPrompts = canEditPromptOverrides(myRole);
 
   const ensureGenerationDetails = async (generationId: string) => {
     if (!generationId || generationDetails[generationId]) {
@@ -806,19 +793,7 @@ export default function DomainPage() {
               visibleLinkTasks.map((task, idx) => {
                 const isRemove = (task.action || "insert") === "remove";
                 const foundMeta = parseFoundLocation(task.found_location);
-                const steps = isRemove
-                  ? [
-                      { id: "pending", label: "В очереди" },
-                      { id: "searching", label: "Поиск ссылки" },
-                      { id: "removing", label: "Удаление" },
-                      { id: "removed", label: "Удалено" }
-                    ]
-                  : [
-                      { id: "pending", label: "В очереди" },
-                      { id: "searching", label: "Поиск места" },
-                      { id: "inserted", label: "Вставка ссылки" },
-                      { id: "generated", label: "Генерация текста" }
-                    ];
+                const steps = getLinkTaskSteps(task.action);
                 const reached = new Set<string>();
                 const normalizedTaskStatus = normalizeLinkTaskStatus(task.status) || task.status;
                 if (["pending", "searching", "inserted", "generated", "removing", "removed", "failed"].includes(normalizedTaskStatus)) {
