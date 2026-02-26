@@ -13,8 +13,11 @@ import { authFetchCached, invalidateAuthCache } from "../../../lib/http";
 import { useDebouncedValue } from "../../../lib/useDebouncedValue";
 import { showToast } from "../../../lib/toastStore";
 import { useActionLocks } from "../../../features/editor-v3/hooks/useActionLocks";
+import { FlowStateBanner } from "../../../features/queue-monitoring/components/FlowStateBanner";
+import { useFlowState } from "../../../features/queue-monitoring/hooks/useFlowState";
 import { PaginationControls } from "../../../features/queue-monitoring/components/PaginationControls";
 import { canRun } from "../../../features/queue-monitoring/services/actionGuards";
+import { queueMonitoringRu, toDiagnosticsText } from "../../../features/queue-monitoring/services/i18n-ru";
 import {
   readEnumParam,
   readPositiveIntParam,
@@ -88,6 +91,7 @@ function IndexingMonitoringContent() {
   const [totalChecks, setTotalChecks] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorDiagnostics, setErrorDiagnostics] = useState<string | null>(null);
   const [projectName, setProjectName] = useState("");
   const [domainLabel, setDomainLabel] = useState("");
   const [failedChecks, setFailedChecks] = useState<IndexCheckDTO[]>([]);
@@ -126,6 +130,8 @@ function IndexingMonitoringContent() {
   const [historyError, setHistoryError] = useState<Record<string, string | null>>({});
   const [openHistory, setOpenHistory] = useState<Record<string, boolean>>({});
   const { isLocked, lockReason, runLocked } = useActionLocks();
+  const refreshFlow = useFlowState();
+  const runFlow = useFlowState();
 
   const domainScope = domainFilter.trim();
   const permissionDenied = !authLoading && !isAdmin && !projectId && !domainScope;
@@ -257,6 +263,7 @@ function IndexingMonitoringContent() {
     }
     setLoading(true);
     setError(null);
+    setErrorDiagnostics(null);
     try {
       let list: IndexChecksResponse | null = null;
       if (projectId) {
@@ -269,7 +276,8 @@ function IndexingMonitoringContent() {
       setChecks(Array.isArray(list?.items) ? list!.items : []);
       setTotalChecks(typeof list?.total === "number" ? list.total : 0);
     } catch (err: any) {
-      setError(err?.message || "Не удалось загрузить проверки индексации");
+      setError("Не удалось загрузить проверки индексации");
+      setErrorDiagnostics(toDiagnosticsText(err) || null);
     } finally {
       setLoading(false);
     }
@@ -395,10 +403,13 @@ function IndexingMonitoringContent() {
   };
 
   const handleManualRun = async () => {
+    runFlow.validating("Проверяем возможность ручного запуска");
     await runLocked(
       manualRunLockKey,
       async () => {
+        runFlow.sending("Запускаем проверку индексации вручную");
         setError(null);
+        setErrorDiagnostics(null);
         try {
           invalidateAuthCache("index-checks/stats");
           invalidateAuthCache("index-checks/calendar");
@@ -427,11 +438,15 @@ function IndexingMonitoringContent() {
             return;
           }
           await Promise.all([loadChecks(), loadStats(), loadCalendar()]);
+          runFlow.done("Ручной запуск успешно отправлен");
         } catch (err: any) {
-          setError(err?.message || "Не удалось запустить проверку");
+          const userMessage = "Не удалось запустить проверку";
+          setError(userMessage);
+          setErrorDiagnostics(toDiagnosticsText(err) || null);
+          runFlow.fail(userMessage, err);
         }
       },
-      "Запуск уже выполняется."
+      queueMonitoringRu.lockReasons.manualRunInFlight
     );
   };
 
@@ -530,10 +545,13 @@ function IndexingMonitoringContent() {
       if (!isAdmin) {
         return;
       }
+      runFlow.validating("Проверяем возможность запуска проверки");
       await runLocked(
         adminRunNowLockKey(domainId),
         async () => {
+          runFlow.sending("Запускаем проверку по выбранному домену");
           setError(null);
+          setErrorDiagnostics(null);
           try {
             invalidateAuthCache("index-checks/stats");
             invalidateAuthCache("index-checks/calendar");
@@ -547,14 +565,18 @@ function IndexingMonitoringContent() {
               });
             }
             await Promise.all([loadChecks(), loadStats(), loadCalendar(), loadFailed()]);
+            runFlow.done("Проверка успешно отправлена");
           } catch (err: any) {
-            setError(err?.message || "Не удалось запустить проверку");
+            const userMessage = "Не удалось запустить проверку";
+            setError(userMessage);
+            setErrorDiagnostics(toDiagnosticsText(err) || null);
+            runFlow.fail(userMessage, err);
           }
         },
-        "Запуск уже выполняется."
+        queueMonitoringRu.lockReasons.manualRunInFlight
       );
     },
-    [isAdmin, loadCalendar, loadChecks, loadFailed, loadStats, runLocked]
+    [isAdmin, loadCalendar, loadChecks, loadFailed, loadStats, runFlow, runLocked]
   );
 
   const getAdminRunNowGuard = useCallback(
@@ -611,14 +633,17 @@ function IndexingMonitoringContent() {
   };
 
   const handleRefresh = async () => {
+    refreshFlow.validating("Проверяем доступность обновления мониторинга");
     await runLocked(
       refreshLockKey,
       async () => {
+        refreshFlow.sending("Обновляем проверки, статистику и календарь");
         invalidateAuthCache("index-checks/stats");
         invalidateAuthCache("index-checks/calendar");
         await Promise.all([loadChecks(), loadFailed(), loadStats(), loadCalendar()]);
+        refreshFlow.done("Данные мониторинга обновлены");
       },
-      "Обновление уже выполняется."
+      queueMonitoringRu.lockReasons.refreshInFlight
     );
   };
 
@@ -685,6 +710,11 @@ function IndexingMonitoringContent() {
         </div>
       </div>
 
+      <div className="grid gap-2 md:grid-cols-2">
+        <FlowStateBanner title={queueMonitoringRu.flowTitles.monitoring} flow={refreshFlow.flow} />
+        <FlowStateBanner title={queueMonitoringRu.flowTitles.manualRun} flow={runFlow.flow} />
+      </div>
+
       <IndexFiltersBar
         value={appliedFilters}
         defaultValue={defaultFilters}
@@ -706,6 +736,12 @@ function IndexingMonitoringContent() {
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-700/50 dark:bg-red-900/20 dark:text-red-200">
           {error}
         </div>
+      )}
+      {error && !permissionDenied && errorDiagnostics && (
+        <details className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700 dark:border-red-700/50 dark:bg-red-900/20 dark:text-red-200">
+          <summary className="cursor-pointer select-none">{queueMonitoringRu.diagnostics.title}</summary>
+          <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-[11px]">{errorDiagnostics}</pre>
+        </details>
       )}
 
       {canShowFailedAlert && !permissionDenied && (

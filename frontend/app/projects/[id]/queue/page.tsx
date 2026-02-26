@@ -15,12 +15,15 @@ import type { LinkTaskDTO } from "../../../../types/linkTasks";
 import { Badge } from "../../../../components/Badge";
 import { canRetryLinkTask, getLinkTaskStatusMeta, isLinkTaskInProgress, normalizeLinkTaskStatus } from "../../../../lib/linkTaskStatus";
 import { FilterDateInput } from "../../../../features/queue-monitoring/components/FilterDateInput";
+import { FlowStateBanner } from "../../../../features/queue-monitoring/components/FlowStateBanner";
 import { FilterSearchInput } from "../../../../features/queue-monitoring/components/FilterSearchInput";
+import { useFlowState } from "../../../../features/queue-monitoring/hooks/useFlowState";
 import { FilterSelect } from "../../../../features/queue-monitoring/components/FilterSelect";
 import { PaginationControls } from "../../../../features/queue-monitoring/components/PaginationControls";
 import { TableState } from "../../../../features/queue-monitoring/components/TableState";
 import { canDelete, canRetry, canRun } from "../../../../features/queue-monitoring/services/actionGuards";
 import { matchesDateRange, matchesSearch } from "../../../../features/queue-monitoring/services/filters";
+import { queueMonitoringRu, toDiagnosticsText } from "../../../../features/queue-monitoring/services/i18n-ru";
 import {
   hasNextPageByPageSize,
   resolveQueueTab
@@ -75,12 +78,14 @@ export default function ProjectQueuePage() {
   const [cleaning, setCleaning] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorDiagnostics, setErrorDiagnostics] = useState<string | null>(null);
   const [permissionDenied, setPermissionDenied] = useState(false);
 
   const [linkTasks, setLinkTasks] = useState<LinkTaskDTO[]>([]);
   const [linkLoading, setLinkLoading] = useState(false);
   const [linkRefreshing, setLinkRefreshing] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
+  const [linkErrorDiagnostics, setLinkErrorDiagnostics] = useState<string | null>(null);
   const [linkPermissionDenied, setLinkPermissionDenied] = useState(false);
 
   const [statusFilter, setStatusFilter] = useState("all");
@@ -104,6 +109,8 @@ export default function ProjectQueuePage() {
   const linkPageSize = 20;
   const activeTab = resolveQueueTab(searchParams.get("tab"));
   const { isLocked, lockReason, runLocked } = useActionLocks();
+  const queueFlow = useFlowState();
+  const linkFlow = useFlowState();
 
   const scopeId = projectId || "unknown";
   const cleanupLockKey = `project:${scopeId}:queue:cleanup`;
@@ -157,6 +164,7 @@ export default function ProjectQueuePage() {
       setLoading(true);
     }
     setError(null);
+    setErrorDiagnostics(null);
     setPermissionDenied(false);
     try {
       const list = await listQueue(projectId, {
@@ -171,7 +179,8 @@ export default function ProjectQueuePage() {
       if (isPermissionError(msg)) {
         setPermissionDenied(true);
       } else {
-        setError(msg);
+        setError("Не удалось загрузить очередь");
+        setErrorDiagnostics(toDiagnosticsText(err) || null);
       }
     } finally {
       if (!opts?.silent) {
@@ -186,6 +195,7 @@ export default function ProjectQueuePage() {
       setHistoryLoading(true);
     }
     setError(null);
+    setErrorDiagnostics(null);
     setPermissionDenied(false);
     try {
       const list = await listQueueHistory(projectId, {
@@ -203,7 +213,8 @@ export default function ProjectQueuePage() {
       if (isPermissionError(msg)) {
         setPermissionDenied(true);
       } else {
-        setError(msg);
+        setError("Не удалось загрузить историю очереди");
+        setErrorDiagnostics(toDiagnosticsText(err) || null);
       }
     } finally {
       if (!opts?.silent) {
@@ -218,6 +229,7 @@ export default function ProjectQueuePage() {
       setLinkLoading(true);
     }
     setLinkError(null);
+    setLinkErrorDiagnostics(null);
     setLinkPermissionDenied(false);
     try {
       const list = await listLinkTasks({
@@ -235,7 +247,8 @@ export default function ProjectQueuePage() {
       if (isPermissionError(msg)) {
         setLinkPermissionDenied(true);
       } else {
-        setLinkError(msg);
+        setLinkError("Не удалось загрузить задачи ссылок");
+        setLinkErrorDiagnostics(toDiagnosticsText(err) || null);
       }
     } finally {
       if (!opts?.silent) {
@@ -344,11 +357,14 @@ export default function ProjectQueuePage() {
     const domainLabel = item.domain_url || domains[item.domain_id]?.url || "домен";
     if (!confirm(`Удалить из очереди домен ${domainLabel}?`)) return;
     const lockKey = removeQueueItemLockKey(item.id);
+    queueFlow.validating("Проверяем возможность удаления из очереди");
     await runLocked(
       lockKey,
       async () => {
+        queueFlow.sending(`Удаляем домен ${domainLabel} из очереди`);
         setLoading(true);
         setError(null);
+        setErrorDiagnostics(null);
         try {
           await deleteQueueItem(item.id);
           showToast({
@@ -357,15 +373,18 @@ export default function ProjectQueuePage() {
             message: domainLabel
           });
           await load();
+          queueFlow.done("Элемент очереди удалён");
         } catch (err: any) {
-          const msg = err?.message || "Не удалось удалить из очереди";
-          setError(msg);
-          showToast({ type: "error", title: "Ошибка удаления", message: msg });
+          const userMessage = "Не удалось удалить из очереди";
+          setError(userMessage);
+          setErrorDiagnostics(toDiagnosticsText(err) || null);
+          queueFlow.fail(userMessage, err);
+          showToast({ type: "error", title: "Ошибка удаления", message: userMessage });
         } finally {
           setLoading(false);
         }
       },
-      "Удаление уже выполняется."
+      queueMonitoringRu.lockReasons.deleteInFlight
     );
   };
 
@@ -373,11 +392,14 @@ export default function ProjectQueuePage() {
     const domainLabel = domains[task.domain_id]?.url || "домен";
     if (!confirm(`Повторить задачу ссылки для домена ${domainLabel}?`)) return;
     const lockKey = linkRetryLockKey(task.id);
+    linkFlow.validating("Проверяем возможность повтора задачи ссылки");
     await runLocked(
       lockKey,
       async () => {
+        linkFlow.sending(`Повторяем задачу ссылки для ${domainLabel}`);
         setLinkLoading(true);
         setLinkError(null);
+        setLinkErrorDiagnostics(null);
         try {
           await retryLinkTask(task.id);
           showToast({
@@ -386,15 +408,18 @@ export default function ProjectQueuePage() {
             message: domainLabel
           });
           await loadLinkTasks();
+          linkFlow.done("Задача повторно поставлена в очередь");
         } catch (err: any) {
-          const msg = err?.message || "Не удалось повторить задачу ссылки";
-          setLinkError(msg);
-          showToast({ type: "error", title: "Ошибка повтора", message: msg });
+          const userMessage = "Не удалось повторить задачу ссылки";
+          setLinkError(userMessage);
+          setLinkErrorDiagnostics(toDiagnosticsText(err) || null);
+          linkFlow.fail(userMessage, err);
+          showToast({ type: "error", title: "Ошибка повтора", message: userMessage });
         } finally {
           setLinkLoading(false);
         }
       },
-      "Повтор уже выполняется."
+      queueMonitoringRu.lockReasons.retryInFlight
     );
   };
 
@@ -402,11 +427,14 @@ export default function ProjectQueuePage() {
     const domainLabel = domains[task.domain_id]?.url || "домен";
     if (!confirm(`Удалить задачу ссылки для домена ${domainLabel}?`)) return;
     const lockKey = linkDeleteLockKey(task.id);
+    linkFlow.validating("Проверяем возможность удаления задачи ссылки");
     await runLocked(
       lockKey,
       async () => {
+        linkFlow.sending(`Удаляем задачу ссылки для ${domainLabel}`);
         setLinkLoading(true);
         setLinkError(null);
+        setLinkErrorDiagnostics(null);
         try {
           await deleteLinkTask(task.id);
           showToast({
@@ -415,26 +443,32 @@ export default function ProjectQueuePage() {
             message: domainLabel
           });
           await loadLinkTasks();
+          linkFlow.done("Задача ссылки удалена");
         } catch (err: any) {
-          const msg = err?.message || "Не удалось удалить задачу ссылки";
-          setLinkError(msg);
-          showToast({ type: "error", title: "Ошибка удаления", message: msg });
+          const userMessage = "Не удалось удалить задачу ссылки";
+          setLinkError(userMessage);
+          setLinkErrorDiagnostics(toDiagnosticsText(err) || null);
+          linkFlow.fail(userMessage, err);
+          showToast({ type: "error", title: "Ошибка удаления", message: userMessage });
         } finally {
           setLinkLoading(false);
         }
       },
-      "Удаление уже выполняется."
+      queueMonitoringRu.lockReasons.deleteInFlight
     );
   };
 
   const handleCleanup = async () => {
     if (!projectId) return;
     if (!confirm("Очистить устаревшие элементы очереди?")) return;
+    queueFlow.validating("Проверяем возможность очистки очереди");
     await runLocked(
       cleanupLockKey,
       async () => {
+        queueFlow.sending("Очищаем устаревшие элементы очереди");
         setCleaning(true);
         setError(null);
+        setErrorDiagnostics(null);
         try {
           const res = await cleanupQueue(projectId);
           showToast({
@@ -443,47 +477,56 @@ export default function ProjectQueuePage() {
             message: `Удалено: ${res?.removed ?? 0}`
           });
           await load();
+          queueFlow.done("Очередь успешно очищена");
         } catch (err: any) {
-          const msg = err?.message || "Не удалось очистить очередь";
-          setError(msg);
-          showToast({ type: "error", title: "Ошибка очистки", message: msg });
+          const userMessage = "Не удалось очистить очередь";
+          setError(userMessage);
+          setErrorDiagnostics(toDiagnosticsText(err) || null);
+          queueFlow.fail(userMessage, err);
+          showToast({ type: "error", title: "Ошибка очистки", message: userMessage });
         } finally {
           setCleaning(false);
         }
       },
-      "Очистка уже выполняется."
+      queueMonitoringRu.lockReasons.cleanupInFlight
     );
   };
 
   const handleRefresh = async () => {
     if (!projectId) return;
+    queueFlow.validating("Проверяем доступность обновления очереди");
     await runLocked(
       refreshLockKey,
       async () => {
+        queueFlow.sending("Обновляем активную очередь и историю запусков");
         setRefreshing(true);
         try {
           await Promise.all([load({ silent: true }), loadHistory({ silent: true })]);
+          queueFlow.done("Данные очереди обновлены");
         } finally {
           setRefreshing(false);
         }
       },
-      "Обновление уже выполняется."
+      queueMonitoringRu.lockReasons.refreshInFlight
     );
   };
 
   const handleLinkRefresh = async () => {
     if (!projectId) return;
+    linkFlow.validating("Проверяем доступность обновления задач ссылок");
     await runLocked(
       linkRefreshLockKey,
       async () => {
+        linkFlow.sending("Обновляем задачи ссылок");
         setLinkRefreshing(true);
         try {
           await loadLinkTasks({ silent: true });
+          linkFlow.done("Список задач ссылок обновлён");
         } finally {
           setLinkRefreshing(false);
         }
       },
-      "Обновление уже выполняется."
+      queueMonitoringRu.lockReasons.refreshInFlight
     );
   };
 
@@ -546,11 +589,22 @@ export default function ProjectQueuePage() {
           </div>
         </div>
         {error && <div className="text-sm text-red-500 mt-2">{error}</div>}
+        {error && errorDiagnostics && (
+          <details className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-700/50 dark:bg-red-900/20 dark:text-red-200">
+            <summary className="cursor-pointer select-none">{queueMonitoringRu.diagnostics.title}</summary>
+            <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-[11px]">{errorDiagnostics}</pre>
+          </details>
+        )}
         {permissionDenied && (
           <div className="text-sm text-amber-600 dark:text-amber-400 mt-2">
             Недостаточно прав для просмотра очереди.
           </div>
         )}
+      </div>
+
+      <div className="grid gap-2 md:grid-cols-2">
+        <FlowStateBanner title={queueMonitoringRu.flowTitles.queue} flow={queueFlow.flow} />
+        <FlowStateBanner title={queueMonitoringRu.flowTitles.links} flow={linkFlow.flow} />
       </div>
 
       <div className="flex flex-wrap gap-2">
@@ -669,6 +723,12 @@ export default function ProjectQueuePage() {
             empty={!linkLoading && !linkError && filteredLinks.length === 0}
             emptyText="Очередь ссылок пуста."
           />
+        )}
+        {linkError && linkErrorDiagnostics && (
+          <details className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-700/50 dark:bg-red-900/20 dark:text-red-200">
+            <summary className="cursor-pointer select-none">{queueMonitoringRu.diagnostics.title}</summary>
+            <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-[11px]">{linkErrorDiagnostics}</pre>
+          </details>
         )}
         {!linkLoading && !linkError && !linkPermissionDenied && filteredLinks.length > 0 && (
           <div className="overflow-x-auto">

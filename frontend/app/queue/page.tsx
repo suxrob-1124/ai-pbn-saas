@@ -12,11 +12,14 @@ import type { LinkTaskDTO } from "../../types/linkTasks";
 import { Badge } from "../../components/Badge";
 import { getLinkTaskStatusMeta, isLinkTaskInProgress, type LinkTaskCanonicalStatus } from "../../lib/linkTaskStatus";
 import { useActionLocks } from "../../features/editor-v3/hooks/useActionLocks";
+import { FlowStateBanner } from "../../features/queue-monitoring/components/FlowStateBanner";
 import { FilterSearchInput } from "../../features/queue-monitoring/components/FilterSearchInput";
+import { useFlowState } from "../../features/queue-monitoring/hooks/useFlowState";
 import { PaginationControls } from "../../features/queue-monitoring/components/PaginationControls";
 import { TableState } from "../../features/queue-monitoring/components/TableState";
 import { canDelete, canRetry, canRun } from "../../features/queue-monitoring/services/actionGuards";
 import { matchesSearch } from "../../features/queue-monitoring/services/filters";
+import { queueMonitoringRu, toDiagnosticsText } from "../../features/queue-monitoring/services/i18n-ru";
 import {
   hasNextPageByPageSize,
   resolveQueueTab
@@ -58,6 +61,7 @@ function QueuePageContent() {
   const [items, setItems] = useState<Generation[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorDiagnostics, setErrorDiagnostics] = useState<string | null>(null);
   const [filter, setFilter] = useState<GlobalGenerationFilterKey>("all");
   const [search, setSearch] = useState("");
   const [genPage, setGenPage] = useState(1);
@@ -66,6 +70,7 @@ function QueuePageContent() {
   const [linkTasks, setLinkTasks] = useState<LinkTaskDTO[]>([]);
   const [linkLoading, setLinkLoading] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
+  const [linkErrorDiagnostics, setLinkErrorDiagnostics] = useState<string | null>(null);
   const [linkFilter, setLinkFilter] = useState<"all" | LinkTaskCanonicalStatus>("all");
   const [linkSearch, setLinkSearch] = useState("");
   const [linkPage, setLinkPage] = useState(1);
@@ -74,6 +79,8 @@ function QueuePageContent() {
   const searchParams = useSearchParams();
   const activeTab = resolveQueueTab(searchParams.get("tab"));
   const { isLocked, lockReason, runLocked } = useActionLocks();
+  const refreshFlow = useFlowState();
+  const linkFlow = useFlowState();
 
   const refreshLockKey = "queue:global:refresh";
   const linkRetryLockKey = (taskId: string) => `queue:global:link:${taskId}:retry`;
@@ -82,6 +89,7 @@ function QueuePageContent() {
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setErrorDiagnostics(null);
     try {
       const params = new URLSearchParams();
       params.set("limit", String(genPageSize));
@@ -93,7 +101,8 @@ function QueuePageContent() {
       const res = await authFetch<Generation[]>(`/api/generations?${params.toString()}`);
       setItems(Array.isArray(res) ? res : []);
     } catch (err: any) {
-      setError(err?.message || "Не удалось загрузить очередь");
+      setError("Не удалось загрузить очередь");
+      setErrorDiagnostics(toDiagnosticsText(err) || null);
     } finally {
       setLoading(false);
     }
@@ -102,6 +111,7 @@ function QueuePageContent() {
   const loadLinks = useCallback(async () => {
     setLinkLoading(true);
     setLinkError(null);
+    setLinkErrorDiagnostics(null);
     try {
       const params = {
         limit: linkPageSize,
@@ -168,21 +178,25 @@ function QueuePageContent() {
         }
       }
     } catch (err: any) {
-      setLinkError(err?.message || "Не удалось загрузить задачи ссылок");
+      setLinkError("Не удалось загрузить задачи ссылок");
+      setLinkErrorDiagnostics(toDiagnosticsText(err) || null);
     } finally {
       setLinkLoading(false);
     }
   }, [linkFilter, linkPage, linkPageSize, linkSearch, me]);
 
   const handleRefresh = useCallback(async () => {
+    refreshFlow.validating("Проверяем доступность обновления очереди");
     await runLocked(
       refreshLockKey,
       async () => {
+        refreshFlow.sending("Обновляем генерации и задачи ссылок");
         await Promise.all([load(), loadLinks()]);
+        refreshFlow.done("Данные очереди обновлены");
       },
-      "Обновление уже выполняется."
+      queueMonitoringRu.lockReasons.refreshInFlight
     );
-  }, [load, loadLinks, runLocked]);
+  }, [load, loadLinks, refreshFlow, runLocked]);
 
   useEffect(() => {
     load();
@@ -275,11 +289,14 @@ function QueuePageContent() {
     const domainLabel = linkDomains[task.domain_id] || "домен";
     if (!confirm(`Повторить задачу ссылки для домена ${domainLabel}?`)) return;
     const lockKey = linkRetryLockKey(task.id);
+    linkFlow.validating("Проверяем возможность повтора задачи ссылки");
     await runLocked(
       lockKey,
       async () => {
+        linkFlow.sending(`Повторяем задачу ссылки для ${domainLabel}`);
         setLinkLoading(true);
         setLinkError(null);
+        setLinkErrorDiagnostics(null);
         try {
           await retryLinkTask(task.id);
           showToast({
@@ -288,15 +305,18 @@ function QueuePageContent() {
             message: domainLabel
           });
           await loadLinks();
+          linkFlow.done("Задача успешно повторно поставлена в очередь");
         } catch (err: any) {
-          const msg = err?.message || "Не удалось повторить задачу ссылки";
-          setLinkError(msg);
-          showToast({ type: "error", title: "Ошибка повтора", message: msg });
+          const userMessage = "Не удалось повторить задачу ссылки";
+          setLinkError(userMessage);
+          setLinkErrorDiagnostics(toDiagnosticsText(err) || null);
+          linkFlow.fail(userMessage, err);
+          showToast({ type: "error", title: "Ошибка повтора", message: userMessage });
         } finally {
           setLinkLoading(false);
         }
       },
-      "Повтор уже выполняется."
+      queueMonitoringRu.lockReasons.retryInFlight
     );
   };
 
@@ -304,11 +324,14 @@ function QueuePageContent() {
     const domainLabel = linkDomains[task.domain_id] || "домен";
     if (!confirm(`Удалить задачу ссылки для домена ${domainLabel}?`)) return;
     const lockKey = linkDeleteLockKey(task.id);
+    linkFlow.validating("Проверяем возможность удаления задачи ссылки");
     await runLocked(
       lockKey,
       async () => {
+        linkFlow.sending(`Удаляем задачу ссылки для ${domainLabel}`);
         setLinkLoading(true);
         setLinkError(null);
+        setLinkErrorDiagnostics(null);
         try {
           await deleteLinkTask(task.id);
           showToast({
@@ -317,15 +340,18 @@ function QueuePageContent() {
             message: domainLabel
           });
           await loadLinks();
+          linkFlow.done("Задача ссылки удалена");
         } catch (err: any) {
-          const msg = err?.message || "Не удалось удалить задачу ссылки";
-          setLinkError(msg);
-          showToast({ type: "error", title: "Ошибка удаления", message: msg });
+          const userMessage = "Не удалось удалить задачу ссылки";
+          setLinkError(userMessage);
+          setLinkErrorDiagnostics(toDiagnosticsText(err) || null);
+          linkFlow.fail(userMessage, err);
+          showToast({ type: "error", title: "Ошибка удаления", message: userMessage });
         } finally {
           setLinkLoading(false);
         }
       },
-      "Удаление уже выполняется."
+      queueMonitoringRu.lockReasons.deleteInFlight
     );
   };
 
@@ -363,7 +389,17 @@ function QueuePageContent() {
           </Link>
         </div>
       </div>
+      <div className="grid gap-2 md:grid-cols-2">
+        <FlowStateBanner title={queueMonitoringRu.flowTitles.refresh} flow={refreshFlow.flow} />
+        <FlowStateBanner title={queueMonitoringRu.flowTitles.links} flow={linkFlow.flow} />
+      </div>
       {error && <div className="text-red-500 text-sm">{error}</div>}
+      {error && errorDiagnostics && (
+        <details className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-700/50 dark:bg-red-900/20 dark:text-red-200">
+          <summary className="cursor-pointer select-none">{queueMonitoringRu.diagnostics.title}</summary>
+          <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-[11px]">{errorDiagnostics}</pre>
+        </details>
+      )}
 
       <div className="flex flex-wrap gap-2">
         <TabLink
@@ -504,6 +540,12 @@ function QueuePageContent() {
           empty={!linkLoading && !linkError && filteredLinks.length === 0}
           emptyText="Задач ссылок нет."
         />
+        {linkError && linkErrorDiagnostics && (
+          <details className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-700/50 dark:bg-red-900/20 dark:text-red-200">
+            <summary className="cursor-pointer select-none">{queueMonitoringRu.diagnostics.title}</summary>
+            <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-[11px]">{linkErrorDiagnostics}</pre>
+          </details>
+        )}
         {!linkLoading && !linkError && filteredLinks.length > 0 && (
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
