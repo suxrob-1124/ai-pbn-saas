@@ -17,10 +17,12 @@ type UseFileActionsParams = {
   readOnly: boolean;
   files: EditorFileMeta[];
   selection: EditorSelectionState | null;
+  selectedFolderPath: string;
   fileInputRef: RefObject<HTMLInputElement | null>;
   setFiles: Dispatch<SetStateAction<EditorFileMeta[]>>;
   setDeletedFiles: Dispatch<SetStateAction<EditorFileMeta[]>>;
   setSelection: Dispatch<SetStateAction<EditorSelectionState | null>>;
+  setSelectedFolderPath: Dispatch<SetStateAction<string>>;
   setDirtyState: Dispatch<SetStateAction<EditorDirtyState>>;
   loadFile: (file: EditorFileMeta, options?: { line?: number }) => Promise<void>;
 };
@@ -48,10 +50,12 @@ export function useFileActions(params: UseFileActionsParams) {
     readOnly,
     files,
     selection,
+    selectedFolderPath,
     fileInputRef,
     setFiles,
     setDeletedFiles,
     setSelection,
+    setSelectedFolderPath,
     setDirtyState,
     loadFile,
   } = params;
@@ -98,6 +102,8 @@ export function useFileActions(params: UseFileActionsParams) {
     try {
       await createFileOrDir(domainId, { kind: "dir", path: nextPath });
       await loadFiles();
+      setSelectedFolderPath(nextPath.replace(/^\/+|\/+$/g, ""));
+      setSelection(null);
       showToast({ type: "success", title: "Папка создана", message: nextPath });
     } catch (err: any) {
       showToast({ type: "error", title: "Не удалось создать папку", message: err?.message || "unknown error" });
@@ -105,34 +111,49 @@ export function useFileActions(params: UseFileActionsParams) {
   };
 
   const onRename = async () => {
-    if (readOnly || !selection?.selectedPath) return;
-    const currentPath = selection.selectedPath;
+    if (readOnly) return;
+    const currentPath = selection?.selectedPath || selectedFolderPath;
+    if (!currentPath) return;
+    const isFolder = !selection?.selectedPath && Boolean(selectedFolderPath);
     const parts = currentPath.split("/").filter(Boolean);
     const currentName = parts.pop() || currentPath;
     const parent = parts.join("/");
-    const nextName = (prompt("Новое имя файла", currentName) || "").trim();
+    const nextName = (prompt(isFolder ? "Новое имя папки" : "Новое имя файла", currentName) || "").trim();
     if (!nextName || nextName === currentName) return;
     if (nextName.includes("/")) {
-      showToast({ type: "error", title: "Некорректное имя", message: "Имя файла не должно содержать /" });
+      showToast({ type: "error", title: "Некорректное имя", message: "Имя не должно содержать /" });
       return;
     }
     const nextPath = parent ? `${parent}/${nextName}` : nextName;
     try {
       await moveFile(domainId, currentPath, nextPath);
       const nextFiles = await loadFiles();
-      const moved = nextFiles.find((item) => item.path === nextPath);
-      if (moved) {
-        await loadFile(moved);
+      if (isFolder) {
+        setSelectedFolderPath(nextPath);
+        setSelection(null);
+        setDirtyState({ isDirty: false, originalContent: "", currentContent: "" });
+        showToast({ type: "success", title: "Папка переименована", message: `${currentName} → ${nextName}` });
+      } else {
+        const moved = nextFiles.find((item) => item.path === nextPath);
+        if (moved) {
+          await loadFile(moved);
+        }
+        showToast({ type: "success", title: "Файл переименован", message: `${currentName} → ${nextName}` });
       }
-      showToast({ type: "success", title: "Файл переименован", message: `${currentName} → ${nextName}` });
     } catch (err: any) {
-      showToast({ type: "error", title: "Не удалось переименовать файл", message: err?.message || "unknown error" });
+      showToast({
+        type: "error",
+        title: isFolder ? "Не удалось переименовать папку" : "Не удалось переименовать файл",
+        message: err?.message || "unknown error",
+      });
     }
   };
 
   const onMove = async () => {
-    if (readOnly || !selection?.selectedPath) return;
-    const currentPath = selection.selectedPath;
+    if (readOnly) return;
+    const currentPath = selection?.selectedPath || selectedFolderPath;
+    if (!currentPath) return;
+    const isFolder = !selection?.selectedPath && Boolean(selectedFolderPath);
     const parts = currentPath.split("/").filter(Boolean);
     const currentName = parts.pop() || currentPath;
     const currentDir = parts.join("/");
@@ -147,26 +168,49 @@ export function useFileActions(params: UseFileActionsParams) {
     try {
       await moveFile(domainId, currentPath, nextPath);
       const nextFiles = await loadFiles();
-      const moved = nextFiles.find((item) => item.path === nextPath);
-      if (moved) {
-        await loadFile(moved);
+      if (isFolder) {
+        setSelectedFolderPath(nextPath);
+        setSelection(null);
+        setDirtyState({ isDirty: false, originalContent: "", currentContent: "" });
+      } else {
+        const moved = nextFiles.find((item) => item.path === nextPath);
+        if (moved) {
+          await loadFile(moved);
+        }
       }
-      showToast({ type: "success", title: "Файл перемещен", message: `${currentPath} → ${nextPath}` });
+      showToast({
+        type: "success",
+        title: isFolder ? "Папка перемещена" : "Файл перемещен",
+        message: `${currentPath} → ${nextPath}`,
+      });
     } catch (err: any) {
-      showToast({ type: "error", title: "Не удалось переместить файл", message: err?.message || "unknown error" });
+      showToast({
+        type: "error",
+        title: isFolder ? "Не удалось переместить папку" : "Не удалось переместить файл",
+        message: err?.message || "unknown error",
+      });
     }
   };
 
   const onDelete = async () => {
-    if (readOnly || !selection?.selectedPath) return;
-    if (!confirm(`Удалить "${selection.selectedPath}"?`)) return;
+    if (readOnly) return;
+    const targetPath = selection?.selectedPath || "";
+    if (targetPath) {
+      if (!confirm(`Удалить "${targetPath}"?`)) return;
+    } else if (selectedFolderPath) {
+      await onDeleteFolder(selectedFolderPath);
+      return;
+    } else {
+      return;
+    }
     try {
-      await deleteFile(domainId, selection.selectedPath);
+      await deleteFile(domainId, targetPath);
       setSelection(null);
+      setSelectedFolderPath("");
       setDirtyState({ isDirty: false, originalContent: "", currentContent: "" });
       await loadFiles();
       await loadDeletedFiles();
-      showToast({ type: "success", title: "Файл удален", message: selection.selectedPath });
+      showToast({ type: "success", title: "Файл удален", message: targetPath });
     } catch (err: any) {
       showToast({ type: "error", title: "Не удалось удалить файл", message: err?.message || "unknown error" });
     }
@@ -186,6 +230,9 @@ export function useFileActions(params: UseFileActionsParams) {
       if (selection?.selectedPath === normalized || selection?.selectedPath?.startsWith(`${normalized}/`)) {
         setSelection(null);
         setDirtyState({ isDirty: false, originalContent: "", currentContent: "" });
+      }
+      if (selectedFolderPath === normalized || selectedFolderPath.startsWith(`${normalized}/`)) {
+        setSelectedFolderPath("");
       }
       await loadFiles();
       await loadDeletedFiles();

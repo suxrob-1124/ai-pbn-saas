@@ -590,6 +590,63 @@
 2. Проверка корректности cost при смене цен в коротком временном окне требует отдельного integration теста с контролируемым `active_from/active_to`.
 3. Часть verify-скриптов usage чувствительна к рефакторингу структуры UI-файлов (string-based asserts); при следующей декомпозиции стоит перевести их на более устойчивые проверки.
 
+### Wave 6 — Frontend decomposition follow-up
+
+Цель:
+1. Продолжить декомпозицию оставшихся крупных page-level файлов batch-подходом без изменения API/UX-контрактов.
+2. Синхронизировать фактические метрики размера страниц и verify-доказательства.
+
+Ограничения:
+1. Без backend-изменений.
+2. Без редизайна.
+3. Только безопасный вынос state/handlers/section-логики в feature hooks/components/services.
+
+### Wave 6 status (W6.1–W6.3, 26.02.2026)
+
+1. `completed` — `W6.1` editor decomposition continuation:
+- добавлены feature hooks/services/components в `frontend/features/editor-v3/*`.
+- runtime и API поведение сохранены.
+- текущий размер `frontend/app/domains/[id]/editor/page.tsx`: `1245` строк (было `1491` в предыдущем срезе).
+
+2. `completed` — `W6.2` project page orchestration cleanup:
+- вынесен schedule/link-schedule state+handlers в `frontend/features/domain-project/hooks/useProjectSchedules.ts`.
+- `frontend/app/projects/[id]/page.tsx` сокращен `1148 -> 807`.
+- verify green:
+  - `npx tsc --noEmit`
+  - `npm run -s verify:schedule-ui`
+  - `npm run -s verify:schedule-form`
+  - `npm run -s verify:schedule-list`
+  - `npm run -s verify:nav-tabs`
+
+3. `completed` — `W6.3` queue/indexing decomposition:
+- `frontend/app/projects/[id]/queue/page.tsx`:
+  - вынесен data/action слой в `frontend/features/queue-monitoring/hooks/useProjectQueueData.ts`.
+  - размер страницы сокращен `1017 -> 620`.
+  - verify green:
+    - `npm run -s verify:project-queue`
+    - `npm run -s verify:project-queue-active-filters`
+    - `npm run -s verify:project-queue-history`
+    - `npm run -s verify:project-queue-link-normalization`
+- `frontend/app/monitoring/indexing/page.tsx`:
+  - вынесены scope/history hooks и общие parsing/date/sort utils:
+    - `frontend/features/queue-monitoring/hooks/useIndexMonitoringScopeLabels.ts`
+    - `frontend/features/queue-monitoring/hooks/useIndexCheckHistory.ts`
+    - `frontend/features/queue-monitoring/services/indexingPageUtils.ts`
+  - размер страницы сокращен `957 -> 784`.
+  - verify green:
+  - `npm run -s verify:index-monitoring-ui`
+  - `npm run -s verify:index-monitoring-dashboard`
+  - `npm run -s verify:index-stats`
+  - `npm run -s verify:index-table`
+  - `npm run -s verify:index-checks-pagination`
+  - `npx tsc --noEmit`
+
+### Wave 6 leftovers / residual risks
+
+1. `frontend/app/domains/[id]/editor/page.tsx` остается выше целевого `1200` (текущий размер `1245`), нужен дополнительный вынос asset/image handlers.
+2. `frontend/app/monitoring/indexing/page.tsx` и `frontend/app/queue/page.tsx` все еще содержат заметные page-level блоки логики; требуется следующий safe-split в batch B.
+3. Часть verify-проверок по-прежнему string-based и чувствительна к перемещению JSX/handler-кода между файлами.
+
 ### DOD.1A File-Scoped Split Map (26.02.2026)
 
 Аудит выполнен без изменений runtime-логики. Line-count ниже зафиксирован по фактическому состоянию репозитория на дату аудита.
@@ -793,8 +850,8 @@ Frontend:
 #### Short evidence
 
 Файлы, которые были `>1500` и текущий статус после split:
-1. `frontend/app/domains/[id]/editor/page.tsx`: `2811 -> 2811` (partial, модульная декомпозиция начата, но файл все еще >1500).
-2. `frontend/app/projects/[id]/page.tsx`: `2211 -> 1148` (done для порога >1500).
+1. `frontend/app/domains/[id]/editor/page.tsx`: `2811 -> 1245` (done для порога >1500, декомпозиция продолжена на `features/editor-v3/components/*` и `hooks/*`).
+2. `frontend/app/projects/[id]/page.tsx`: `2211 -> 807` (done для порога >1500).
 3. `frontend/app/domains/[id]/page.tsx`: `1664 -> 445` (done для порога >1500).
 
 Где включен flow-state:
@@ -819,8 +876,8 @@ Frontend:
 
 #### DoD status (1-4)
 
-1. DoD-1 (`монолиты >1500`) — `partial`.
-Подтверждение: из исходно крупных страниц `projects/[id]` и `domains/[id]` порог закрыт, `domains/[id]/editor/page.tsx` остается `2811`.
+1. DoD-1 (`монолиты >1500`) — `done`.
+Подтверждение: все исходные страницы с `>1500` строк приведены ниже порога (`editor/page.tsx` теперь `1245`).
 
 2. DoD-2 (`прозрачный lifecycle долгих действий`) — `done` для ключевых продуктовых контуров.
 Подтверждение: flow-state баннеры и статусы присутствуют в editor/domain/project/queue/monitoring маршрутах.
@@ -833,9 +890,9 @@ Frontend:
 
 #### Residuals (owner + due-date)
 
-1. Остаток: декомпозиция `frontend/app/domains/[id]/editor/page.tsx` до `<1500`.
+1. Остаток: дополнительная декомпозиция `frontend/app/domains/[id]/editor/page.tsx` до `<1200` (не DoD-блокер).
 - Owner: `frontend-editor-core`.
-- Due date: `2026-03-12`.
+- Due date: `2026-03-18`.
 
 2. Остаток: e2e сценарий конкурентных in-flight действий (multi-tab/multi-role) для подтверждения DoD-3.
 - Owner: `qa-frontend`.

@@ -3,13 +3,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { FiCode, FiFile, FiFileText, FiFolder, FiImage, FiTrash2 } from "react-icons/fi";
 
+import { isImageLikeFile } from "../features/editor-v3/services/editorPreviewUtils";
 import type { EditorFileMeta, EditorFileNode } from "../types/editor";
 
 type FileTreeProps = {
   files: EditorFileMeta[];
   selectedPath?: string;
+  selectedFolderPath?: string;
   loading?: boolean;
   onSelect: (file: EditorFileMeta) => void;
+  onSelectFolder?: (path: string) => void;
   onDeleteFolder?: (path: string) => void;
   canManageFolders?: boolean;
 };
@@ -17,7 +20,7 @@ type FileTreeProps = {
 function fileLabelIcon(file: EditorFileMeta) {
   const mime = (file.mimeType || "").toLowerCase();
   const path = file.path.toLowerCase();
-  if (mime.startsWith("image/")) {
+  if (isImageLikeFile(path, mime)) {
     return <FiImage className="h-4 w-4" />;
   }
   if (path.endsWith(".js") || path.endsWith(".ts") || path.endsWith(".tsx") || path.endsWith(".jsx") || path.endsWith(".css")) {
@@ -98,8 +101,10 @@ function parentPaths(pathValue: string): string[] {
 export function FileTree({
   files,
   selectedPath,
+  selectedFolderPath,
   loading,
   onSelect,
+  onSelectFolder,
   onDeleteFolder,
   canManageFolders
 }: FileTreeProps) {
@@ -130,13 +135,23 @@ export function FileTree({
   const renderNode = (node: EditorFileNode, depth: number) => {
     if (node.isDir) {
       const isOpen = openPaths[node.path] ?? depth < 1;
+      const selected = Boolean(node.path) && selectedFolderPath === node.path;
       return (
         <div key={node.path}>
           <div className="flex items-center gap-1">
             <button
               type="button"
-              onClick={() => toggleFolder(node.path)}
-              className="w-full flex items-center gap-2 rounded-md px-2 py-1 text-left text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+              onClick={() => {
+                toggleFolder(node.path);
+                if (node.path) {
+                  onSelectFolder?.(node.path);
+                }
+              }}
+              className={`w-full flex items-center gap-2 rounded-md px-2 py-1 text-left text-sm ${
+                selected
+                  ? "bg-indigo-600 text-white"
+                  : "text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+              }`}
               style={{ paddingLeft: `${8 + depth * 14}px` }}
             >
               <FiFolder className="h-4 w-4" />
@@ -182,7 +197,7 @@ export function FileTree({
       >
         {fileLabelIcon(file)}
         <span className="truncate">{node.name}</span>
-        {file.mimeType?.toLowerCase().startsWith("image/") && file.width && file.height && (
+        {isImageLikeFile(file.path, file.mimeType) && file.width && file.height && (
           <span className={`ml-auto text-[10px] ${selected ? "text-indigo-100" : "text-slate-400"}`}>
             {file.width}x{file.height}
           </span>

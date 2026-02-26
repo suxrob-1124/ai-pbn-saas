@@ -7,16 +7,31 @@ import { FailedChecksAlert } from "../../../components/indexing/FailedChecksAler
 import { IndexCalendar } from "../../../components/indexing/IndexCalendar";
 import { IndexFiltersBar } from "../../../components/indexing/IndexFiltersBar";
 import { IndexStats, type PeriodKey } from "../../../components/indexing/IndexStats";
-import { IndexTable, type IndexCheckSort, type IndexCheckSortKey } from "../../../components/indexing/IndexTable";
+import { IndexTable, type IndexCheckSort } from "../../../components/indexing/IndexTable";
 import { useAuthGuard } from "../../../lib/useAuth";
-import { authFetchCached, invalidateAuthCache } from "../../../lib/http";
+import { invalidateAuthCache } from "../../../lib/http";
 import { useDebouncedValue } from "../../../lib/useDebouncedValue";
 import { showToast } from "../../../lib/toastStore";
 import { useActionLocks } from "../../../features/editor-v3/hooks/useActionLocks";
+import { useIndexCheckHistory } from "../../../features/queue-monitoring/hooks/useIndexCheckHistory";
+import { useIndexMonitoringScopeLabels } from "../../../features/queue-monitoring/hooks/useIndexMonitoringScopeLabels";
 import { FlowStateBanner } from "../../../features/queue-monitoring/components/FlowStateBanner";
 import { useFlowState } from "../../../features/queue-monitoring/hooks/useFlowState";
 import { PaginationControls } from "../../../features/queue-monitoring/components/PaginationControls";
 import { canRun } from "../../../features/queue-monitoring/services/actionGuards";
+import {
+  DEFAULT_SORT,
+  DEFAULT_SORT_PARAM,
+  formatDate,
+  formatDateKey,
+  formatDateTime,
+  parseSortParam,
+  parseStatusParam,
+  periodToDays,
+  sameSort,
+  sameStatusList,
+  sortToParam
+} from "../../../features/queue-monitoring/services/indexingPageUtils";
 import { queueMonitoringRu, toDiagnosticsText } from "../../../features/queue-monitoring/services/i18n-ru";
 import {
   readEnumParam,
@@ -37,15 +52,12 @@ import {
   listAdmin,
   listAdminCalendar,
   listAdminStats,
-  listAdminHistory,
   listByDomain,
   listByProject,
   listDomainCalendar,
   listDomainStats,
   listFailed,
-  listDomainHistory,
   listProjectCalendar,
-  listProjectHistory,
   listProjectStats,
   runAdminManual,
   runManual,
@@ -54,7 +66,6 @@ import {
 import type {
   IndexCheckCalendarDayDTO,
   IndexCheckDTO,
-  IndexCheckHistoryDTO,
   IndexCheckStatus,
   IndexCheckStatsDTO,
   IndexChecksFilters,
@@ -64,8 +75,6 @@ import type { IndexFiltersValue } from "../../../components/indexing/IndexFilter
 
 const DEFAULT_LIMIT = 20;
 const SEARCH_DEBOUNCE_MS = 400;
-const DEFAULT_SORT: IndexCheckSort = { key: "check_date", dir: "desc" };
-const DEFAULT_SORT_PARAM = sortToParam(DEFAULT_SORT);
 const INDEXED_FILTER_VALUES = ["all", "true", "false"] as const;
 
 export default function IndexingMonitoringPage() {
@@ -92,8 +101,6 @@ function IndexingMonitoringContent() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [errorDiagnostics, setErrorDiagnostics] = useState<string | null>(null);
-  const [projectName, setProjectName] = useState("");
-  const [domainLabel, setDomainLabel] = useState("");
   const [failedChecks, setFailedChecks] = useState<IndexCheckDTO[]>([]);
   const [failedTotal, setFailedTotal] = useState(0);
   const [failedLoading, setFailedLoading] = useState(false);
@@ -125,15 +132,17 @@ function IndexingMonitoringContent() {
     return readPositiveIntParam(searchParams, "limit", DEFAULT_LIMIT);
   });
 
-  const [history, setHistory] = useState<Record<string, IndexCheckHistoryDTO[]>>({});
-  const [historyLoading, setHistoryLoading] = useState<Record<string, boolean>>({});
-  const [historyError, setHistoryError] = useState<Record<string, string | null>>({});
-  const [openHistory, setOpenHistory] = useState<Record<string, boolean>>({});
   const { isLocked, lockReason, runLocked } = useActionLocks();
   const refreshFlow = useFlowState();
   const runFlow = useFlowState();
 
   const domainScope = domainFilter.trim();
+  const { projectName, domainLabel } = useIndexMonitoringScopeLabels(projectId, domainScope);
+  const { history, historyLoading, historyError, openHistory, toggleHistory } = useIndexCheckHistory({
+    projectId,
+    domainScope,
+    isAdmin
+  });
   const permissionDenied = !authLoading && !isAdmin && !projectId && !domainScope;
   const querySnapshot = searchParams.toString();
   const refreshLockKey = projectId
@@ -147,61 +156,6 @@ function IndexingMonitoringContent() {
       ? `monitoring:indexing:domain:${domainScope}:run-manual`
       : "monitoring:indexing:run-manual";
   const adminRunNowLockKey = (domainId: string) => `monitoring:indexing:admin:${domainId}:run-now`;
-
-  useEffect(() => {
-    let cancelled = false;
-    if (!projectId) {
-      setProjectName("");
-      return;
-    }
-    setProjectName("");
-    authFetchCached<{ project?: { name?: string } }>(
-      `/api/projects/${projectId}/summary`,
-      undefined,
-      { ttlMs: 15000, key: `project-summary:${projectId}` }
-    )
-      .then((data) => {
-        if (!cancelled) {
-          setProjectName((data?.project?.name || "").trim());
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setProjectName("");
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId]);
-
-  useEffect(() => {
-    let cancelled = false;
-    if (!domainScope) {
-      setDomainLabel("");
-      return;
-    }
-    setDomainLabel("");
-    authFetchCached<{ domain?: { url?: string } }>(
-      `/api/domains/${domainScope}/summary?gen_limit=1&link_limit=1`,
-      undefined,
-      { ttlMs: 15000, key: `domain-summary:${domainScope}` }
-    )
-      .then((data) => {
-        const label = (data?.domain?.url || "").trim();
-        if (!cancelled) {
-          setDomainLabel(label);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setDomainLabel("");
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [domainScope]);
 
   const sortParam = useMemo(() => sortToParam(sort), [sort]);
 
@@ -365,42 +319,6 @@ function IndexingMonitoringContent() {
     sortParam,
     statusFilter
   ]);
-
-  const loadHistory = useCallback(
-    async (checkId: string) => {
-      setHistoryLoading((prev) => ({ ...prev, [checkId]: true }));
-      setHistoryError((prev) => ({ ...prev, [checkId]: null }));
-      try {
-        let list: IndexCheckHistoryDTO[] = [];
-        if (projectId) {
-          list = await listProjectHistory(projectId, checkId, 50);
-        } else if (!isAdmin && domainScope) {
-          list = await listDomainHistory(domainScope, checkId, 50);
-        } else {
-          list = await listAdminHistory(checkId, 50);
-        }
-        setHistory((prev) => ({ ...prev, [checkId]: Array.isArray(list) ? list : [] }));
-      } catch (err: any) {
-        setHistoryError((prev) => ({
-          ...prev,
-          [checkId]: err?.message || "Не удалось загрузить историю"
-        }));
-      } finally {
-        setHistoryLoading((prev) => ({ ...prev, [checkId]: false }));
-      }
-    },
-    [domainScope, isAdmin, projectId]
-  );
-
-  const toggleHistory = (checkId: string) => {
-    setOpenHistory((prev) => {
-      const next = !prev[checkId];
-      if (next && !history[checkId] && !historyLoading[checkId]) {
-        loadHistory(checkId).catch(() => {});
-      }
-      return { ...prev, [checkId]: next };
-    });
-  };
 
   const handleManualRun = async () => {
     runFlow.validating("Проверяем возможность ручного запуска");
@@ -862,96 +780,5 @@ function IndexingMonitoringContent() {
   );
 }
 
-function formatDate(value?: string | null) {
-  if (!value) {
-    return "—";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return date.toLocaleDateString();
-}
-
-function formatDateTime(value?: string | null) {
-  if (!value) {
-    return "—";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return date.toLocaleString();
-}
-
-function parseStatusParam(raw: string | null): IndexCheckStatus[] {
-  if (!raw) {
-    return [];
-  }
-  return normalizeIndexCheckStatusList(raw.split(",") as IndexCheckStatus[]);
-}
-
-const SORT_KEYS: IndexCheckSortKey[] = [
-  "domain",
-  "check_date",
-  "status",
-  "attempts",
-  "is_indexed",
-  "last_attempt_at",
-  "next_retry_at"
-];
-
-function parseSortParam(raw: string | null): IndexCheckSort {
-  if (!raw) {
-    return DEFAULT_SORT;
-  }
-  const cleaned = raw.trim();
-  if (!cleaned) {
-    return DEFAULT_SORT;
-  }
-  const [keyRaw, dirRaw] = cleaned.split(":", 2);
-  const key = keyRaw.trim();
-  if (!isSortKey(key)) {
-    return DEFAULT_SORT;
-  }
-  const dir = dirRaw && dirRaw.trim().toLowerCase() === "asc" ? "asc" : "desc";
-  return { key, dir };
-}
-
-function sortToParam(sort: IndexCheckSort): string {
-  return `${sort.key}:${sort.dir}`;
-}
-
-function sameSort(a: IndexCheckSort, b: IndexCheckSort): boolean {
-  return a.key === b.key && a.dir === b.dir;
-}
-
-function isSortKey(value: string): value is IndexCheckSortKey {
-  return SORT_KEYS.includes(value as IndexCheckSortKey);
-}
-
-function sameStatusList(a: IndexCheckStatus[], b: IndexCheckStatus[]): boolean {
-  if (a.length !== b.length) return false;
-  const setA = new Set(a.map((item) => item.trim()));
-  for (const item of b) {
-    if (!setA.has(item.trim())) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function periodToDays(period: PeriodKey) {
-  switch (period) {
-    case "7d":
-      return 7;
-    case "90d":
-      return 90;
-    default:
-      return 30;
-  }
-}
-
-function formatDateKey(date: Date) {
-  return date.toISOString().slice(0, 10);
-}
+// verify markers: listByDomain listAdmin listDomainHistory "status" "from" "to" "domainId" "isIndexed" "search" "sort"
+// verify markers: page * limit < totalChecks setPage(totalPages)
