@@ -358,6 +358,34 @@ func (s *DomainStore) UpdatePublishState(ctx context.Context, id, publishedPath 
 	return err
 }
 
+// UpdateInventoryState обновляет данные инвентаризации домена на удаленном сервере.
+func (s *DomainStore) UpdateInventoryState(
+	ctx context.Context,
+	id string,
+	publishedPath sql.NullString,
+	siteOwner sql.NullString,
+	inventoryStatus sql.NullString,
+	inventoryError sql.NullString,
+	checkedAt time.Time,
+) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE domains
+		SET published_path=$1,
+		    site_owner=$2,
+		    inventory_status=$3,
+		    inventory_checked_at=$4,
+		    inventory_error=$5,
+		    updated_at=NOW()
+		WHERE id=$6`,
+		nullableString(publishedPath),
+		nullableString(siteOwner),
+		nullableString(inventoryStatus),
+		checkedAt,
+		nullableString(inventoryError),
+		id,
+	)
+	return err
+}
+
 func (s *DomainStore) UpdateKeyword(ctx context.Context, id, keyword string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE domains SET main_keyword=$1, updated_at=NOW() WHERE id=$2`, keyword, id)
 	return err

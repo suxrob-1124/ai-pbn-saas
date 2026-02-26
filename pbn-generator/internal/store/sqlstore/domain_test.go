@@ -383,3 +383,43 @@ func TestDomainStoreUpdateProject(t *testing.T) {
 		t.Fatalf("unmet expectations: %v", err)
 	}
 }
+
+func TestDomainStoreUpdateInventoryState(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to create sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	store := NewDomainStore(db)
+	ctx := context.Background()
+	checkedAt := time.Date(2026, 3, 3, 10, 0, 0, 0, time.UTC)
+
+	mock.ExpectExec(regexp.QuoteMeta(`UPDATE domains
+		SET published_path=$1,
+		    site_owner=$2,
+		    inventory_status=$3,
+		    inventory_checked_at=$4,
+		    inventory_error=$5,
+		    updated_at=NOW()
+		WHERE id=$6`)).
+		WithArgs("/var/www/example.com", "u1000:u1000", "ok", checkedAt, nil, "dom-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	err = store.UpdateInventoryState(
+		ctx,
+		"dom-1",
+		sql.NullString{String: "/var/www/example.com", Valid: true},
+		sql.NullString{String: "u1000:u1000", Valid: true},
+		sql.NullString{String: "ok", Valid: true},
+		sql.NullString{},
+		checkedAt,
+	)
+	if err != nil {
+		t.Fatalf("UpdateInventoryState failed: %v", err)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
