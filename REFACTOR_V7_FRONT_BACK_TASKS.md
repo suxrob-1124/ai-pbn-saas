@@ -762,3 +762,85 @@
 2. Все долгие действия имеют прозрачный жизненный цикл в UI.
 3. Нет кнопок, которые можно безлимитно спамить в in-flight.
 4. Локализация и названия действий консистентны во всех ключевых разделах.
+
+### DOD.FINAL gate (26.02.2026)
+
+#### Regression evidence (green)
+
+Backend:
+1. `go test ./internal/httpserver ./internal/store/sqlstore ./cmd/worker` — green.
+
+Frontend:
+1. `npx tsc --noEmit` — green.
+2. `verify:file-editor-route` — green.
+3. `verify:ai-editor-panel` — green.
+4. `verify:ai-create-page-wizard` — green.
+5. `verify:ai-asset-resolution-actions` — green.
+6. `verify:ai-apply-plan-safety` — green.
+7. `verify:project-queue` — green.
+8. `verify:project-queue-active-filters` — green.
+9. `verify:project-queue-history` — green.
+10. `verify:project-queue-link-normalization` — green.
+11. `verify:index-monitoring-ui` — green.
+12. `verify:index-monitoring-dashboard` — green.
+13. `verify:index-stats` — green.
+14. `verify:index-table` — green.
+15. `verify:index-checks-pagination` — green.
+16. `verify:schedule-ui` — green.
+17. `verify:schedule-list` — green.
+18. `verify_global_queue_domain.ts` — green.
+
+#### Short evidence
+
+Файлы, которые были `>1500` и текущий статус после split:
+1. `frontend/app/domains/[id]/editor/page.tsx`: `2811 -> 2811` (partial, модульная декомпозиция начата, но файл все еще >1500).
+2. `frontend/app/projects/[id]/page.tsx`: `2211 -> 1148` (done для порога >1500).
+3. `frontend/app/domains/[id]/page.tsx`: `1664 -> 445` (done для порога >1500).
+
+Где включен flow-state:
+1. `frontend/app/domains/[id]/page.tsx` (generation/link flow banners).
+2. `frontend/app/projects/[id]/page.tsx` (domain/link operation flow banners).
+3. `frontend/app/queue/page.tsx` (refresh + link actions flow banners).
+4. `frontend/app/projects/[id]/queue/page.tsx` (queue + links flow banners).
+5. `frontend/app/monitoring/indexing/page.tsx` (monitoring refresh + manual run flow banners).
+
+Где включен single-flight:
+1. `frontend/features/domain-project/hooks/useDomainActions.ts`.
+2. `frontend/features/domain-project/hooks/useProjectActions.ts`.
+3. `frontend/app/queue/page.tsx`.
+4. `frontend/app/projects/[id]/queue/page.tsx`.
+5. `frontend/app/monitoring/indexing/page.tsx`.
+
+Где финализована RU-локализация (core scopes):
+1. `frontend/features/editor-v3/services/i18n-ru.ts`.
+2. `frontend/features/queue-monitoring/services/i18n-ru.ts`.
+3. `frontend/features/queue-monitoring/services/statusMeta.ts`.
+4. `frontend/features/domain-project/services/statusCta.ts`.
+
+#### DoD status (1-4)
+
+1. DoD-1 (`монолиты >1500`) — `partial`.
+Подтверждение: из исходно крупных страниц `projects/[id]` и `domains/[id]` порог закрыт, `domains/[id]/editor/page.tsx` остается `2811`.
+
+2. DoD-2 (`прозрачный lifecycle долгих действий`) — `done` для ключевых продуктовых контуров.
+Подтверждение: flow-state баннеры и статусы присутствуют в editor/domain/project/queue/monitoring маршрутах.
+
+3. DoD-3 (`anti-spam in-flight`) — `partial`.
+Подтверждение: single-flight включен на ключевых async-действиях; остаток — нет единого e2e multi-tab/multi-role сценария конкурентных кликов.
+
+4. DoD-4 (`консистентная RU-терминология`) — `partial`.
+Подтверждение: унифицированы core-слои queue/monitoring/editor/domain-project; остаток — legacy admin/docs тексты и отдельные fallback-сообщения.
+
+#### Residuals (owner + due-date)
+
+1. Остаток: декомпозиция `frontend/app/domains/[id]/editor/page.tsx` до `<1500`.
+- Owner: `frontend-editor-core`.
+- Due date: `2026-03-12`.
+
+2. Остаток: e2e сценарий конкурентных in-flight действий (multi-tab/multi-role) для подтверждения DoD-3.
+- Owner: `qa-frontend`.
+- Due date: `2026-03-10`.
+
+3. Остаток: финальный RU-pass по admin/docs и legacy fallback-текстам для полного закрытия DoD-4.
+- Owner: `frontend-admin-docs`.
+- Due date: `2026-03-14`.
