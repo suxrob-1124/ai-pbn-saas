@@ -590,6 +590,173 @@
 2. Проверка корректности cost при смене цен в коротком временном окне требует отдельного integration теста с контролируемым `active_from/active_to`.
 3. Часть verify-скриптов usage чувствительна к рефакторингу структуры UI-файлов (string-based asserts); при следующей декомпозиции стоит перевести их на более устойчивые проверки.
 
+### DOD.1A File-Scoped Split Map (26.02.2026)
+
+Аудит выполнен без изменений runtime-логики. Line-count ниже зафиксирован по фактическому состоянию репозитория на дату аудита.
+
+Контекст для переиспользования:
+- `frontend/features/editor-v3/*`
+- `frontend/components/LinkTaskList.tsx`
+- `frontend/components/ScheduleList.tsx`
+- `frontend/components/PromptOverridesPanel.tsx`
+- `frontend/components/indexing/*`
+
+| file | lines | target_modules | priority | risk | batch |
+|---|---:|---|---|---|---|
+| `frontend/app/domains/[id]/editor/page.tsx` | 2811 | `features/editor-v3/{components,hooks,services,types}` + `app/domains/[id]/editor/page.tsx` как orchestrator | P0 | high | A |
+| `frontend/app/projects/[id]/page.tsx` | 1737 | `features/domain-project/{components,hooks,services,types}` | P0 | high | A |
+| `frontend/app/domains/[id]/page.tsx` | 1257 | `features/domain-project/{components,hooks,services,types}` | P1 | medium | A |
+| `frontend/app/projects/[id]/queue/page.tsx` | 906 | `features/queue-monitoring/{components,hooks,services,types}` | P1 | medium | B |
+| `frontend/app/monitoring/indexing/page.tsx` | 871 | `components/indexing/*` + `features/queue-monitoring/{hooks,services}` | P1 | medium | B |
+| `frontend/app/admin/page.tsx` | 867 | `features/admin/{components,hooks,services,types}` | P2 | medium | C |
+| `frontend/app/queue/page.tsx` | 624 | `features/queue-monitoring/{components,hooks,services}` | P2 | low | B |
+
+#### 1) `frontend/app/domains/[id]/editor/page.tsx` (2811)
+- Текущая ответственность (смешано):
+  - layout/editor shell, file-tree, live preview, ai-studio, diff/apply, history/revert, permissions, async guards.
+  - локальные нормализации path/context/model/error + оркестрация нескольких API-контуров.
+- Целевая декомпозиция:
+  - components: `EditorShell`, `EditorToolbar`, `EditorFilePane`, `EditorPreviewPane`, `EditorAIPanel`, `EditorDiffPanel`, `EditorHistoryPanel`.
+  - hooks: `useEditorState`, `useEditorFileActions`, `useEditorAIActions`, `useEditorPreview`, `useEditorHistory`.
+  - services: `editorApi`, `editorPathPolicy`, `editorAiContract`, `editorErrorMapper`.
+  - types/context: `editor.types.ts`, `EditorPageContext`.
+- Зависимости:
+  - API: `/api/domains/:id/files*`, `/api/domains/:id/editor/*`.
+  - reuse: `frontend/features/editor-v3/*`.
+  - shared: `single-flight`/status helpers из текущего frontend.
+- Риск/сложность: `high` (много in-flight сценариев и синхронизации editor/preview/AI).
+- Целевой line-budget после split:
+  - page-orchestrator: `<= 700`
+  - каждый feature-module: `<= 350`
+  - итог на feature-папку вместо монолита: `~1300-1600`.
+
+#### 2) `frontend/app/projects/[id]/page.tsx` (1737)
+- Текущая ответственность (смешано):
+  - project summary/settings, domains CRUD/import, members, schedules, link-actions, статусы/CTA, guards.
+- Целевая декомпозиция:
+  - components: `ProjectHeaderActionsSection`, `ProjectSettingsSection`, `ProjectDomainsSection`, `ProjectMembersSection`, `ProjectSchedulesSection`.
+  - hooks: `useProjectPageQuery`, `useProjectMutations`, `useProjectAsyncActions`.
+  - services/types: `projectStatusDictionary`, `projectPermissions`, `project.types.ts`.
+- Зависимости:
+  - API: `/api/projects/:id*`, `/api/projects/:id/domains*`, `/api/projects/:id/members*`, `/api/projects/:id/schedules*`.
+  - reuse: `ScheduleList`, `PromptOverridesPanel`.
+- Риск/сложность: `high`.
+- Целевой line-budget после split: page `<= 550`, feature-модули `<= 250-300` каждый.
+
+#### 3) `frontend/app/domains/[id]/page.tsx` (1257)
+- Текущая ответственность (смешано):
+  - domain summary/settings, generation CTA/status, artifacts/result, links/index checks shortcuts, prompt overrides.
+- Целевая декомпозиция:
+  - components: `DomainHeaderActionsSection`, `DomainGenerationStatusSection`, `DomainResultSection`, `DomainLinksSection`.
+  - hooks: `useDomainPageQuery`, `useDomainAsyncActions`.
+  - services/types: `domainStatusDictionary`, `domain.types.ts`.
+- Зависимости:
+  - API: `/api/domains/:id*`, `/api/domains/:id/summary`, `/api/domains/:id/generate`, `/api/domains/:id/links`.
+  - reuse: `LinkTaskList`, `PromptOverridesPanel`.
+- Риск/сложность: `medium`.
+- Целевой line-budget после split: page `<= 500`, секции `<= 220-280`.
+
+#### 4) `frontend/app/projects/[id]/queue/page.tsx` (906)
+- Текущая ответственность (смешано):
+  - active/history queue, filters/query-string, bulk actions, link-task view, polling/busy-state.
+- Целевая декомпозиция:
+  - components: `ProjectQueueHeader`, `ProjectQueueFilters`, `ProjectQueueActiveTable`, `ProjectQueueHistoryTable`.
+  - hooks: `useProjectQueueFilters`, `useProjectQueueData`, `useProjectQueueActions`.
+  - services/types: `queueQueryState`, `queueStatusMeta`, `queue.types.ts`.
+- Зависимости:
+  - API: `/api/projects/:id/queue*`.
+  - reuse: queue primitives из `features/queue-monitoring`.
+- Риск/сложность: `medium`.
+- Целевой line-budget после split: page `<= 380`, каждый модуль `<= 220`.
+
+#### 5) `frontend/app/monitoring/indexing/page.tsx` (871)
+- Текущая ответственность (смешано):
+  - dashboard KPI, таблица проверок, календарь, фильтры, stats-запросы, retry/run actions.
+- Целевая декомпозиция:
+  - components: `IndexingFiltersBar`, `IndexingKPISection`, `IndexingChecksTable`, `IndexingCalendarSection`, `IndexingFailedAlert`.
+  - hooks: `useIndexingFilters`, `useIndexingDashboardData`, `useIndexingActions`.
+  - services/types: `indexingQueryAdapter`, `indexingStatusMeta`, `indexing.types.ts`.
+- Зависимости:
+  - API: `/api/*/index-checks*` (project/domain/admin scope).
+  - reuse: `frontend/components/indexing/*`.
+- Риск/сложность: `medium`.
+- Целевой line-budget после split: page `<= 360`, feature-компоненты `<= 200-240`.
+
+#### 6) `frontend/app/admin/page.tsx` (867)
+- Текущая ответственность (смешано):
+  - users table/actions, prompts/audit правила, фильтры, локальная нормализация статусов.
+- Целевая декомпозиция:
+  - components: `AdminUsersSection`, `AdminPromptsSection`, `AdminAuditRulesSection`.
+  - hooks: `useAdminUsers`, `useAdminPrompts`, `useAdminAuditRules`.
+  - services/types: `adminApi`, `adminStatusLabels`, `admin.types.ts`.
+- Зависимости:
+  - API: `/api/admin/users*`, `/api/admin/prompts*`, `/api/admin/audit-rules*`.
+- Риск/сложность: `medium`.
+- Целевой line-budget после split: page `<= 350`, секции `<= 220-260`.
+
+#### 7) `frontend/app/queue/page.tsx` (624)
+- Текущая ответственность (смешано):
+  - global queue/history view, фильтры, pagination, item-actions, status badges.
+- Целевая декомпозиция:
+  - components: `GlobalQueueFilters`, `GlobalQueueTable`, `GlobalQueueActionsBar`.
+  - hooks: `useGlobalQueueFilters`, `useGlobalQueueData`.
+  - services/types: `queueStatusMeta`, `queueQueryState`.
+- Зависимости:
+  - API: `/api/generations`, `/api/queue/:id`.
+  - reuse: queue primitives из `features/queue-monitoring`.
+- Риск/сложность: `low`.
+- Целевой line-budget после split: page `<= 280`, модули `<= 180-220`.
+
+### DOD.1A Batch Order (готово к DOD.1B)
+
+#### Batch A — projects/domain core
+- Owner: `frontend-domain-core`.
+- Scope: `projects/[id]`, `domains/[id]`, `domains/[id]/editor`.
+- Verify commands:
+  - `npx tsc --noEmit`
+  - `npm run -s verify:domain-result-block`
+  - `npm run -s verify:domain-editor-button`
+  - `npm run -s verify:file-editor-route`
+  - `npm run -s verify:file-editor-permissions`
+  - `npm run -s verify:ai-editor-panel`
+  - `npm run -s verify:ai-create-page-wizard`
+  - `npm run -s verify:ai-asset-resolution-actions`
+  - `npm run -s verify:ai-apply-plan-safety`
+
+#### Batch B — queue/schedule/monitoring
+- Owner: `frontend-queue-monitoring`.
+- Scope: `projects/[id]/queue`, `queue`, `monitoring/indexing`.
+- Verify commands:
+  - `npx tsc --noEmit`
+  - `npm run -s verify:project-queue`
+  - `npm run -s verify:project-queue-active-filters`
+  - `npm run -s verify:project-queue-history`
+  - `npm run -s verify:project-queue-link-normalization`
+  - `npm run -s verify:index-monitoring-ui`
+  - `npm run -s verify:index-monitoring-dashboard`
+  - `npm run -s verify:index-stats`
+  - `npm run -s verify:index-table`
+  - `npm run -s verify:index-checks-pagination`
+  - `npm run -s verify:schedule-ui`
+  - `npm run -s verify:schedule-list`
+
+#### Batch C — admin/docs leftovers
+- Owner: `frontend-admin-docs`.
+- Scope: `admin/page` + доработка docs-навигации и consistency-словарей.
+- Verify commands:
+  - `npx tsc --noEmit`
+  - `npm run -s verify:llm-usage-admin-page`
+  - `npm run -s verify:nav-tabs`
+  - `npm run -s verify:docs-links`
+  - `npm run -s verify:docs-quality`
+
+### Gate к DOD.1B
+1. Все файлы `>1500` имеют утвержденный split-map:
+   - `frontend/app/domains/[id]/editor/page.tsx`
+   - `frontend/app/projects/[id]/page.tsx`
+2. Для каждого batch зафиксированы owner и verify-команды.
+3. В DOD.1B допускаются только batch-driven изменения по этой карте.
+
 ### Definition of Done для этапа "весь проект"
 1. Нет страниц-«монолитов» на 1500+ строк без модульного деления.
 2. Все долгие действия имеют прозрачный жизненный цикл в UI.
