@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
 	"obzornik-pbn-generator/internal/auth"
@@ -107,6 +108,13 @@ func main() {
 		defer sshPool.Close()
 	}
 	srv.SetContentBackend(contentBackend)
+	domainFilesCacheClient := redis.NewClient(&redis.Options{
+		Addr:     cfg.RedisAddr,
+		Password: cfg.RedisPassword,
+		DB:       cfg.RedisDB,
+	})
+	defer domainFilesCacheClient.Close()
+	srv.SetDomainFilesRedisCache(domainFilesCacheClient)
 	handler := srv.Handler()
 
 	go startSessionCleanup(svc, cfg.SessionCleanInterval)

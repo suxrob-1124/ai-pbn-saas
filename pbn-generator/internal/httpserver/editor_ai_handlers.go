@@ -505,6 +505,7 @@ func (s *Server) handleDomainEditorAIRegenerateAsset(w http.ResponseWriter, r *h
 			EditDescription:  sql.NullString{String: "ai regenerated asset", Valid: true},
 			ContentAfterHash: sql.NullString{String: hex.EncodeToString(hash[:]), Valid: true},
 		})
+		s.invalidateDomainFilesCache(r.Context(), domain.ID)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"status":   "regenerated",
 			"file":     toFileDTO(domain, file),
@@ -543,6 +544,7 @@ func (s *Server) handleDomainEditorAIRegenerateAsset(w http.ResponseWriter, r *h
 		writeError(w, http.StatusInternalServerError, "could not load updated file")
 		return
 	}
+	s.invalidateDomainFilesCache(r.Context(), domain.ID)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":   "regenerated",
 		"file":     toFileDTO(domain, *updated),

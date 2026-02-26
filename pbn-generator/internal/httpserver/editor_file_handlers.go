@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -59,50 +60,10 @@ func (s *Server) handleDomainFiles(w http.ResponseWriter, r *http.Request, domai
 			if raw := strings.TrimSpace(r.URL.Query().Get("include_deleted")); raw != "" {
 				includeDeleted = raw == "1" || strings.EqualFold(raw, "true")
 			}
-			files, err := s.siteFiles.List(r.Context(), domainID)
+			resp, err := s.loadDomainFilesListCached(r.Context(), domain, includeDeleted)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "could not list files")
 				return
-			}
-			resp := make([]fileDTO, 0, len(files)+16)
-			indexByPath := make(map[string]struct{}, len(files)+16)
-			for _, f := range files {
-				item := toFileDTO(domain, f)
-				indexByPath[item.Path] = struct{}{}
-				resp = append(resp, item)
-			}
-			if includeDeleted {
-				deletedFiles, err := s.siteFiles.ListDeleted(r.Context(), domainID)
-				if err != nil {
-					writeError(w, http.StatusInternalServerError, "could not list deleted files")
-					return
-				}
-				for _, f := range deletedFiles {
-					item := toFileDTO(domain, f)
-					indexByPath[item.Path] = struct{}{}
-					resp = append(resp, item)
-				}
-			}
-			if dirs, err := s.listDomainDirs(r.Context(), domain); err == nil {
-				now := time.Now().UTC()
-				for _, dirPath := range dirs {
-					if _, exists := indexByPath[dirPath]; exists {
-						continue
-					}
-					indexByPath[dirPath] = struct{}{}
-					resp = append(resp, fileDTO{
-						ID:         "dir:" + dirPath,
-						Path:       dirPath,
-						Size:       0,
-						MimeType:   "inode/directory",
-						Version:    1,
-						IsEditable: false,
-						IsBinary:   false,
-						UpdatedAt:  now,
-					})
-				}
-			} else if s.logger != nil {
-				s.logger.Warnf("could not list directories for domain %s: %v", domain.URL, err)
 			}
 			writeJSON(w, http.StatusOK, resp)
 		case http.MethodPost:
@@ -307,6 +268,53 @@ func (s *Server) handleDomainFiles(w http.ResponseWriter, r *http.Request, domai
 	}
 }
 
+func (s *Server) buildDomainFilesListResponse(ctx context.Context, domain sqlstore.Domain, includeDeleted bool) ([]fileDTO, error) {
+	files, err := s.siteFiles.List(ctx, domain.ID)
+	if err != nil {
+		return nil, err
+	}
+	resp := make([]fileDTO, 0, len(files)+16)
+	indexByPath := make(map[string]struct{}, len(files)+16)
+	for _, f := range files {
+		item := toFileDTO(domain, f)
+		indexByPath[item.Path] = struct{}{}
+		resp = append(resp, item)
+	}
+	if includeDeleted {
+		deletedFiles, err := s.siteFiles.ListDeleted(ctx, domain.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, f := range deletedFiles {
+			item := toFileDTO(domain, f)
+			indexByPath[item.Path] = struct{}{}
+			resp = append(resp, item)
+		}
+	}
+	if dirs, err := s.listDomainDirs(ctx, domain); err == nil {
+		now := time.Now().UTC()
+		for _, dirPath := range dirs {
+			if _, exists := indexByPath[dirPath]; exists {
+				continue
+			}
+			indexByPath[dirPath] = struct{}{}
+			resp = append(resp, fileDTO{
+				ID:         "dir:" + dirPath,
+				Path:       dirPath,
+				Size:       0,
+				MimeType:   "inode/directory",
+				Version:    1,
+				IsEditable: false,
+				IsBinary:   false,
+				UpdatedAt:  now,
+			})
+		}
+	} else if s.logger != nil {
+		s.logger.Warnf("could not list directories for domain %s: %v", domain.URL, err)
+	}
+	return resp, nil
+}
+
 func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request, domain sqlstore.Domain, relPath string) {
 	file, err := s.siteFiles.GetByPath(r.Context(), domain.ID, relPath)
 	if err != nil {
@@ -383,6 +391,7 @@ func (s *Server) handleCreateDomainFile(w http.ResponseWriter, r *http.Request, 
 			writeError(w, http.StatusInternalServerError, "could not create directory")
 			return
 		}
+		s.invalidateDomainFilesCache(r.Context(), domain.ID)
 		writeJSON(w, http.StatusCreated, map[string]any{"status": "created", "kind": "dir", "path": cleanPath})
 		return
 	}
@@ -420,6 +429,7 @@ func (s *Server) handleCreateDomainFile(w http.ResponseWriter, r *http.Request, 
 		EditDescription:  sql.NullString{String: "file created", Valid: true},
 		ContentAfterHash: sql.NullString{String: hex.EncodeToString(hash[:]), Valid: true},
 	})
+	s.invalidateDomainFilesCache(r.Context(), domain.ID)
 	writeJSON(w, http.StatusCreated, toFileDTO(domain, file))
 }
 
@@ -492,6 +502,7 @@ func (s *Server) handleUploadDomainFile(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 		_ = s.fileEdits.CreateRevision(r.Context(), buildRevision(&file, content, "manual", editedBy, "uploaded file"))
+		s.invalidateDomainFilesCache(r.Context(), domain.ID)
 		writeJSON(w, http.StatusCreated, toFileDTO(domain, file))
 		return
 	}
@@ -514,6 +525,7 @@ func (s *Server) handleUploadDomainFile(w http.ResponseWriter, r *http.Request, 
 		ContentBeforeHash: sql.NullString{String: hex.EncodeToString(beforeHash[:]), Valid: len(oldContent) > 0},
 		ContentAfterHash:  sql.NullString{String: hex.EncodeToString(afterHash[:]), Valid: true},
 	})
+	s.invalidateDomainFilesCache(r.Context(), domain.ID)
 	if updated != nil {
 		writeJSON(w, http.StatusOK, toFileDTO(domain, *updated))
 		return
@@ -628,6 +640,7 @@ func (s *Server) handleUpdateFile(w http.ResponseWriter, r *http.Request, domain
 	if updatedFile != nil {
 		resp["version"] = updatedFile.Version
 	}
+	s.invalidateDomainFilesCache(r.Context(), domain.ID)
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -692,6 +705,7 @@ func (s *Server) handleMoveFile(w http.ResponseWriter, r *http.Request, domain s
 			}
 		}
 	}
+	s.invalidateDomainFilesCache(r.Context(), domain.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"status": "moved", "path": newPath})
 }
 
@@ -737,6 +751,7 @@ func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request, domain
 			"status": "deleted",
 			"mode":   map[bool]string{true: "hard", false: "soft"}[hardDelete],
 		})
+		s.invalidateDomainFilesCache(r.Context(), domain.ID)
 		return
 	}
 
@@ -833,6 +848,7 @@ func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request, domain
 		"mode":   map[bool]string{true: "hard", false: "soft"}[hardDelete],
 		"count":  len(nested),
 	})
+	s.invalidateDomainFilesCache(r.Context(), domain.ID)
 }
 
 func (s *Server) handleRestoreFile(w http.ResponseWriter, r *http.Request, domain sqlstore.Domain, relPath, editedBy string) {
@@ -891,6 +907,7 @@ func (s *Server) handleRestoreFile(w http.ResponseWriter, r *http.Request, domai
 	if updated != nil {
 		resp["version"] = updated.Version
 	}
+	s.invalidateDomainFilesCache(r.Context(), domain.ID)
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -981,6 +998,7 @@ func (s *Server) handleRevertFile(w http.ResponseWriter, r *http.Request, domain
 	if updated != nil {
 		resp["version"] = updated.Version
 	}
+	s.invalidateDomainFilesCache(r.Context(), domain.ID)
 	writeJSON(w, http.StatusOK, resp)
 }
 
