@@ -44,6 +44,10 @@ func TestDomainStoreListByProjectIncludesLinkReadyAt(t *testing.T) {
 		"file_count",
 		"total_size_bytes",
 		"deployment_mode",
+		"site_owner",
+		"inventory_status",
+		"inventory_checked_at",
+		"inventory_error",
 		"link_anchor_text",
 		"link_acceptor_url",
 		"link_status",
@@ -72,6 +76,10 @@ func TestDomainStoreListByProjectIncludesLinkReadyAt(t *testing.T) {
 		10,
 		2048,
 		sql.NullString{String: "local_mock", Valid: true},
+		sql.NullString{String: "u1000:u1000", Valid: true},
+		sql.NullString{String: "ok", Valid: true},
+		sql.NullTime{Time: updated, Valid: true},
+		sql.NullString{},
 		sql.NullString{String: "anchor", Valid: true},
 		sql.NullString{String: "https://target.example", Valid: true},
 		sql.NullString{String: "inserted", Valid: true},
@@ -84,7 +92,7 @@ func TestDomainStoreListByProjectIncludesLinkReadyAt(t *testing.T) {
 		updated,
 	)
 
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, last_success_generation_id, published_at, published_path, file_count, total_size_bytes, deployment_mode, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, created_at, updated_at FROM domains WHERE project_id=$1 ORDER BY updated_at DESC")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, last_success_generation_id, published_at, published_path, file_count, total_size_bytes, deployment_mode, site_owner, inventory_status, inventory_checked_at, inventory_error, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, created_at, updated_at FROM domains WHERE project_id=$1 ORDER BY updated_at DESC")).
 		WithArgs("proj-1").
 		WillReturnRows(rows)
 
@@ -100,6 +108,12 @@ func TestDomainStoreListByProjectIncludesLinkReadyAt(t *testing.T) {
 	}
 	if !res[0].LinkReadyAt.Time.Equal(linkReady) {
 		t.Fatalf("unexpected LinkReadyAt: %v", res[0].LinkReadyAt.Time)
+	}
+	if !res[0].SiteOwner.Valid || res[0].SiteOwner.String != "u1000:u1000" {
+		t.Fatalf("unexpected SiteOwner: %+v", res[0].SiteOwner)
+	}
+	if !res[0].InventoryStatus.Valid || res[0].InventoryStatus.String != "ok" {
+		t.Fatalf("unexpected InventoryStatus: %+v", res[0].InventoryStatus)
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -117,7 +131,7 @@ func TestDomainStoreListByProjectError(t *testing.T) {
 	store := NewDomainStore(db)
 	ctx := context.Background()
 
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, last_success_generation_id, published_at, published_path, file_count, total_size_bytes, deployment_mode, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, created_at, updated_at FROM domains WHERE project_id=$1 ORDER BY updated_at DESC")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, last_success_generation_id, published_at, published_path, file_count, total_size_bytes, deployment_mode, site_owner, inventory_status, inventory_checked_at, inventory_error, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, created_at, updated_at FROM domains WHERE project_id=$1 ORDER BY updated_at DESC")).
 		WithArgs("proj-1").
 		WillReturnError(sql.ErrConnDone)
 
@@ -162,6 +176,10 @@ func TestDomainStoreGetIncludesLinkReadyAt(t *testing.T) {
 		"file_count",
 		"total_size_bytes",
 		"deployment_mode",
+		"site_owner",
+		"inventory_status",
+		"inventory_checked_at",
+		"inventory_error",
 		"link_anchor_text",
 		"link_acceptor_url",
 		"link_status",
@@ -190,6 +208,10 @@ func TestDomainStoreGetIncludesLinkReadyAt(t *testing.T) {
 		10,
 		2048,
 		sql.NullString{String: "local_mock", Valid: true},
+		sql.NullString{String: "u1000:u1000", Valid: true},
+		sql.NullString{String: "ok", Valid: true},
+		sql.NullTime{Time: updated, Valid: true},
+		sql.NullString{},
 		sql.NullString{String: "anchor", Valid: true},
 		sql.NullString{String: "https://target.example", Valid: true},
 		sql.NullString{String: "inserted", Valid: true},
@@ -202,7 +224,7 @@ func TestDomainStoreGetIncludesLinkReadyAt(t *testing.T) {
 		updated,
 	)
 
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, last_success_generation_id, published_at, published_path, file_count, total_size_bytes, deployment_mode, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, created_at, updated_at FROM domains WHERE id=$1")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, last_success_generation_id, published_at, published_path, file_count, total_size_bytes, deployment_mode, site_owner, inventory_status, inventory_checked_at, inventory_error, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, created_at, updated_at FROM domains WHERE id=$1")).
 		WithArgs("dom-1").
 		WillReturnRows(rows)
 
@@ -232,7 +254,7 @@ func TestDomainStoreGetError(t *testing.T) {
 	store := NewDomainStore(db)
 	ctx := context.Background()
 
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, last_success_generation_id, published_at, published_path, file_count, total_size_bytes, deployment_mode, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, created_at, updated_at FROM domains WHERE id=$1")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, last_success_generation_id, published_at, published_path, file_count, total_size_bytes, deployment_mode, site_owner, inventory_status, inventory_checked_at, inventory_error, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, created_at, updated_at FROM domains WHERE id=$1")).
 		WithArgs("dom-1").
 		WillReturnError(sql.ErrConnDone)
 
@@ -274,6 +296,10 @@ func TestDomainStoreGetByURL(t *testing.T) {
 		"file_count",
 		"total_size_bytes",
 		"deployment_mode",
+		"site_owner",
+		"inventory_status",
+		"inventory_checked_at",
+		"inventory_error",
 		"link_anchor_text",
 		"link_acceptor_url",
 		"link_status",
@@ -302,6 +328,10 @@ func TestDomainStoreGetByURL(t *testing.T) {
 		10,
 		2048,
 		sql.NullString{String: "local_mock", Valid: true},
+		sql.NullString{String: "u1000:u1000", Valid: true},
+		sql.NullString{String: "ok", Valid: true},
+		sql.NullTime{Time: now, Valid: true},
+		sql.NullString{},
 		sql.NullString{},
 		sql.NullString{},
 		sql.NullString{},
@@ -314,7 +344,7 @@ func TestDomainStoreGetByURL(t *testing.T) {
 		now,
 	)
 
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, last_success_generation_id, published_at, published_path, file_count, total_size_bytes, deployment_mode, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, created_at, updated_at FROM domains WHERE url=$1")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, last_success_generation_id, published_at, published_path, file_count, total_size_bytes, deployment_mode, site_owner, inventory_status, inventory_checked_at, inventory_error, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, created_at, updated_at FROM domains WHERE url=$1")).
 		WithArgs("example.com").
 		WillReturnRows(rows)
 

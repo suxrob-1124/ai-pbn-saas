@@ -192,6 +192,19 @@ go run ./cmd/migrate
 - `BOOTSTRAP_ADMIN_EMAIL`
 - `AUTO_APPROVE_USERS`
 
+Для deploy scaffold (`local_mock`/`ssh_remote`):
+
+- `DEPLOY_MODE`
+- `DEPLOY_TIMEOUT`
+- `DEPLOY_MAX_PARALLEL`
+- `DEPLOY_STAGING_STRATEGY`
+- `DEPLOY_STAGING_DIR_NAME`
+- `DEPLOY_TARGETS_JSON` (должен быть валидным JSON)
+- `DEPLOY_KNOWN_HOSTS_PATH` (обязателен для `ssh_remote`)
+- `DEPLOY_SSH_POOL_MAX_OPEN`
+- `DEPLOY_SSH_POOL_MAX_IDLE`
+- `DEPLOY_SSH_POOL_IDLE_TTL`
+
 Для SMTP/verification (опционально):
 
 - `SMTP_*`
