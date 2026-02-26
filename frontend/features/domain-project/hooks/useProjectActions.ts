@@ -25,7 +25,7 @@ export type LinkEditDraft = {
   acceptor: string;
 };
 
-type UseProjectAsyncActionsParams = {
+type UseProjectActionsParams = {
   projectId: string;
   project: ProjectLite | null;
   domains: DomainLite[];
@@ -41,7 +41,7 @@ type UseProjectAsyncActionsParams = {
 const effectiveDomainLinkStatus = (domain: DomainLite | null | undefined) =>
   domain?.link_status_effective || domain?.link_status || "";
 
-export function useProjectAsyncActions({
+export function useProjectActions({
   projectId,
   project,
   domains,
@@ -52,7 +52,7 @@ export function useProjectAsyncActions({
   setError,
   setLinkLoadingId,
   load
-}: UseProjectAsyncActionsParams) {
+}: UseProjectActionsParams) {
   const { runLocked } = useActionLocks();
   const generationFlowState = useFlowState();
   const linkFlowState = useFlowState();
@@ -77,7 +77,7 @@ export function useProjectAsyncActions({
     }
 
     await runLocked(
-      `project:${projectId}:domain:${id}:generate`,
+      `project:${projectId}:generate:${id}`,
       async () => {
         generationFlowState.sending("Запускаем генерацию домена");
         setLoading(true);
@@ -142,7 +142,7 @@ export function useProjectAsyncActions({
     }
 
     await runLocked(
-      `project:${projectId}:domain:${id}:link:run`,
+      `project:${projectId}:link-run:${id}`,
       async () => {
         linkFlowState.sending("Запускаем добавление ссылки");
         setLinkLoadingId(id);
@@ -202,7 +202,7 @@ export function useProjectAsyncActions({
     if (!confirm(`Удалить ссылку с сайта ${domain.url}?`)) return;
 
     await runLocked(
-      `project:${projectId}:domain:${id}:link:remove`,
+      `project:${projectId}:link-remove:${id}`,
       async () => {
         linkFlowState.sending("Запускаем удаление ссылки");
         setLinkLoadingId(id);
@@ -234,7 +234,7 @@ export function useProjectAsyncActions({
     if (!confirm("Удалить домен?")) return;
     generationFlowState.sending("Удаляем домен");
     await runLocked(
-      `project:${projectId}:domain:${id}:delete`,
+      `project:${projectId}:domain-delete:${id}`,
       async () => {
         setLoading(true);
         setError(null);

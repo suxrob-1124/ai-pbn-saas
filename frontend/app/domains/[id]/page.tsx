@@ -16,7 +16,7 @@ import { Badge } from "../../../components/Badge";
 import { DOMAIN_PROJECT_CTA, getGenerationStatusMeta, getLinkActionLabel } from "../../../features/domain-project/services/statusCta";
 import { canEditPromptOverrides, canOpenDomainEditor, isMainGenerationActionDisabled } from "../../../features/domain-project/services/actionGuards";
 import { deriveDomainLinkActionMeta, deriveMainGenerationMeta, getLinkTaskSteps } from "../../../features/domain-project/services/statusMeta";
-import { useDomainAsyncActions } from "../../../features/domain-project/hooks/useDomainAsyncActions";
+import { useDomainActions } from "../../../features/domain-project/hooks/useDomainActions";
 import { ActionFlowBanner } from "../../../features/domain-project/components/ActionFlowBanner";
 import { DomainHeaderActionsSection } from "../../../features/domain-project/components/DomainHeaderActionsSection";
 import { DomainGenerationStatusSection } from "../../../features/domain-project/components/DomainGenerationStatusSection";
@@ -239,7 +239,7 @@ export default function DomainPage() {
     cancelGeneration,
     generationFlow,
     linkFlow
-  } = useDomainAsyncActions({
+  } = useDomainActions({
     id,
     kw,
     domain,

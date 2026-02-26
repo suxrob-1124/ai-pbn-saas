@@ -27,7 +27,7 @@ import { getDomainLinkStatusMeta } from "../../../lib/linkTaskStatus";
 import { getGenerationStatusMeta } from "../../../features/domain-project/services/statusCta";
 import { canEditPromptOverrides, hasLinkSettings } from "../../../features/domain-project/services/actionGuards";
 import { getDomainLinkBadgeStatus, getEffectiveDomainLinkStatus } from "../../../features/domain-project/services/statusMeta";
-import { useProjectAsyncActions } from "../../../features/domain-project/hooks/useProjectAsyncActions";
+import { useProjectActions } from "../../../features/domain-project/hooks/useProjectActions";
 import { ProjectHeaderActionsSection } from "../../../features/domain-project/components/ProjectHeaderActionsSection";
 import { ProjectDomainsSection } from "../../../features/domain-project/components/ProjectDomainsSection";
 import { ProjectMembersSection } from "../../../features/domain-project/components/ProjectMembersSection";
@@ -1182,7 +1182,7 @@ export default function ProjectDetailPage() {
     }
   };
 
-  const { runGeneration, runLinkTask, removeLinkTask, deleteDomain, generationFlow, linkFlow } = useProjectAsyncActions({
+  const { runGeneration, runLinkTask, removeLinkTask, deleteDomain, generationFlow, linkFlow } = useProjectActions({
     projectId,
     project,
     domains,

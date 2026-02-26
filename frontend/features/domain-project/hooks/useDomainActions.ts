@@ -35,7 +35,7 @@ type LinkTaskLite = {
   completed_at?: string;
 };
 
-type UseDomainAsyncActionsParams = {
+type UseDomainActionsParams = {
   id: string;
   kw: string;
   domain: DomainLite | null;
@@ -57,7 +57,7 @@ type UseDomainAsyncActionsParams = {
   setLinkTasks: Dispatch<SetStateAction<LinkTaskLite[]>>;
 };
 
-export function useDomainAsyncActions({
+export function useDomainActions({
   id,
   kw,
   domain,
@@ -77,7 +77,7 @@ export function useDomainAsyncActions({
   setLinkTasksError,
   setLinkNotice,
   setLinkTasks
-}: UseDomainAsyncActionsParams) {
+}: UseDomainActionsParams) {
   const { runLocked } = useActionLocks();
   const generationFlowState = useFlowState();
   const linkFlowState = useFlowState();
@@ -98,7 +98,7 @@ export function useDomainAsyncActions({
     }
 
     await runLocked(
-      `domain:${id}:generation:${forceStep || "main"}`,
+      `domain:${id}:generate${forceStep ? `:${forceStep}` : ""}`,
       async () => {
         generationFlowState.sending(forceStep ? `Запускаем генерацию с этапа ${forceStep}` : "Запускаем генерацию");
         setError(null);
@@ -158,7 +158,7 @@ export function useDomainAsyncActions({
     if (!id) return;
     linkFlowState.validating("Проверяем настройки ссылки");
     await runLocked(
-      `domain:${id}:link:run`,
+      `domain:${id}:link-run`,
       async () => {
         linkFlowState.sending("Запускаем добавление ссылки");
         setLinkTasksError(null);
@@ -218,7 +218,7 @@ export function useDomainAsyncActions({
     if (!id) return;
     linkFlowState.validating("Проверяем возможность удаления ссылки");
     await runLocked(
-      `domain:${id}:link:remove`,
+      `domain:${id}:link-remove`,
       async () => {
         linkFlowState.sending("Запускаем удаление ссылки");
         const domainLinkStatus = domain?.link_status_effective || domain?.link_status;
@@ -278,7 +278,7 @@ export function useDomainAsyncActions({
     if (!id) return;
     linkFlowState.sending("Обновляем список задач по ссылкам");
     await runLocked(
-      `domain:${id}:link:refresh`,
+      `domain:${id}:link-refresh`,
       async () => {
         setLinkTasksLoading(true);
         setLinkTasksError(null);
@@ -303,7 +303,7 @@ export function useDomainAsyncActions({
     if (!confirm("Удалить этот запуск?")) return;
     generationFlowState.sending("Удаляем запуск генерации");
     await runLocked(
-      `generation:${genId}:delete`,
+      `domain:${id}:generation:${genId}:delete`,
       async () => {
         setLoading(true);
         setError(null);
@@ -326,7 +326,7 @@ export function useDomainAsyncActions({
     if (!confirm("Приостановить выполнение задачи?")) return;
     generationFlowState.sending("Отправляем запрос на паузу");
     await runLocked(
-      `generation:${genId}:pause`,
+      `domain:${id}:generation:${genId}:pause`,
       async () => {
         setLoading(true);
         setError(null);
@@ -348,7 +348,7 @@ export function useDomainAsyncActions({
   const resumeGeneration = async (genId: string) => {
     generationFlowState.sending("Возобновляем выполнение задачи");
     await runLocked(
-      `generation:${genId}:resume`,
+      `domain:${id}:generation:${genId}:resume`,
       async () => {
         setLoading(true);
         setError(null);
@@ -371,7 +371,7 @@ export function useDomainAsyncActions({
     if (!confirm("Отменить выполнение задачи?")) return;
     generationFlowState.sending("Отправляем запрос на отмену");
     await runLocked(
-      `generation:${genId}:cancel`,
+      `domain:${id}:generation:${genId}:cancel`,
       async () => {
         setLoading(true);
         setError(null);
