@@ -6,12 +6,14 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+      PGDATA: /var/lib/postgresql/data/pgdata
     ports:
       - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - ./data/postgres:/var/lib/postgresql/data
+      - ./backups/postgres/container:/var/lib/postgresql/backups
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "auth"]
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}", "-d", "${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -26,7 +28,7 @@ services:
       PORT: "8080"
       ALLOWED_ORIGIN: "${ALLOWED_ORIGIN:-*}"
       DB_DRIVER: "${DB_DRIVER:-pgx}"
-      DB_DSN: "${DB_DSN:-postgres://auth:auth@db:5432/auth?sslmode=disable}"
+      DB_DSN: "${DB_DSN:-postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable}"
       SESSION_TTL: "${SESSION_TTL:-24h}"
       SESSION_CLEAN_INTERVAL: "${SESSION_CLEAN_INTERVAL:-5m}"
       DB_CONNECT_RETRIES: "${DB_CONNECT_RETRIES:-20}"
@@ -37,6 +39,7 @@ services:
         condition: service_healthy
     volumes:
       - ./server:/app/server
+      - ./secrets:/app/secrets:ro
     ports:
       - "8080:8080"
     logging:
@@ -54,7 +57,7 @@ services:
       PORT: "8080"
       ALLOWED_ORIGIN: "${ALLOWED_ORIGIN:-*}"
       DB_DRIVER: "${DB_DRIVER:-pgx}"
-      DB_DSN: "${DB_DSN:-postgres://auth:auth@db:5432/auth?sslmode=disable}"
+      DB_DSN: "${DB_DSN:-postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable}"
       SESSION_TTL: "${SESSION_TTL:-24h}"
       SESSION_CLEAN_INTERVAL: "${SESSION_CLEAN_INTERVAL:-5m}"
       DB_CONNECT_RETRIES: "${DB_CONNECT_RETRIES:-20}"
@@ -70,6 +73,7 @@ services:
         condition: service_started
     volumes:
       - ./server:/app/server
+      - ./secrets:/app/secrets:ro
     entrypoint: ["/bin/worker"]
     restart: unless-stopped
 
@@ -82,7 +86,7 @@ services:
       PORT: "8080"
       ALLOWED_ORIGIN: "${ALLOWED_ORIGIN:-*}"
       DB_DRIVER: "${DB_DRIVER:-pgx}"
-      DB_DSN: "${DB_DSN:-postgres://auth:auth@db:5432/auth?sslmode=disable}"
+      DB_DSN: "${DB_DSN:-postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable}"
       SESSION_TTL: "${SESSION_TTL:-24h}"
       SESSION_CLEAN_INTERVAL: "${SESSION_CLEAN_INTERVAL:-5m}"
       DB_CONNECT_RETRIES: "${DB_CONNECT_RETRIES:-20}"
@@ -98,6 +102,7 @@ services:
         condition: service_started
     volumes:
       - ./server:/app/server
+      - ./secrets:/app/secrets:ro
     entrypoint: ["/bin/scheduler"]
     restart: unless-stopped
 
@@ -110,7 +115,7 @@ services:
       PORT: "8080"
       ALLOWED_ORIGIN: "${ALLOWED_ORIGIN:-*}"
       DB_DRIVER: "${DB_DRIVER:-pgx}"
-      DB_DSN: "${DB_DSN:-postgres://auth:auth@db:5432/auth?sslmode=disable}"
+      DB_DSN: "${DB_DSN:-postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable}"
       SESSION_TTL: "${SESSION_TTL:-24h}"
       SESSION_CLEAN_INTERVAL: "${SESSION_CLEAN_INTERVAL:-5m}"
       DB_CONNECT_RETRIES: "${DB_CONNECT_RETRIES:-20}"
@@ -119,6 +124,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    volumes:
+      - ./secrets:/app/secrets:ro
     entrypoint: ["/bin/indexchecker"]
     restart: unless-stopped
 
@@ -129,13 +136,15 @@ services:
       - .env
     environment:
       DB_DRIVER: "${DB_DRIVER:-pgx}"
-      DB_DSN: "${DB_DSN:-postgres://auth:auth@db:5432/auth?sslmode=disable}"
+      DB_DSN: "${DB_DSN:-postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable}"
       DB_CONNECT_RETRIES: "${DB_CONNECT_RETRIES:-20}"
       DB_CONNECT_INTERVAL: "${DB_CONNECT_INTERVAL:-1s}"
       MIGRATE_ON_START: "true"
     depends_on:
       db:
         condition: service_healthy
+    volumes:
+      - ./secrets:/app/secrets:ro
     entrypoint: ["/bin/migrate"]
     restart: "no"
 
@@ -203,5 +212,4 @@ services:
     command: ["redis-server", "--save", "", "--appendonly", "no"]
 
 volumes:
-  pgdata: {}
   redisdata: {}

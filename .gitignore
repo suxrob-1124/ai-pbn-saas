@@ -28,11 +28,6 @@ Thumbs.db
 # Logs
 *.log
 
-# E2E artifacts
-tests/e2e/state.json
-tests/e2e/.cookies/
-tests/e2e/logs/
-
 # Environment / secrets
 .env
 .env.*
@@ -70,8 +65,16 @@ build/
 node_modules
 .next
 
-
-8n8-projects-example
-
 # Generated seed file
 pbn-generator/init/seed.sql
+
+# Local PostgreSQL bind-mount storage (docker compose)
+data/postgres/*
+!data/postgres/.gitkeep
+
+# Local PostgreSQL backups
+backups/postgres/*
+!backups/postgres/.gitkeep
+!backups/postgres/container/
+backups/postgres/container/*
+!backups/postgres/container/.gitkeep

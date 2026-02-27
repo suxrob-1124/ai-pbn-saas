@@ -53,6 +53,10 @@ docker compose up --build
 
 По умолчанию поднимутся API, воркеры, frontend, БД, Redis и мониторинг.
 
+Данные PostgreSQL сохраняются в проекте через bind mount:
+- `data/postgres` — рабочие файлы БД
+- `backups/postgres/container` — бэкапы внутри контейнера
+
 ### 3) Доступные URL
 
 - Frontend: `http://localhost:3000`
@@ -204,6 +208,13 @@ go run ./cmd/migrate
 - `REQUIRE_EMAIL_VERIFICATION`
 
 Используйте `.env` для локальной разработки и `.env.prod` как шаблон прод‑настроек.
+Для onboarding команды используйте `.env.example` (без секретов).
+
+Быстрая локальная ротация внутренних ключей:
+
+```bash
+./ops/security/rotate_local_secrets.sh .env
+```
 
 ## Тестирование
 
@@ -239,6 +250,9 @@ npm run -s verify:project-queue
 
 - Не храните реальные секреты в git.
 - Используйте CI-проверки и локальный pre-commit workflow команды.
+- Если секреты уже использовались в dev/логах:
+  - сгенерируйте новые локальные значения через `./ops/security/rotate_local_secrets.sh .env`;
+  - отдельно ротируйте внешние секреты у провайдеров (Gemini API key, SMTP password).
 
 ## Бэкап PostgreSQL
 
