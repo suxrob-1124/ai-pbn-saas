@@ -44,6 +44,13 @@ import {
 } from "../../../../features/editor-v3/services/editorPreviewUtils";
 import type { AIAssetGenerationResultDTO, AIContextMode } from "../../../../features/editor-v3/types/ai";
 import type { DomainSummaryResponse } from "../../../../features/editor-v3/types/editor";
+
+function isAbortError(err: unknown): boolean {
+  if (err instanceof DOMException && err.name === "AbortError") return true;
+  const message = String((err as any)?.message || "").toLowerCase();
+  return message.includes("aborted") || message.includes("aborterror");
+}
+
 // verify markers: <FileTree <MonacoEditor <EditorToolbar <FileHistory
 // verify markers: t.tabs.editCurrentFile Режим контекста t.actions.generateSuggestion t.actions.applyToEditor t.actions.requestContext t.actions.compare Диагностика
 // verify markers: /api/domains/ listFiles getFile saveFile
@@ -152,8 +159,11 @@ export default function DomainEditorPage() {
   const assetUploadInputRef = useRef<HTMLInputElement | null>(null);
   const editorPreviewRef = useRef<HTMLIFrameElement | null>(null);
   const aiCreatePreviewRef = useRef<HTMLIFrameElement | null>(null);
+  const aiSuggestAbortRef = useRef<AbortController | null>(null);
+  const aiCreateAbortRef = useRef<AbortController | null>(null);
   const [assetUploadTargetPath, setAssetUploadTargetPath] = useState("");
   const { bindPreviewNavigationGuard } = usePreviewNavigationGuard();
+  const selectedPathRef = useRef<string>("");
   const currentFile = useMemo(
     () => files.find((item) => item.path === selection?.selectedPath),
     [files, selection?.selectedPath]
@@ -324,6 +334,12 @@ export default function DomainEditorPage() {
     setAiCreateSkippedAssets((prev) => prev.filter((pathValue) => aiCreateMissingAssets.includes(pathValue)));
   }, [aiCreateMissingAssets]);
   useEffect(() => {
+    return () => {
+      aiSuggestAbortRef.current?.abort();
+      aiCreateAbortRef.current?.abort();
+    };
+  }, []);
+  useEffect(() => {
     setOverwriteConfirmed(false);
   }, [aiCreateApplyPlan, aiCreateFiles]);
   useEffect(() => {
@@ -398,9 +414,20 @@ export default function DomainEditorPage() {
     aiCreatePreviewFile,
     readOnly,
   });
+  useEffect(() => {
+    selectedPathRef.current = selection?.selectedPath || "";
+  }, [selection?.selectedPath]);
   const onSelectFile = async (file: EditorFileMeta) => {
     setSelectedFolderPath("");
     await onSelectFileBase(file);
+  };
+  const onCancelAISuggest = () => {
+    aiSuggestAbortRef.current?.abort();
+    aiSuggestFlow.setStatus("idle", "Запрос отменён пользователем");
+  };
+  const onCancelAICreatePage = () => {
+    aiCreateAbortRef.current?.abort();
+    aiCreateFlow.setStatus("idle", "Запрос отменён пользователем");
   };
   // verify markers: listFiles + "Папка удалена" handling moved to useFileActions
   const {
@@ -483,14 +510,18 @@ export default function DomainEditorPage() {
         aiSuggestFlow.setStatus("sending", "Отправляем запрос к AI");
         setAiSuggestMeta(null);
         setAiSuggestContextDebug("");
-        setAiOutputSourcePath(selection.selectedPath);
+        const requestPath = selection.selectedPath;
+        setAiOutputSourcePath(requestPath);
+        const controller = new AbortController();
+        aiSuggestAbortRef.current?.abort();
+        aiSuggestAbortRef.current = controller;
         try {
-          const result: AIEditorSuggestionDTO = await aiSuggestFile(domainId, selection.selectedPath, {
+          const result: AIEditorSuggestionDTO = await aiSuggestFile(domainId, requestPath, {
             instruction: aiInstruction.trim(),
             model: aiModel.trim() || undefined,
             context_mode: aiContextMode,
             context_files: selectedContextFiles(aiContextMode, aiContextSelectedFiles),
-          });
+          }, { signal: controller.signal });
           aiSuggestFlow.setStatus("parsing", "Обрабатываем ответ модели");
           setAiOutput(result.suggested_content || "");
           setAiSuggestView("diff");
@@ -502,7 +533,14 @@ export default function DomainEditorPage() {
             tokenUsage: result.token_usage,
             contextPack: result.context_pack_meta,
           });
-          if ((result.suggested_content || "") === dirtyState.currentContent) {
+          const currentPath = selectedPathRef.current;
+          if (currentPath && currentPath !== requestPath) {
+            showToast({
+              type: "success",
+              title: "AI-ответ готов в фоне",
+              message: `Результат для ${requestPath}. Откройте файл, чтобы применить.`,
+            });
+          } else if ((result.suggested_content || "") === dirtyState.currentContent) {
             showToast({
               type: "success",
               title: "Предложение без изменений",
@@ -513,9 +551,16 @@ export default function DomainEditorPage() {
           }
           aiSuggestFlow.finish("Предложение готово к применению", "ready");
         } catch (err: any) {
+          if (isAbortError(err)) {
+            aiSuggestFlow.setStatus("idle", "Запрос отменён");
+            return;
+          }
           aiSuggestFlow.fail(err, "Не удалось получить AI-предложение");
           showToast({ type: "error", title: "Ошибка AI-редактирования", message: err?.message || "unknown error" });
         } finally {
+          if (aiSuggestAbortRef.current === controller) {
+            aiSuggestAbortRef.current = null;
+          }
           setAiBusy(false);
         }
       },
@@ -605,15 +650,19 @@ export default function DomainEditorPage() {
         setAiCreateContextDebug("");
         setAiCreateSkippedAssets([]);
         setAiCreateAssets([]);
+        const requestTargetPath = aiCreatePath.trim();
+        const controller = new AbortController();
+        aiCreateAbortRef.current?.abort();
+        aiCreateAbortRef.current = controller;
         try {
           const result: AIPageSuggestionDTO = await aiCreatePage(domainId, {
             instruction: aiCreateInstruction.trim(),
-            target_path: aiCreatePath.trim(),
+            target_path: requestTargetPath,
             with_assets: true,
             model: aiCreateModel.trim() || undefined,
             context_mode: aiCreateContextMode,
             context_files: selectedContextFiles(aiCreateContextMode, aiCreateContextSelectedFiles),
-          });
+          }, { signal: controller.signal });
           aiCreateFlow.setStatus("parsing", "Обрабатываем пакет файлов");
           const generatedFilesRaw = Array.isArray(result.files) ? result.files : [];
           const generatedFiles = generatedFilesRaw.map((file) => {
@@ -667,8 +716,20 @@ export default function DomainEditorPage() {
             title: "AI сгенерировал пакет файлов",
             message: `${generatedFiles.length} файлов, конфликтов по пути: ${existingCount}`,
           });
+          const currentPath = selectedPathRef.current;
+          if (currentPath && requestTargetPath && currentPath !== requestTargetPath) {
+            showToast({
+              type: "success",
+              title: "AI-пакет готов в фоне",
+              message: `Пакет подготовлен для ${requestTargetPath}.`,
+            });
+          }
           aiCreateFlow.finish("Пакет файлов готов к применению", "ready");
         } catch (err: any) {
+          if (isAbortError(err)) {
+            aiCreateFlow.setStatus("idle", "Запрос отменён");
+            return;
+          }
           aiCreateFlow.fail(err, "Не удалось сгенерировать пакет файлов");
           const status = Number(err?.status || err?.response?.status || 0);
           if (status === 422 || String(err?.message || "").toLowerCase().includes("ai_response_invalid_format")) {
@@ -681,6 +742,9 @@ export default function DomainEditorPage() {
             showToast({ type: "error", title: "Ошибка создания страницы", message: err?.message || "unknown error" });
           }
         } finally {
+          if (aiCreateAbortRef.current === controller) {
+            aiCreateAbortRef.current = null;
+          }
           setAiCreateBusy(false);
         }
       },
@@ -1118,6 +1182,7 @@ export default function DomainEditorPage() {
             aiInstruction={aiInstruction}
             setAiInstruction={setAiInstruction}
             onAISuggest={onAISuggest}
+            onCancelAISuggest={onCancelAISuggest}
             aiBusy={aiBusy}
             suggestLocked={suggestLocked}
             onApplyAISuggest={onApplyAISuggest}
@@ -1151,6 +1216,7 @@ export default function DomainEditorPage() {
             aiCreateInstruction={aiCreateInstruction}
             setAiCreateInstruction={setAiCreateInstruction}
             onAICreatePage={onAICreatePage}
+            onCancelAICreatePage={onCancelAICreatePage}
             aiCreateBusy={aiCreateBusy}
             createLocked={createLocked}
             onApplyCreatedFiles={onApplyCreatedFiles}

@@ -272,10 +272,15 @@ BACKUP_LOCAL_DIR=./backups/postgres \
 ./ops/db/backup_postgres.sh
 ```
 
-## Импорт/бэкфилл legacy данных
+## Импорт legacy данных (единая утилита)
 
-- Импорт: `pbn-generator/cmd/import_legacy/README.md`
-- Бэкфилл артефактов: `pbn-generator/cmd/backfill_legacy_artifacts/README.md`
+- Единый CLI: `pbn-generator/cmd/import_legacy/README.md`
+- В режиме `DEPLOY_MODE=ssh_remote` утилита:
+  - делает inventory/probe удаленного сайта,
+  - зеркалит файлы в temp-папку,
+  - импортирует домен/проект/файлы,
+  - обновляет synthetic generation/artifacts,
+  - записывает `published_path/site_owner/inventory_*` и ставит `deployment_mode=ssh_remote`.
 
 ## Лицензия
 

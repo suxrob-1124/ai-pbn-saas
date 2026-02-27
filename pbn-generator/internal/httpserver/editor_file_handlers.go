@@ -331,6 +331,23 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request, domain sq
 			writeError(w, http.StatusNotFound, "file not found")
 			return
 		}
+		if errors.Is(err, fs.ErrPermission) {
+			writeError(w, http.StatusForbidden, "permission denied to read file")
+			return
+		}
+		if s.logger != nil {
+			dctx := makeDomainFSContext(domain)
+			s.logger.Errorf(
+				"read file failed: domain_id=%s domain_url=%s mode=%s server_id=%s published_path=%s path=%s err=%v",
+				domain.ID,
+				domain.URL,
+				dctx.DeploymentMode,
+				dctx.ServerID,
+				dctx.PublishedPath,
+				relPath,
+				err,
+			)
+		}
 		writeError(w, http.StatusInternalServerError, "could not read file")
 		return
 	}
@@ -402,6 +419,23 @@ func (s *Server) handleCreateDomainFile(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	if err := s.writeDomainFileBytesToBackend(r.Context(), domain, cleanPath, newBytes); err != nil {
+		if errors.Is(err, fs.ErrPermission) {
+			writeError(w, http.StatusForbidden, "permission denied to write file")
+			return
+		}
+		if s.logger != nil {
+			dctx := makeDomainFSContext(domain)
+			s.logger.Errorf(
+				"write file failed (create): domain_id=%s domain_url=%s mode=%s server_id=%s published_path=%s path=%s err=%v",
+				domain.ID,
+				domain.URL,
+				dctx.DeploymentMode,
+				dctx.ServerID,
+				dctx.PublishedPath,
+				cleanPath,
+				err,
+			)
+		}
 		writeError(w, http.StatusInternalServerError, "could not write file")
 		return
 	}
@@ -477,6 +511,23 @@ func (s *Server) handleUploadDomainFile(w http.ResponseWriter, r *http.Request, 
 		_ = s.fileEdits.CreateRevision(r.Context(), buildRevision(existing, oldContent, "manual", editedBy, "baseline before upload"))
 	}
 	if err := s.writeDomainFileBytesToBackend(r.Context(), domain, cleanPath, content); err != nil {
+		if errors.Is(err, fs.ErrPermission) {
+			writeError(w, http.StatusForbidden, "permission denied to write file")
+			return
+		}
+		if s.logger != nil {
+			dctx := makeDomainFSContext(domain)
+			s.logger.Errorf(
+				"write file failed (upload): domain_id=%s domain_url=%s mode=%s server_id=%s published_path=%s path=%s err=%v",
+				domain.ID,
+				domain.URL,
+				dctx.DeploymentMode,
+				dctx.ServerID,
+				dctx.PublishedPath,
+				cleanPath,
+				err,
+			)
+		}
 		writeError(w, http.StatusInternalServerError, "could not save upload")
 		return
 	}
@@ -596,6 +647,10 @@ func (s *Server) handleUpdateFile(w http.ResponseWriter, r *http.Request, domain
 			writeError(w, http.StatusNotFound, "file not found")
 			return
 		}
+		if errors.Is(err, fs.ErrPermission) {
+			writeError(w, http.StatusForbidden, "permission denied to read file")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "could not read file")
 		return
 	}
@@ -607,10 +662,36 @@ func (s *Server) handleUpdateFile(w http.ResponseWriter, r *http.Request, domain
 		return
 	}
 	if err := s.writeDomainFileBytesToBackend(r.Context(), domain, relPath, newBytes); err != nil {
+		if errors.Is(err, fs.ErrPermission) {
+			writeError(w, http.StatusForbidden, "permission denied to write file")
+			return
+		}
+		if s.logger != nil {
+			dctx := makeDomainFSContext(domain)
+			s.logger.Errorf(
+				"write file failed (update): domain_id=%s domain_url=%s mode=%s server_id=%s published_path=%s path=%s err=%v",
+				domain.ID,
+				domain.URL,
+				dctx.DeploymentMode,
+				dctx.ServerID,
+				dctx.PublishedPath,
+				relPath,
+				err,
+			)
+		}
 		writeError(w, http.StatusInternalServerError, "could not write file")
 		return
 	}
 	if err := s.siteFiles.Update(r.Context(), file.ID, newBytes); err != nil {
+		if s.logger != nil {
+			s.logger.Errorf(
+				"update file metadata failed: domain_id=%s file_id=%s path=%s err=%v",
+				domain.ID,
+				file.ID,
+				relPath,
+				err,
+			)
+		}
 		writeError(w, http.StatusInternalServerError, "could not update file metadata")
 		return
 	}

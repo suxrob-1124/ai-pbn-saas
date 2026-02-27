@@ -358,13 +358,15 @@ export async function aiSuggestFile(
     selection?: string;
     context_files?: string[];
     context_mode?: "auto" | "manual" | "hybrid";
-  }
+  },
+  opts?: { signal?: AbortSignal }
 ) {
   const encodedPath = encodeFilePath(path);
   return authFetch<AIEditorSuggestionDTO>(`${buildFilesBase(domainId)}/${encodedPath}/ai-suggest`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+    signal: opts?.signal,
   });
 }
 
@@ -377,12 +379,14 @@ export async function aiCreatePage(
     model?: string;
     context_mode?: "auto" | "manual" | "hybrid";
     context_files?: string[];
-  }
+  },
+  opts?: { signal?: AbortSignal }
 ) {
   return authFetch<AIPageSuggestionDTO>(`/api/domains/${encodeDomainId(domainId)}/editor/ai-create-page`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+    signal: opts?.signal,
   });
 }
 

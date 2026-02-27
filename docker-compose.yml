@@ -75,6 +75,8 @@ services:
       - ./server:/app/server
       - ./secrets:/app/secrets:ro
     entrypoint: ["/bin/worker"]
+    healthcheck:
+      disable: true
     restart: unless-stopped
 
   scheduler:
@@ -104,6 +106,8 @@ services:
       - ./server:/app/server
       - ./secrets:/app/secrets:ro
     entrypoint: ["/bin/scheduler"]
+    healthcheck:
+      disable: true
     restart: unless-stopped
 
   indexchecker:
@@ -127,6 +131,8 @@ services:
     volumes:
       - ./secrets:/app/secrets:ro
     entrypoint: ["/bin/indexchecker"]
+    healthcheck:
+      disable: true
     restart: unless-stopped
 
   migrate:

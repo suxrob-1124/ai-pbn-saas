@@ -30,6 +30,7 @@ export function EditorAIStudioPanel(props: EditorAIStudioPanelProps) {
     aiInstruction,
     setAiInstruction,
     onAISuggest,
+    onCancelAISuggest,
     aiBusy,
     suggestLocked,
     onApplyAISuggest,
@@ -63,6 +64,7 @@ export function EditorAIStudioPanel(props: EditorAIStudioPanelProps) {
     aiCreateInstruction,
     setAiCreateInstruction,
     onAICreatePage,
+    onCancelAICreatePage,
     aiCreateBusy,
     createLocked,
     onApplyCreatedFiles,
@@ -269,6 +271,15 @@ export function EditorAIStudioPanel(props: EditorAIStudioPanelProps) {
             >
               {suggestContextLocked ? t.actions.loadingContext : t.actions.requestContext}
             </button>
+            {(aiBusy || suggestLocked) && (
+              <button
+                type="button"
+                onClick={onCancelAISuggest}
+                className="rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 dark:border-rose-700 dark:bg-slate-800 dark:text-rose-300"
+              >
+                Отменить
+              </button>
+            )}
           </div>
           {(suggestLocked || suggestContextLocked) && (
             <div className="text-[11px] text-slate-500 dark:text-slate-400">
@@ -478,6 +489,15 @@ export function EditorAIStudioPanel(props: EditorAIStudioPanelProps) {
             >
               {createContextLocked ? t.actions.loadingContext : t.actions.requestContext}
             </button>
+            {(aiCreateBusy || createLocked) && (
+              <button
+                type="button"
+                onClick={onCancelAICreatePage}
+                className="rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 dark:border-rose-700 dark:bg-slate-800 dark:text-rose-300"
+              >
+                Отменить
+              </button>
+            )}
           </div>
           {(createLocked || createContextLocked) && (
             <div className="text-[11px] text-slate-500 dark:text-slate-400">

@@ -27,6 +27,10 @@ type DeploymentAttempt = {
   total_size_bytes: number;
 };
 
+type DomainFileListItem = {
+  path: string;
+};
+
 type DomainResultSectionProps = {
   showResultBlock: boolean;
   domainId: string;
@@ -76,6 +80,7 @@ export function DomainResultSection({
   const [liveResultCode, setLiveResultCode] = useState("");
   const [liveResultLoading, setLiveResultLoading] = useState(false);
   const [liveResultError, setLiveResultError] = useState<string | null>(null);
+  const resultPreviewStyle = { height: "82vh", minHeight: "680px" } as const;
 
   if (!showResultBlock) {
     return null;
@@ -112,14 +117,24 @@ export function DomainResultSection({
     setLiveResultLoading(true);
     setLiveResultError(null);
     try {
+      const fileListResp = await authFetch<DomainFileListItem[]>(`/api/domains/${domainId}/files`).catch(() => []);
+      const existingPaths = new Set(
+        (Array.isArray(fileListResp) ? fileListResp : [])
+          .map((item) => (item?.path || "").trim().replace(/^\/+/, "").toLowerCase())
+          .filter(Boolean)
+      );
       const indexResp = await authFetch<{ content: string }>(`/api/domains/${domainId}/files/index.html`);
       const indexHtml = indexResp?.content || "";
-      const styleResp = await authFetch<{ content: string }>(`/api/domains/${domainId}/files/style.css`).catch(() => null);
-      const scriptResp = await authFetch<{ content: string }>(`/api/domains/${domainId}/files/script.js`).catch(() => null);
-      const styleContent = styleResp?.content ? rewriteCssUrls(styleResp.content, domainId) : "";
+      const styleResp = existingPaths.has("style.css")
+        ? await authFetch<{ content: string }>(`/api/domains/${domainId}/files/style.css`).catch(() => null)
+        : null;
+      const scriptResp = existingPaths.has("script.js")
+        ? await authFetch<{ content: string }>(`/api/domains/${domainId}/files/script.js`).catch(() => null)
+        : null;
+      const styleContent = styleResp?.content ? rewriteCssUrls(styleResp.content, domainId, existingPaths) : "";
       const scriptContent = scriptResp?.content || "";
       const htmlWithAssets = injectRuntimeAssets(indexHtml, styleContent, scriptContent);
-      const livePreview = rewriteHtmlAssetRefs(htmlWithAssets, domainId);
+      const livePreview = rewriteHtmlAssetRefs(htmlWithAssets, domainId, existingPaths);
       setLiveResultCode(indexHtml);
       setLiveResultHTML(livePreview);
     } catch {
@@ -230,7 +245,7 @@ export function DomainResultSection({
 
         {!hasArtifacts && domain?.status === "published" && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">
-            Артефакты еще не заполнены. Запустите decode backfill: <code>{labels.backfillHint} ...</code>
+            Артефакты еще не заполнены. Запустите legacy import: <code>{labels.backfillHint} ...</code>
           </div>
         )}
       </div>
@@ -255,7 +270,7 @@ export function DomainResultSection({
 
       {showResultHTMLModal && (
         <div className="fixed inset-0 z-50 bg-black/60 px-3 py-6 md:px-8 overflow-auto">
-          <div className="mx-auto max-w-6xl rounded-xl border border-slate-200 bg-white p-4 shadow-2xl dark:border-slate-800 dark:bg-slate-950">
+          <div className="mx-auto w-[min(98vw,1700px)] rounded-xl border border-slate-200 bg-white p-4 shadow-2xl dark:border-slate-800 dark:bg-slate-950">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h4 className="text-sm font-semibold">Финальный HTML</h4>
               <button
@@ -291,7 +306,10 @@ export function DomainResultSection({
               </button>
             </div>
             {liveResultLoading ? (
-              <div className="mt-3 h-[70vh] rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-300">
+              <div
+                style={resultPreviewStyle}
+                className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-300"
+              >
                 Загружаем живой preview...
               </div>
             ) : (
@@ -306,10 +324,14 @@ export function DomainResultSection({
                     title="Final HTML Preview"
                     sandbox="allow-same-origin allow-scripts"
                     srcDoc={liveResultHTML}
-                    className="mt-3 h-[70vh] w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white"
+                    style={resultPreviewStyle}
+                    className="mt-3 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white"
                   />
                 ) : (
-                  <pre className="mt-3 h-[70vh] overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs dark:border-slate-700 dark:bg-slate-900/60">
+                  <pre
+                    style={resultPreviewStyle}
+                    className="mt-3 overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs dark:border-slate-700 dark:bg-slate-900/60"
+                  >
                     {liveResultCode || "(файл index.html отсутствует)"}
                   </pre>
                 )}
@@ -322,7 +344,7 @@ export function DomainResultSection({
   );
 }
 
-function rewriteHtmlAssetRefs(html: string, domainId: string): string {
+function rewriteHtmlAssetRefs(html: string, domainId: string, existingPaths?: Set<string>): string {
   const base = apiBase();
   return html.replace(/\b(src|href)\s*=\s*["']([^"']+)["']/gi, (full, attr, rawValue: string) => {
     const value = rawValue.trim();
@@ -333,6 +355,8 @@ function rewriteHtmlAssetRefs(html: string, domainId: string): string {
     const [pathPart, hashPart = ""] = normalized.split("#");
     const [purePath, queryPart = ""] = pathPart.split("?");
     if (!purePath) return full;
+    const purePathLower = purePath.toLowerCase();
+    if (existingPaths && !existingPaths.has(purePathLower)) return full;
     const encodedPath = purePath
       .split("/")
       .filter(Boolean)
@@ -346,7 +370,7 @@ function rewriteHtmlAssetRefs(html: string, domainId: string): string {
   });
 }
 
-function rewriteCssUrls(css: string, domainId: string): string {
+function rewriteCssUrls(css: string, domainId: string, existingPaths?: Set<string>): string {
   const base = apiBase();
   return css.replace(/url\(([^)]+)\)/gi, (_full, rawValue: string) => {
     const value = rawValue.trim().replace(/^['"]|['"]$/g, "");
@@ -356,6 +380,8 @@ function rewriteCssUrls(css: string, domainId: string): string {
     const [pathPart, hashPart = ""] = normalized.split("#");
     const [purePath, queryPart = ""] = pathPart.split("?");
     if (!purePath) return `url(${rawValue})`;
+    const purePathLower = purePath.toLowerCase();
+    if (existingPaths && !existingPaths.has(purePathLower)) return `url(${rawValue})`;
     const encodedPath = purePath
       .split("/")
       .filter(Boolean)

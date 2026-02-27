@@ -586,6 +586,19 @@ func (s *Server) handleDomainEditorAISuggest(w http.ResponseWriter, r *http.Requ
 			writeError(w, http.StatusNotFound, "file not found")
 			return
 		}
+		if s.logger != nil {
+			dctx := makeDomainFSContext(domain)
+			s.logger.Errorf(
+				"ai read file failed: domain_id=%s domain_url=%s mode=%s server_id=%s published_path=%s path=%s err=%v",
+				domain.ID,
+				domain.URL,
+				dctx.DeploymentMode,
+				dctx.ServerID,
+				dctx.PublishedPath,
+				relPath,
+				err,
+			)
+		}
 		writeError(w, http.StatusInternalServerError, "could not read file")
 		return
 	}

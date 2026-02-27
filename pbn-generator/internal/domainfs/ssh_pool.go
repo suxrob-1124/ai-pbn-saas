@@ -299,6 +299,12 @@ func (p *SSHPool) dial(target SSHTarget) (*ssh.Client, error) {
 		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
 		HostKeyCallback: p.hostKeyCallback,
 		Timeout:         p.cfg.DialTimeout,
+		// Prefer modern host keys first to avoid legacy RSA mismatch issues
+		// on hosts that expose multiple key algorithms.
+		HostKeyAlgorithms: []string{
+			ssh.KeyAlgoED25519,
+			ssh.KeyAlgoRSA,
+		},
 	}
 	addr := target.Address()
 	conn, err := net.DialTimeout("tcp", addr, p.cfg.DialTimeout)

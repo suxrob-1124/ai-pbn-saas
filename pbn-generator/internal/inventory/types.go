@@ -22,6 +22,7 @@ const (
 type Target struct {
 	Alias   string
 	Host    string
+	Port    int
 	User    string
 	KeyPath string
 }

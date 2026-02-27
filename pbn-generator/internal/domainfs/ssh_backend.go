@@ -65,9 +65,28 @@ func (b *SSHBackend) WriteFile(ctx context.Context, dctx DomainFSContext, filePa
 			return mapSSHError(runErr, stderr, fullPath)
 		}
 		if _, stderr, runErr := runSSHCommand(ctx, client, "cat > "+shellQuote(fullPath), content); runErr != nil {
-			return mapSSHError(runErr, stderr, fullPath)
+			if isPermissionDeniedOutput(stderr, runErr) {
+				exists, existsErr := b.pathExists(ctx, client, fullPath)
+				if existsErr != nil {
+					return existsErr
+				}
+				if exists {
+					if chownErr := b.chownPath(ctx, client, strings.TrimSpace(target.User), fullPath); chownErr != nil {
+						return chownErr
+					}
+					if _, retryStderr, retryErr := runSSHCommand(ctx, client, "cat > "+shellQuote(fullPath), content); retryErr != nil {
+						return mapSSHError(retryErr, retryStderr, fullPath)
+					}
+				} else {
+					return mapSSHError(runErr, stderr, fullPath)
+				}
+			} else {
+				return mapSSHError(runErr, stderr, fullPath)
+			}
 		}
-		return b.applyOwnership(ctx, client, dctx.SiteOwner, fullPath, false)
+		// Для editor-write смена owner — best-effort. Ошибка chown не должна ломать сохранение файла.
+		_ = b.applyOwnership(ctx, client, dctx.SiteOwner, fullPath, false)
+		return nil
 	})
 }
 
@@ -457,6 +476,13 @@ func mapSSHError(err error, stderr []byte, targetPath string) error {
 	if strings.Contains(lower, "not found") {
 		return fs.ErrNotExist
 	}
+	if strings.Contains(lower, "permission denied") || strings.Contains(lower, "operation not permitted") {
+		return fs.ErrPermission
+	}
+	details := strings.TrimSpace(string(stderr))
+	if details != "" {
+		return fmt.Errorf("ssh command failed (%s): %s: %w", targetPath, details, err)
+	}
 	return fmt.Errorf("ssh command failed (%s): %w", targetPath, err)
 }
 
@@ -482,6 +508,41 @@ func validateOwner(owner string) error {
 		default:
 			return fmt.Errorf("invalid site owner format")
 		}
+	}
+	return nil
+}
+
+func isPermissionDeniedOutput(stderr []byte, err error) bool {
+	msg := strings.ToLower(strings.TrimSpace(string(stderr)))
+	if strings.Contains(msg, "permission denied") || strings.Contains(msg, "operation not permitted") {
+		return true
+	}
+	if err == nil {
+		return false
+	}
+	lowerErr := strings.ToLower(err.Error())
+	return strings.Contains(lowerErr, "permission denied") || strings.Contains(lowerErr, "operation not permitted")
+}
+
+func (b *SSHBackend) pathExists(ctx context.Context, client *ssh.Client, fullPath string) (bool, error) {
+	stdout, stderr, err := runSSHCommand(ctx, client, "if [ -e "+shellQuote(fullPath)+" ]; then printf '1'; else printf '0'; fi", nil)
+	if err != nil {
+		return false, mapSSHError(err, stderr, fullPath)
+	}
+	return strings.TrimSpace(string(stdout)) == "1", nil
+}
+
+func (b *SSHBackend) chownPath(ctx context.Context, client *ssh.Client, owner, targetPath string) error {
+	trimmedOwner := strings.TrimSpace(owner)
+	if trimmedOwner == "" {
+		return fmt.Errorf("ssh target user is empty")
+	}
+	if err := validateOwner(trimmedOwner); err != nil {
+		return err
+	}
+	_, stderr, err := runSSHCommand(ctx, client, "sudo chown "+trimmedOwner+" "+shellQuote(targetPath), nil)
+	if err != nil {
+		return mapSSHError(err, stderr, targetPath)
 	}
 	return nil
 }

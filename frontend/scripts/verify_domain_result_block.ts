@@ -10,7 +10,6 @@ assert.ok(page.includes("Просмотр HTML"), "domain page must include quic
 assert.ok(page.includes("Скачать ZIP"), "domain page must include quick action for zip");
 assert.ok(page.includes("К артефактам"), "domain page must include anchor action to artifacts");
 assert.ok(page.includes("showResultBlock"), "domain page must define result block visibility logic");
-assert.ok(page.includes("go run ./cmd/backfill_legacy_artifacts --mode apply"), "domain page must include empty-state backfill hint");
+assert.ok(page.includes("go run ./cmd/import_legacy --mode apply --source auto"), "domain page must include empty-state import hint");
 
 console.log("OK");
-

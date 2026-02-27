@@ -43,6 +43,7 @@ export function EditorFileWorkspacePanel(props: EditorFileWorkspacePanelProps) {
       : previewViewport === "tablet"
         ? { maxWidth: 820 }
         : undefined;
+  const previewFrameStyle = { height: "80vh", minHeight: "680px" } as const;
 
   return (
     <>
@@ -165,7 +166,8 @@ export function EditorFileWorkspacePanel(props: EditorFileWorkspacePanelProps) {
                   sandbox="allow-same-origin allow-scripts"
                   srcDoc={previewSrcDoc}
                   onLoad={() => bindPreviewNavigationGuard(editorPreviewRef.current)}
-                  className="h-[62vh] w-full rounded-lg border border-slate-200 dark:border-slate-700"
+                  style={previewFrameStyle}
+                  className="w-full rounded-lg border border-slate-200 dark:border-slate-700"
                 />
               </div>
             </div>

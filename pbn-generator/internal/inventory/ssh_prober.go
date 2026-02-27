@@ -29,6 +29,9 @@ func (p SSHProber) Probe(ctx context.Context, target Target, domainASCII string)
 		"-o", "BatchMode=yes",
 		"-o", "StrictHostKeyChecking=yes",
 	}
+	if target.Port > 0 {
+		args = append(args, "-p", fmt.Sprintf("%d", target.Port))
+	}
 	if strings.TrimSpace(p.KnownHostsPath) != "" {
 		args = append(args, "-o", "UserKnownHostsFile="+p.KnownHostsPath)
 	}
@@ -60,7 +63,18 @@ func buildProbeScript(domainASCII string) string {
 	domain := shQuote(domainASCII)
 	return fmt.Sprintf(`set -euo pipefail
 domain=%s
-dirs=(/etc/nginx/sites-enabled /etc/nginx/conf.d /etc/apache2/sites-enabled /etc/httpd/conf.d)
+dirs=(
+  /etc/nginx/sites-enabled
+  /etc/nginx/sites-available
+  /etc/nginx/conf.d
+  /etc/nginx/vhosts
+  /etc/apache2/sites-enabled
+  /etc/apache2/sites-available
+  /etc/apache2/conf-enabled
+  /etc/httpd/conf.d
+  /usr/local/mgr5/etc/nginx/vhosts
+  /usr/local/mgr5/etc/apache2/vhosts
+)
 cfgs=()
 for d in "${dirs[@]}"; do
   [[ -d "$d" ]] || continue
@@ -68,10 +82,34 @@ for d in "${dirs[@]}"; do
 done
 declare -a roots=()
 for cfg in "${cfgs[@]}"; do
+  declare -A vars=()
+  while IFS='|' read -r var_name var_value; do
+    [[ -n "$var_name" && -n "$var_value" ]] || continue
+    vars["$var_name"]="$var_value"
+  done < <(awk '
+    BEGIN {IGNORECASE=1}
+    $1=="set" && $2 ~ /^\$/ {
+      v=$2
+      val=$3
+      sub(/;$/, "", val)
+      gsub(/"/, "", val)
+      print v "|" val
+    }
+  ' "$cfg" 2>/dev/null || true)
   while IFS= read -r candidate; do
     candidate="${candidate%%;*}"
     candidate="${candidate%%\"*}"
     candidate="${candidate##\"}"
+    if [[ "$candidate" == \$* ]]; then
+      var="${candidate%%/*}"
+      rest=""
+      if [[ "$candidate" == */* ]]; then
+        rest="/${candidate#*/}"
+      fi
+      if [[ -n "${vars[$var]+x}" ]]; then
+        candidate="${vars[$var]}$rest"
+      fi
+    fi
     [[ -n "$candidate" ]] && roots+=("$candidate")
   done < <(awk 'BEGIN {IGNORECASE=1} $1=="root" {print $2} $1=="DocumentRoot" {print $2}' "$cfg" 2>/dev/null || true)
 done
@@ -85,26 +123,26 @@ for r in "${roots[@]}"; do
   fi
 done
 if [[ ${#uniq[@]} -eq 0 ]]; then
-  echo "STATUS=not_found"
+  echo "INVENTORY_STATUS=not_found"
   exit 0
 fi
 if [[ ${#uniq[@]} -gt 1 ]]; then
-  echo "STATUS=ambiguous"
-  printf 'PATHS=%%s\n' "$(IFS='|'; echo "${uniq[*]}")"
+  echo "INVENTORY_STATUS=ambiguous"
+  printf 'INVENTORY_PATHS=%%s\n' "$(IFS='|'; echo "${uniq[*]}")"
   exit 0
 fi
 path="${uniq[0]}"
-echo "PATH=$path"
+echo "INVENTORY_PATH=$path"
 if [[ ! -e "$path" ]]; then
-  echo "STATUS=not_found"
+  echo "INVENTORY_STATUS=not_found"
   exit 0
 fi
 if ! owner="$(stat -c '%%U:%%G' "$path" 2>/dev/null)"; then
-  echo "STATUS=permission_denied"
+  echo "INVENTORY_STATUS=permission_denied"
   exit 0
 fi
-echo "STATUS=found"
-echo "OWNER=$owner"
+echo "INVENTORY_STATUS=found"
+echo "INVENTORY_OWNER=$owner"
 `, domain)
 }
 
@@ -123,7 +161,7 @@ func parseProbeOutput(out string) ProbeResult {
 		values[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
 	}
 	var status ProbeStatus
-	switch strings.ToLower(values["STATUS"]) {
+	switch strings.ToLower(values["INVENTORY_STATUS"]) {
 	case "found":
 		status = ProbeFound
 	case "not_found":
@@ -138,7 +176,7 @@ func parseProbeOutput(out string) ProbeResult {
 		status = ""
 	}
 	candidates := []string{}
-	if raw := strings.TrimSpace(values["PATHS"]); raw != "" {
+	if raw := strings.TrimSpace(values["INVENTORY_PATHS"]); raw != "" {
 		for _, p := range strings.Split(raw, "|") {
 			p = strings.TrimSpace(p)
 			if p != "" {
@@ -148,8 +186,8 @@ func parseProbeOutput(out string) ProbeResult {
 	}
 	return ProbeResult{
 		Status:        status,
-		PublishedPath: values["PATH"],
-		SiteOwner:     values["OWNER"],
+		PublishedPath: values["INVENTORY_PATH"],
+		SiteOwner:     values["INVENTORY_OWNER"],
 		Candidates:    candidates,
 	}
 }

@@ -257,7 +257,7 @@ export function ProjectDomainsSection({
                     <button
                       onClick={() => onRunLinkTask(domain.id)}
                       disabled={loading || linkLoadingId === domain.id || linkInProgress}
-                      className="hidden sm:inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                      className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                     >
                       <FiLink />
                       {getLinkActionLabel(hasActiveLink, linkInProgress, true)}
@@ -265,7 +265,7 @@ export function ProjectDomainsSection({
                     <button
                       onClick={() => onRunLinkTask(domain.id)}
                       disabled={loading || linkLoadingId === domain.id || linkInProgress}
-                      className="inline-flex sm:hidden items-center justify-center rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                      className="hidden items-center justify-center rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                       title={linkInProgress ? DOMAIN_PROJECT_CTA.linkTaskInProgressShort : getLinkActionLabel(hasActiveLink, linkInProgress, true)}
                       aria-label={linkInProgress ? DOMAIN_PROJECT_CTA.linkTaskInProgressShort : getLinkActionLabel(hasActiveLink, linkInProgress, true)}
                     >
@@ -276,7 +276,7 @@ export function ProjectDomainsSection({
                         <button
                           onClick={() => onRemoveLinkTask(domain.id)}
                           disabled={loading || linkLoadingId === domain.id}
-                          className="hidden sm:inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
+                          className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
                         >
                           <FiTrash2 />
                           {DOMAIN_PROJECT_CTA.linkRemove}
@@ -284,7 +284,7 @@ export function ProjectDomainsSection({
                         <button
                           onClick={() => onRemoveLinkTask(domain.id)}
                           disabled={loading || linkLoadingId === domain.id}
-                          className="inline-flex sm:hidden items-center justify-center rounded-lg border border-red-200 bg-white px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
+                          className="hidden items-center justify-center rounded-lg border border-red-200 bg-white px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
                           title={DOMAIN_PROJECT_CTA.linkRemove}
                           aria-label={DOMAIN_PROJECT_CTA.linkRemove}
                         >
@@ -294,11 +294,11 @@ export function ProjectDomainsSection({
                     ) : (
                       <>
                         {linkInProgress ? (
-                          <span className="hidden sm:inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-600 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
+                          <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-600 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
                             <FiRefreshCw className="h-3 w-3" /> Выполняется
                           </span>
                         ) : (
-                          <span className="hidden sm:inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
+                          <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
                             <FiInfo className="h-3 w-3" /> Нет ссылки
                           </span>
                         )}
@@ -306,13 +306,13 @@ export function ProjectDomainsSection({
                     )}
                     <button
                       onClick={() => onLoadRuns(domain.id)}
-                      className="hidden sm:inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                      className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                     >
                       <FiList /> {DOMAIN_PROJECT_CTA.runs} {openRuns[domain.id] && gens[domain.id] && `(${gens[domain.id].length})`}
                     </button>
                     <button
                       onClick={() => onLoadRuns(domain.id)}
-                      className="inline-flex sm:hidden items-center justify-center rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                      className="hidden items-center justify-center rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                       title={`${DOMAIN_PROJECT_CTA.runs} ${openRuns[domain.id] && gens[domain.id] ? `(${gens[domain.id].length})` : ""}`}
                       aria-label={DOMAIN_PROJECT_CTA.runs}
                     >
@@ -322,13 +322,13 @@ export function ProjectDomainsSection({
                       <>
                         <Link
                           href={{ pathname: `/domains/${domain.id}/editor` } as UrlObject}
-                          className="hidden sm:inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                         >
                           <FiEdit2 /> Редактор
                         </Link>
                         <Link
                           href={{ pathname: `/domains/${domain.id}/editor` } as UrlObject}
-                          className="inline-flex sm:hidden items-center justify-center rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                          className="hidden items-center justify-center rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                           title="Редактор"
                           aria-label="Открыть редактор"
                         >
@@ -339,14 +339,14 @@ export function ProjectDomainsSection({
                       <>
                         <span
                           title="Редактор доступен после публикации сайта"
-                          className="hidden sm:inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400"
+                          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400"
                         >
                           <FiEdit2 /> Редактор
                         </span>
                         <span
                           title="Редактор доступен после публикации сайта"
                           aria-label="Редактор доступен после публикации"
-                          className="inline-flex sm:hidden items-center justify-center rounded-lg border border-slate-200 bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400"
+                          className="hidden items-center justify-center rounded-lg border border-slate-200 bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400"
                         >
                           <FiEdit2 />
                         </span>
@@ -356,13 +356,13 @@ export function ProjectDomainsSection({
                       <>
                         <Link
                           href={{ pathname: "/monitoring/indexing", query: { domainId: domain.id } } as UrlObject}
-                          className="hidden sm:inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                         >
                           <FiActivity /> Проверки индексации
                         </Link>
                         <Link
                           href={{ pathname: "/monitoring/indexing", query: { domainId: domain.id } } as UrlObject}
-                          className="inline-flex sm:hidden items-center justify-center rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                          className="hidden items-center justify-center rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                           title="Проверки индексации"
                           aria-label="Проверки индексации"
                         >
@@ -373,20 +373,20 @@ export function ProjectDomainsSection({
                       <>
                         <span
                           title="Доступно после публикации сайта"
-                          className="hidden sm:inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400"
+                          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400"
                         >
                           <FiActivity /> Проверки индексации
                         </span>
                         <span
                           title="Доступно после публикации сайта"
                           aria-label="Проверки индексации доступны после публикации"
-                          className="inline-flex sm:hidden items-center justify-center rounded-lg border border-slate-200 bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400"
+                          className="hidden items-center justify-center rounded-lg border border-slate-200 bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400"
                         >
                           <FiActivity />
                         </span>
                         <span
                           title="Опубликуйте сайт, чтобы включить проверки индексации"
-                          className="hidden sm:inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400"
+                          className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400"
                         >
                           <FiInfo className="h-3 w-3" /> После публикации
                         </span>
@@ -395,14 +395,14 @@ export function ProjectDomainsSection({
                     <button
                       onClick={() => onDeleteDomain(domain.id)}
                       disabled={loading}
-                      className="hidden sm:inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
+                      className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
                     >
                       Удалить
                     </button>
                     <button
                       onClick={() => onDeleteDomain(domain.id)}
                       disabled={loading}
-                      className="inline-flex sm:hidden items-center justify-center rounded-lg border border-red-200 bg-white px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
+                      className="hidden items-center justify-center rounded-lg border border-red-200 bg-white px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
                       title="Удалить"
                       aria-label="Удалить"
                     >
@@ -431,14 +431,14 @@ export function ProjectDomainsSection({
                       <button
                         onClick={() => onUpdateKeyword(domain.id)}
                         disabled={loading || !keywordDirty}
-                        className="hidden sm:inline-flex items-center gap-1 rounded-lg bg-slate-200 px-2 py-1 text-xs font-semibold text-slate-800 hover:bg-slate-300 disabled:opacity-50 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"
+                        className="inline-flex items-center gap-1 rounded-lg bg-slate-200 px-2 py-1 text-xs font-semibold text-slate-800 hover:bg-slate-300 disabled:opacity-50 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"
                       >
                         Сохранить
                       </button>
                       <button
                         onClick={() => onUpdateKeyword(domain.id)}
                         disabled={loading || !keywordDirty}
-                        className="inline-flex sm:hidden items-center justify-center rounded-lg bg-slate-200 px-2 py-1 text-xs font-semibold text-slate-800 hover:bg-slate-300 disabled:opacity-50 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"
+                        className="hidden items-center justify-center rounded-lg bg-slate-200 px-2 py-1 text-xs font-semibold text-slate-800 hover:bg-slate-300 disabled:opacity-50 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"
                         title="Сохранить ключевое слово"
                         aria-label="Сохранить ключевое слово"
                       >
@@ -474,14 +474,14 @@ export function ProjectDomainsSection({
                         <button
                           onClick={() => onUpdateLinkSettings(domain.id)}
                           disabled={loading || !linkDirty}
-                          className="hidden sm:inline-flex items-center gap-1 rounded-lg bg-slate-200 px-3 py-1 text-xs font-semibold text-slate-800 hover:bg-slate-300 disabled:opacity-50 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"
+                          className="inline-flex items-center gap-1 rounded-lg bg-slate-200 px-3 py-1 text-xs font-semibold text-slate-800 hover:bg-slate-300 disabled:opacity-50 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"
                         >
                           Сохранить
                         </button>
                         <button
                           onClick={() => onUpdateLinkSettings(domain.id)}
                           disabled={loading || !linkDirty}
-                          className="inline-flex sm:hidden items-center justify-center rounded-lg bg-slate-200 px-2 py-1 text-xs font-semibold text-slate-800 hover:bg-slate-300 disabled:opacity-50 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"
+                          className="hidden items-center justify-center rounded-lg bg-slate-200 px-2 py-1 text-xs font-semibold text-slate-800 hover:bg-slate-300 disabled:opacity-50 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"
                           title="Сохранить ссылку"
                           aria-label="Сохранить ссылку"
                         >
