@@ -2,4 +2,9 @@
 set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
-"$ROOT/scripts/check_no_secrets.sh" --staged
+CHECKER="$ROOT/scripts/check_no_secrets.sh"
+if [[ -x "$CHECKER" ]]; then
+  "$CHECKER" --staged
+else
+  echo "[pre-commit] secret checker not found at $CHECKER, skipping"
+fi

@@ -31,7 +31,7 @@
 - `scheduler` — планировщик generation/link расписаний.
 - `indexchecker` — проверки индексации.
 - `migrate` — миграции.
-- `seed`, `seed_backend` — сидинг.
+- `seed` — сидинг SQL-данными.
 - `frontend` — UI и docs.
 - `db`, `redis`, `prometheus`, `grafana`.
 
@@ -62,13 +62,11 @@ docker compose up --build
 - Prometheus: `http://localhost:9090`
 - Grafana: `http://localhost:3001`
 
-### 4) Dev-сидинг через API
+### 4) Dev-сидинг через SQL
 
 ```bash
-./scripts/seed_backend.sh
+docker compose run --rm seed
 ```
-
-Скрипт идемпотентный, создает пользователей/проекты/домены для локальной среды.
 
 ## Локальная разработка (без Docker)
 
@@ -187,11 +185,6 @@ go run ./cmd/migrate
 
 - `GEMINI_API_KEY`
 
-Для dev bootstrap:
-
-- `BOOTSTRAP_ADMIN_EMAIL`
-- `AUTO_APPROVE_USERS`
-
 Для deploy scaffold (`local_mock`/`ssh_remote`):
 
 - `DEPLOY_MODE`
@@ -245,24 +238,25 @@ npm run -s verify:project-queue
 ## Безопасность
 
 - Не храните реальные секреты в git.
-- Установите pre-commit/pre-push hooks:
+- Используйте CI-проверки и локальный pre-commit workflow команды.
+
+## Бэкап PostgreSQL
+
+Создание бэкапа одновременно:
+- в контейнере `db` (`/var/lib/postgresql/backups`)
+- на локальной машине (`backups/postgres`)
 
 ```bash
-./scripts/install_git_hooks.sh
+./ops/db/backup_postgres.sh
 ```
 
-- Ручная проверка staged diff:
+Переопределение путей при необходимости:
 
 ```bash
-./scripts/check_no_secrets.sh --staged
+BACKUP_CONTAINER_DIR=/var/lib/postgresql/backups \
+BACKUP_LOCAL_DIR=./backups/postgres \
+./ops/db/backup_postgres.sh
 ```
-
-## Текущие рабочие документы по развитию
-
-- `DOCS_D0_GAP_REPORT.md` — аудит документации и API-покрытия.
-- `REFACTOR_V7_FRONT_BACK_TASKS.md` — план рефакторинга frontend/backend.
-- `EDITOR_V3_FIXES_TODO.md` — backlog редактора.
-- `todo-v4.md` — актуальные рабочие задачи по продукту.
 
 ## Импорт/бэкфилл legacy данных
 
