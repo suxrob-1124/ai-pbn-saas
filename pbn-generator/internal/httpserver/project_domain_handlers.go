@@ -22,6 +22,8 @@ import (
 
 // --- Projects / Domains / Generations ---
 
+var errDomainGeneratePreflightServerID = errors.New("domain generate preflight: missing server_id")
+
 func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
 	user, ok := currentUserFromContext(r.Context())
 	if !ok || user.Email == "" {
@@ -1152,6 +1154,35 @@ func (s *Server) handleDomainBase(w http.ResponseWriter, r *http.Request, domain
 	}
 }
 
+func (s *Server) resolveDomainDeploymentMode(domain sqlstore.Domain) string {
+	if mode := strings.ToLower(strings.TrimSpace(nullableStringValue(domain.DeploymentMode))); mode != "" {
+		return mode
+	}
+	if mode := strings.ToLower(strings.TrimSpace(s.cfg.DeployMode)); mode != "" {
+		return mode
+	}
+	return "local_mock"
+}
+
+func (s *Server) ensureDomainGeneratePreflight(ctx context.Context, domain sqlstore.Domain) error {
+	if s.resolveDomainDeploymentMode(domain) != "ssh_remote" {
+		return nil
+	}
+	if strings.TrimSpace(nullableStringValue(domain.ServerID)) == "" {
+		return errDomainGeneratePreflightServerID
+	}
+	if strings.TrimSpace(nullableStringValue(domain.PublishedPath)) == "" {
+		return errors.New("published_path is empty")
+	}
+	if strings.TrimSpace(s.cfg.DeployMode) != "ssh_remote" {
+		return fmt.Errorf("remote backend is disabled: DEPLOY_MODE=%s", strings.TrimSpace(s.cfg.DeployMode))
+	}
+	if _, err := s.statDomainPathInBackend(ctx, domain, ""); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (s *Server) handleDomainGenerate(w http.ResponseWriter, r *http.Request, domainID string) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -1247,6 +1278,24 @@ func (s *Server) handleDomainGenerate(w http.ResponseWriter, r *http.Request, do
 	}
 	if strings.TrimSpace(d.MainKeyword) == "" {
 		writeError(w, http.StatusBadRequest, "keyword is required")
+		return
+	}
+	if err := s.ensureDomainGeneratePreflight(r.Context(), d); err != nil {
+		if s.logger != nil {
+			s.logger.Warnw("domain generate preflight failed",
+				"domain_id", d.ID,
+				"project_id", d.ProjectID,
+				"deployment_mode", s.resolveDomainDeploymentMode(d),
+				"server_id", nullableStringValue(d.ServerID),
+				"published_path", nullableStringValue(d.PublishedPath),
+				"error", err,
+			)
+		}
+		if errors.Is(err, errDomainGeneratePreflightServerID) {
+			writeError(w, http.StatusBadRequest, "Не указан сервер (server_id) для удаленной публикации.")
+			return
+		}
+		writeError(w, http.StatusBadRequest, "Сайт еще не настроен на сервере, обратитесь к администратору.")
 		return
 	}
 	genID := uuid.NewString()
