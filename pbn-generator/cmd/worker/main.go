@@ -47,6 +47,13 @@ func main() {
 	indexCheckStore := sqlstore.NewIndexCheckStore(dbConn)
 	checkHistoryStore := sqlstore.NewCheckHistoryStore(dbConn)
 	auditStore := sqlstore.NewAuditStore(dbConn)
+	publishContentBackend, sshPool, err := buildPublishContentBackend(cfg)
+	if err != nil {
+		sugar.Fatalf("failed to init publish content backend: %v", err)
+	}
+	if sshPool != nil {
+		defer sshPool.Close()
+	}
 
 	server := tasks.NewServer(cfg, 4, true, true)
 	mux := asynq.NewServeMux()
@@ -75,6 +82,7 @@ func main() {
 			modelPricingStore,
 			siteFileStore,
 			auditStore,
+			publishContentBackend,
 		)
 	})
 	linkWorker := &worker.LinkWorker{
