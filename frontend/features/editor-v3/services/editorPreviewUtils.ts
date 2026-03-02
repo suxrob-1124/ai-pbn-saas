@@ -93,7 +93,7 @@ export const encodePath = (value: string) =>
     .map((part) => encodeURIComponent(part))
     .join("/");
 
-export function rewriteHtmlAssetRefs(html: string, domainId: string) {
+export function rewriteHtmlAssetRefs(html: string, domainId: string, existingPaths?: Set<string>) {
   const base = apiBase();
   return html.replace(/\b(src|href)\s*=\s*["']([^"']+)["']/gi, (full, attr, rawValue: string) => {
     const value = rawValue.trim();
@@ -105,6 +105,8 @@ export function rewriteHtmlAssetRefs(html: string, domainId: string) {
     const pathPart = pathPartRaw.trim();
     const normalized = pathPart.replace(/^\/+/, "");
     const effectivePath = normalized || "index.html";
+    const effectivePathLower = effectivePath.toLowerCase();
+    if (existingPaths && !existingPaths.has(effectivePathLower)) return full;
     const encodedPath = effectivePath
       .split("/")
       .filter(Boolean)

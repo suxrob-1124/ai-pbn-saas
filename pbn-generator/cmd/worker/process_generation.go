@@ -14,6 +14,7 @@ import (
 
 	"obzornik-pbn-generator/internal/config"
 	"obzornik-pbn-generator/internal/crypto/secretbox"
+	"obzornik-pbn-generator/internal/domainfs"
 	"obzornik-pbn-generator/internal/llm"
 	"obzornik-pbn-generator/internal/publisher"
 	"obzornik-pbn-generator/internal/retry"
@@ -41,6 +42,7 @@ func processGeneration(
 	modelPricingStore *sqlstore.ModelPricingStore,
 	siteFileStore *sqlstore.SiteFileSQLStore,
 	auditStore *sqlstore.AuditStore,
+	contentBackend domainfs.SiteContentBackend,
 ) error {
 	// Проверяем статус задачи в начале
 	gen, err := genStore.Get(ctx, payload.GenerationID)
@@ -325,9 +327,13 @@ func processGeneration(
 							}
 						}
 						stage := sql.NullString{String: req.Stage, Valid: strings.TrimSpace(req.Stage) != ""}
+						operation := "generation_step"
+						if strings.TrimSpace(req.Stage) != "" {
+							operation = "generation_step/" + req.Stage
+						}
 						event := sqlstore.LLMUsageEvent{
 							Provider:                 "gemini",
-							Operation:                "generation_step",
+							Operation:                operation,
 							Stage:                    stage,
 							Model:                    req.Model,
 							Status:                   llmUsageStatus(req.Error),
@@ -361,9 +367,17 @@ func processGeneration(
 	}()
 
 	scopedPrompts := newScopedPromptManager(promptStore, promptOverrideStore, domain.ID, project.ID)
-	deployMode := "local_mock"
-	if mode := strings.TrimSpace(domain.DeploymentMode.String); mode != "" {
-		deployMode = mode
+	deployMode := "ssh_remote" // Теперь по умолчанию боевой режим
+	if mode := strings.ToLower(strings.TrimSpace(cfg.DeployMode)); mode == "local_mock" {
+		// Переходим в мок, ТОЛЬКО если в .env явно сказано local_mock
+		deployMode = "local_mock"
+	}
+	currentPublisher := publisher.Publisher(publisher.NewLocalPublisher(cfg.DeployBaseDir, domainStore, siteFileStore))
+	if strings.EqualFold(strings.TrimSpace(deployMode), "ssh_remote") {
+		if contentBackend == nil {
+			return fmt.Errorf("ssh publisher backend is not configured")
+		}
+		currentPublisher = publisher.NewSSHPublisher(contentBackend, domainStore, siteFileStore)
 	}
 
 	// Создаем pipeline state
@@ -395,7 +409,7 @@ func processGeneration(
 		LLMClient:         pipeline.NewLLMClient(llmClient),
 		PromptManager:     scopedPrompts,
 		Analyzer:          pipeline.NewAnalyzer(),
-		Publisher:         publisher.NewLocalPublisher(cfg.DeployBaseDir, domainStore, siteFileStore),
+		Publisher:         currentPublisher,
 		DeploymentMode:    deployMode,
 		DefaultModel:      cfg.GeminiDefaultModel,
 		Domain:            &domain,

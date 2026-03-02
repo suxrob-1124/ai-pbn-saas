@@ -61,9 +61,10 @@ func TestSanitizeAISuggestContentNoopOnServiceReply(t *testing.T) {
 
 func TestNormalizeEditorContextMode(t *testing.T) {
 	cases := map[string]string{
-		"":        "auto",
-		"unknown": "auto",
+		"":        "manual",
+		"unknown": "manual",
 		"manual":  "manual",
+		"auto":    "auto",
 		"hybrid":  "hybrid",
 	}
 	for input, expected := range cases {

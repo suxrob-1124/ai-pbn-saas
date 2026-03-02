@@ -279,7 +279,7 @@ export default function DomainPage() {
     artifactsAction: "К артефактам",
     editorAction: "Открыть в редакторе",
     editorDisabledHint: "Редактор доступен после публикации и синхронизации файлов",
-    backfillHint: "go run ./cmd/backfill_legacy_artifacts --mode apply"
+    backfillHint: "go run ./cmd/import_legacy --mode apply --source auto"
   };
   const canEditPrompts = canEditPromptOverrides(myRole);
 

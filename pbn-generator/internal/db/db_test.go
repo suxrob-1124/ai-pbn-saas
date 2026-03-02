@@ -160,6 +160,16 @@ func TestMigrationStatementsIncludeDomainLinkFields(t *testing.T) {
 	expectContains(t, stmts, "ALTER TABLE domains ADD COLUMN IF NOT EXISTS link_ready_at TIMESTAMPTZ;")
 }
 
+func TestMigrationStatementsIncludeDomainInventoryFields(t *testing.T) {
+	t.Parallel()
+
+	stmts := migrationStatements()
+	expectContains(t, stmts, "ALTER TABLE domains ADD COLUMN IF NOT EXISTS site_owner TEXT;")
+	expectContains(t, stmts, "ALTER TABLE domains ADD COLUMN IF NOT EXISTS inventory_status TEXT;")
+	expectContains(t, stmts, "ALTER TABLE domains ADD COLUMN IF NOT EXISTS inventory_checked_at TIMESTAMPTZ;")
+	expectContains(t, stmts, "ALTER TABLE domains ADD COLUMN IF NOT EXISTS inventory_error TEXT;")
+}
+
 func TestMigrationStatementsIncludeProjectTimezone(t *testing.T) {
 	t.Parallel()
 

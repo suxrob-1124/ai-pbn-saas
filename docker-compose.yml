@@ -6,12 +6,14 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+      PGDATA: /var/lib/postgresql/data/pgdata
     ports:
       - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - ./data/postgres:/var/lib/postgresql/data
+      - ./backups/postgres/container:/var/lib/postgresql/backups
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "auth"]
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}", "-d", "${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -26,7 +28,7 @@ services:
       PORT: "8080"
       ALLOWED_ORIGIN: "${ALLOWED_ORIGIN:-*}"
       DB_DRIVER: "${DB_DRIVER:-pgx}"
-      DB_DSN: "${DB_DSN:-postgres://auth:auth@db:5432/auth?sslmode=disable}"
+      DB_DSN: "${DB_DSN:-postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable}"
       SESSION_TTL: "${SESSION_TTL:-24h}"
       SESSION_CLEAN_INTERVAL: "${SESSION_CLEAN_INTERVAL:-5m}"
       DB_CONNECT_RETRIES: "${DB_CONNECT_RETRIES:-20}"
@@ -37,6 +39,7 @@ services:
         condition: service_healthy
     volumes:
       - ./server:/app/server
+      - ./secrets:/app/secrets:ro
     ports:
       - "8080:8080"
     logging:
@@ -54,7 +57,7 @@ services:
       PORT: "8080"
       ALLOWED_ORIGIN: "${ALLOWED_ORIGIN:-*}"
       DB_DRIVER: "${DB_DRIVER:-pgx}"
-      DB_DSN: "${DB_DSN:-postgres://auth:auth@db:5432/auth?sslmode=disable}"
+      DB_DSN: "${DB_DSN:-postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable}"
       SESSION_TTL: "${SESSION_TTL:-24h}"
       SESSION_CLEAN_INTERVAL: "${SESSION_CLEAN_INTERVAL:-5m}"
       DB_CONNECT_RETRIES: "${DB_CONNECT_RETRIES:-20}"
@@ -70,7 +73,10 @@ services:
         condition: service_started
     volumes:
       - ./server:/app/server
+      - ./secrets:/app/secrets:ro
     entrypoint: ["/bin/worker"]
+    healthcheck:
+      disable: true
     restart: unless-stopped
 
   scheduler:
@@ -82,7 +88,7 @@ services:
       PORT: "8080"
       ALLOWED_ORIGIN: "${ALLOWED_ORIGIN:-*}"
       DB_DRIVER: "${DB_DRIVER:-pgx}"
-      DB_DSN: "${DB_DSN:-postgres://auth:auth@db:5432/auth?sslmode=disable}"
+      DB_DSN: "${DB_DSN:-postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable}"
       SESSION_TTL: "${SESSION_TTL:-24h}"
       SESSION_CLEAN_INTERVAL: "${SESSION_CLEAN_INTERVAL:-5m}"
       DB_CONNECT_RETRIES: "${DB_CONNECT_RETRIES:-20}"
@@ -98,7 +104,10 @@ services:
         condition: service_started
     volumes:
       - ./server:/app/server
+      - ./secrets:/app/secrets:ro
     entrypoint: ["/bin/scheduler"]
+    healthcheck:
+      disable: true
     restart: unless-stopped
 
   indexchecker:
@@ -110,7 +119,7 @@ services:
       PORT: "8080"
       ALLOWED_ORIGIN: "${ALLOWED_ORIGIN:-*}"
       DB_DRIVER: "${DB_DRIVER:-pgx}"
-      DB_DSN: "${DB_DSN:-postgres://auth:auth@db:5432/auth?sslmode=disable}"
+      DB_DSN: "${DB_DSN:-postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable}"
       SESSION_TTL: "${SESSION_TTL:-24h}"
       SESSION_CLEAN_INTERVAL: "${SESSION_CLEAN_INTERVAL:-5m}"
       DB_CONNECT_RETRIES: "${DB_CONNECT_RETRIES:-20}"
@@ -119,7 +128,11 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    volumes:
+      - ./secrets:/app/secrets:ro
     entrypoint: ["/bin/indexchecker"]
+    healthcheck:
+      disable: true
     restart: unless-stopped
 
   migrate:
@@ -129,13 +142,15 @@ services:
       - .env
     environment:
       DB_DRIVER: "${DB_DRIVER:-pgx}"
-      DB_DSN: "${DB_DSN:-postgres://auth:auth@db:5432/auth?sslmode=disable}"
+      DB_DSN: "${DB_DSN:-postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable}"
       DB_CONNECT_RETRIES: "${DB_CONNECT_RETRIES:-20}"
       DB_CONNECT_INTERVAL: "${DB_CONNECT_INTERVAL:-1s}"
       MIGRATE_ON_START: "true"
     depends_on:
       db:
         condition: service_healthy
+    volumes:
+      - ./secrets:/app/secrets:ro
     entrypoint: ["/bin/migrate"]
     restart: "no"
 
@@ -152,23 +167,6 @@ services:
       - .:/work
     command: >
       /bin/sh -c "apk add --no-cache bash && /work/pbn-generator/scripts/build_seed.sh && psql -h db -U ${POSTGRES_USER} -d ${POSTGRES_DB} -f /work/pbn-generator/init/seed.sql"
-    restart: "no"
-
-  seed_backend:
-    image: python:3.12-alpine
-    env_file:
-      - .env
-    environment:
-      API_URL: "http://backend:8080"
-    depends_on:
-      backend:
-        condition: service_started
-    volumes:
-      - .:/work
-    entrypoint: ["/bin/sh", "-c"]
-    command: >
-      apk add --no-cache bash curl &&
-      /work/scripts/seed_backend.sh
     restart: "no"
 
   frontend:
@@ -220,5 +218,4 @@ services:
     command: ["redis-server", "--save", "", "--appendonly", "no"]
 
 volumes:
-  pgdata: {}
   redisdata: {}

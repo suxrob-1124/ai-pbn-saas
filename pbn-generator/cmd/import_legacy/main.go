@@ -13,6 +13,7 @@ import (
 	"obzornik-pbn-generator/internal/config"
 	"obzornik-pbn-generator/internal/db"
 	"obzornik-pbn-generator/internal/importer/legacy"
+	"obzornik-pbn-generator/internal/inventory"
 	"obzornik-pbn-generator/internal/store/sqlstore"
 )
 
@@ -22,6 +23,9 @@ func main() {
 	batchSize := flag.Int("batch-size", 50, "batch size")
 	batchNumber := flag.Int("batch-number", 1, "batch number (1-based)")
 	serverDir := flag.String("server-dir", "server", "directory with published sites")
+	source := flag.String("source", "auto", "input source: auto|local|remote")
+	targetAlias := flag.String("target", "", "fallback target alias for remote source when server_id is empty")
+	keepMirror := flag.Bool("keep-mirror", false, "keep temporary mirrored files for inspection (remote source)")
 	reportPath := flag.String("report", "import_legacy_report.json", "output path for JSON report")
 	force := flag.Bool("force", false, "allow rewrite synthetic legacy artifacts even if non-legacy generations exist")
 	decodeSource := flag.String("decode-source", "import_legacy", "decode source marker: import_legacy|decode_backfill")
@@ -49,9 +53,25 @@ func main() {
 
 	imp := legacy.NewImporter(userStore, projectStore, domainStore, siteFileStore, linkTaskStore, generationStore, promptStore)
 
+	selectedSource := normalizeSource(*source, cfg.DeployMode)
+	effectiveServerDir := *serverDir
+	var err error
+	var remoteMeta map[string]inventory.ProbeResult
+	if selectedSource == "remote" {
+		var cleanup func() error
+		remoteMeta, effectiveServerDir, cleanup, err = prepareRemoteMirror(context.Background(), cfg, *manifest, *batchSize, *batchNumber, strings.TrimSpace(*targetAlias))
+		if err != nil {
+			logger.Fatalf("prepare remote mirror failed: %v", err)
+		}
+		if !*keepMirror && cleanup != nil {
+			defer cleanup()
+		}
+		logger.Infow("remote mirror prepared", "mirror_dir", effectiveServerDir, "domains", len(remoteMeta))
+	}
+
 	opts := legacy.RunOptions{
 		ManifestPath: *manifest,
-		ServerDir:    *serverDir,
+		ServerDir:    effectiveServerDir,
 		Mode:         legacy.Mode(*mode),
 		Batch: legacy.BatchConfig{
 			BatchSize:   *batchSize,
@@ -70,6 +90,14 @@ func main() {
 		logger.Fatalf("write report failed: %v", err)
 	}
 
+	if selectedSource == "remote" && legacy.Mode(*mode) == legacy.ModeApply {
+		appliedInventory, inventoryErrs := applyRemoteInventory(context.Background(), domainStore, report, remoteMeta)
+		for _, invErr := range inventoryErrs {
+			logger.Warnw("inventory apply warning", "err", invErr)
+		}
+		logger.Infow("remote inventory updated", "updated", appliedInventory, "warnings", len(inventoryErrs))
+	}
+
 	logger.Infow("import finished",
 		"mode", report.Mode,
 		"processed", report.Summary.Processed,
@@ -80,6 +108,7 @@ func main() {
 		"updated", report.Summary.Updated,
 		"skipped", report.Summary.Skipped,
 		"unchanged", report.Summary.Unchanged,
+		"source", selectedSource,
 		"report", *reportPath,
 	)
 

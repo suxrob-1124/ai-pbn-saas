@@ -114,21 +114,23 @@ type linkTaskDTO struct {
 }
 
 type indexCheckDTO struct {
-	ID             string     `json:"id"`
-	DomainID       string     `json:"domain_id"`
-	ProjectID      *string    `json:"project_id,omitempty"`
-	DomainURL      *string    `json:"domain_url,omitempty"`
-	CheckDate      time.Time  `json:"check_date"`
-	Status         string     `json:"status"`
-	IsIndexed      *bool      `json:"is_indexed,omitempty"`
-	Attempts       int        `json:"attempts"`
-	LastAttemptAt  *time.Time `json:"last_attempt_at,omitempty"`
-	NextRetryAt    *time.Time `json:"next_retry_at,omitempty"`
-	ErrorMessage   *string    `json:"error_message,omitempty"`
-	CompletedAt    *time.Time `json:"completed_at,omitempty"`
-	CreatedAt      time.Time  `json:"created_at"`
-	RunNowEnqueued *bool      `json:"run_now_enqueued,omitempty"`
-	RunNowError    *string    `json:"run_now_error,omitempty"`
+	ID               string     `json:"id"`
+	DomainID         string     `json:"domain_id"`
+	ProjectID        *string    `json:"project_id,omitempty"`
+	DomainURL        *string    `json:"domain_url,omitempty"`
+	CheckDate        time.Time  `json:"check_date"`
+	Status           string     `json:"status"`
+	IsIndexed        *bool      `json:"is_indexed,omitempty"`
+	ContentQuote     *string    `json:"content_quote,omitempty"`
+	IsContentIndexed *bool      `json:"is_content_indexed,omitempty"`
+	Attempts         int        `json:"attempts"`
+	LastAttemptAt    *time.Time `json:"last_attempt_at,omitempty"`
+	NextRetryAt      *time.Time `json:"next_retry_at,omitempty"`
+	ErrorMessage     *string    `json:"error_message,omitempty"`
+	CompletedAt      *time.Time `json:"completed_at,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	RunNowEnqueued   *bool      `json:"run_now_enqueued,omitempty"`
+	RunNowError      *string    `json:"run_now_error,omitempty"`
 }
 
 type indexCheckListDTO struct {
@@ -558,6 +560,14 @@ func toIndexCheckDTO(check sqlstore.IndexCheck) indexCheckDTO {
 	if check.IsIndexed.Valid {
 		val := check.IsIndexed.Bool
 		dto.IsIndexed = &val
+	}
+	if check.ContentQuote.Valid && check.ContentQuote.String != "" {
+		val := check.ContentQuote.String
+		dto.ContentQuote = &val
+	}
+	if check.IsContentIndexed.Valid {
+		val := check.IsContentIndexed.Bool
+		dto.IsContentIndexed = &val
 	}
 	if check.LastAttemptAt.Valid {
 		val := check.LastAttemptAt.Time

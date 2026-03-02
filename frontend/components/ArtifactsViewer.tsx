@@ -461,6 +461,7 @@ function SvgViewer({ svg, raw }: { svg: string; raw: string }) {
 
 function FinalHTMLViewer({ html }: { html: string }) {
   const [view, setView] = useState<"preview" | "code">("preview");
+  const previewStyle = { height: "80vh", minHeight: "680px" } as const;
   return (
     <div className="space-y-3">
       <div className="flex gap-2">
@@ -488,12 +489,16 @@ function FinalHTMLViewer({ html }: { html: string }) {
       {view === "preview" ? (
         <iframe
           title="Final HTML Preview"
-          sandbox="allow-same-origin"
+          sandbox="allow-same-origin allow-scripts"
           srcDoc={html}
-          className="h-[60vh] w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white"
+          style={previewStyle}
+          className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white"
         />
       ) : (
-        <pre className="text-xs bg-slate-100/70 dark:bg-slate-900/50 rounded-lg p-3 overflow-auto whitespace-pre-wrap leading-relaxed font-mono max-h-[60vh]">
+        <pre
+          style={previewStyle}
+          className="text-xs bg-slate-100/70 dark:bg-slate-900/50 rounded-lg p-3 overflow-auto whitespace-pre-wrap leading-relaxed font-mono"
+        >
           {html}
         </pre>
       )}

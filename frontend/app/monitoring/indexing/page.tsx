@@ -279,7 +279,8 @@ function IndexingMonitoringContent() {
     if (nextLimit !== limit) {
       setLimit(nextLimit);
     }
-  }, [querySnapshot, searchParams]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [querySnapshot]);
 
   useEffect(() => {
     const params = new URLSearchParams(searchParams.toString());
@@ -312,6 +313,7 @@ function IndexingMonitoringContent() {
     debouncedSearch,
     domainScope,
     indexedFilter,
+    limit,
     page,
     pathname,
     router,

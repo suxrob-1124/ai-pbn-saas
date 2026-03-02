@@ -40,6 +40,10 @@ type Domain struct {
 	FileCount          int
 	TotalSizeBytes     int64
 	DeploymentMode     sql.NullString
+	SiteOwner          sql.NullString
+	InventoryStatus    sql.NullString
+	InventoryCheckedAt sql.NullTime
+	InventoryError     sql.NullString
 	LinkAnchorText     sql.NullString
 	LinkAcceptorURL    sql.NullString
 	LinkStatus         sql.NullString
@@ -53,25 +57,25 @@ type Domain struct {
 }
 
 type Generation struct {
-	ID             string
-	DomainID       string
-	RequestedBy    sql.NullString
-	Status         string
-	Progress       int
-	Error          sql.NullString
-	Logs           []byte
-	Artifacts      []byte
+	ID               string
+	DomainID         string
+	RequestedBy      sql.NullString
+	Status           string
+	Progress         int
+	Error            sql.NullString
+	Logs             []byte
+	Artifacts        []byte
 	ArtifactsSummary []byte
-	CheckpointData []byte // JSONB checkpoint data
-	Attempts       int
-	Retryable      bool
-	NextRetryAt    sql.NullTime
-	LastErrorAt    sql.NullTime
-	StartedAt      sql.NullTime
-	FinishedAt     sql.NullTime
-	PromptID       sql.NullString
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	CheckpointData   []byte // JSONB checkpoint data
+	Attempts         int
+	Retryable        bool
+	NextRetryAt      sql.NullTime
+	LastErrorAt      sql.NullTime
+	StartedAt        sql.NullTime
+	FinishedAt       sql.NullTime
+	PromptID         sql.NullString
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 type ProjectMember struct {
@@ -224,17 +228,28 @@ const DefaultServerName = "seotech-web-media1"
 const DefaultServerIP = "46.21.250.153"
 
 func (s *DomainStore) Create(ctx context.Context, d Domain) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO domains(id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, created_at, updated_at)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(),NOW())`,
-		d.ID, d.ProjectID, nullableString(d.ServerID), d.URL, d.MainKeyword, d.TargetCountry, d.TargetLanguage, nullableString(d.ExcludeDomains), nullableBytes(d.SpecificBlacklist), d.Status)
-	if err != nil {
-		return fmt.Errorf("failed to create domain: %w", err)
-	}
-	return nil
+  _, err := s.db.ExecContext(ctx, `INSERT INTO domains(id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, published_path, site_owner, created_at, updated_at)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW(),NOW())`,
+    d.ID, 
+    d.ProjectID, 
+    nullableString(d.ServerID), 
+    d.URL, 
+    d.MainKeyword, 
+    d.TargetCountry, 
+    d.TargetLanguage, 
+    nullableString(d.ExcludeDomains), 
+    nullableBytes(d.SpecificBlacklist), 
+    d.Status,
+    nullableString(d.PublishedPath),
+    nullableString(d.SiteOwner))
+  if err != nil {
+    return fmt.Errorf("failed to create domain: %w", err)
+  }
+  return nil
 }
 
 func (s *DomainStore) ListByProject(ctx context.Context, projectID string) ([]Domain, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, last_success_generation_id, published_at, published_path, file_count, total_size_bytes, deployment_mode, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, created_at, updated_at FROM domains WHERE project_id=$1 ORDER BY updated_at DESC`, projectID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, last_success_generation_id, published_at, published_path, file_count, total_size_bytes, deployment_mode, site_owner, inventory_status, inventory_checked_at, inventory_error, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, created_at, updated_at FROM domains WHERE project_id=$1 ORDER BY updated_at DESC`, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -243,7 +258,7 @@ func (s *DomainStore) ListByProject(ctx context.Context, projectID string) ([]Do
 	for rows.Next() {
 		var d Domain
 		var sb sql.NullString
-		if err := rows.Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.LastSuccessGenID, &d.PublishedAt, &d.PublishedPath, &d.FileCount, &d.TotalSizeBytes, &d.DeploymentMode, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.LinkReadyAt, &d.CreatedAt, &d.UpdatedAt); err != nil {
+		if err := rows.Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.LastSuccessGenID, &d.PublishedAt, &d.PublishedPath, &d.FileCount, &d.TotalSizeBytes, &d.DeploymentMode, &d.SiteOwner, &d.InventoryStatus, &d.InventoryCheckedAt, &d.InventoryError, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.LinkReadyAt, &d.CreatedAt, &d.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if sb.Valid {
@@ -277,7 +292,7 @@ func (s *DomainStore) ListByIDs(ctx context.Context, ids []string) ([]Domain, er
 		placeholders[i] = fmt.Sprintf("$%d", i+1)
 		args[i] = id
 	}
-	query := fmt.Sprintf(`SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, last_success_generation_id, published_at, published_path, file_count, total_size_bytes, deployment_mode, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, created_at, updated_at FROM domains WHERE id IN (%s)`, strings.Join(placeholders, ","))
+	query := fmt.Sprintf(`SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, last_success_generation_id, published_at, published_path, file_count, total_size_bytes, deployment_mode, site_owner, inventory_status, inventory_checked_at, inventory_error, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, created_at, updated_at FROM domains WHERE id IN (%s)`, strings.Join(placeholders, ","))
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -287,7 +302,7 @@ func (s *DomainStore) ListByIDs(ctx context.Context, ids []string) ([]Domain, er
 	for rows.Next() {
 		var d Domain
 		var sb sql.NullString
-		if err := rows.Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.LastSuccessGenID, &d.PublishedAt, &d.PublishedPath, &d.FileCount, &d.TotalSizeBytes, &d.DeploymentMode, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.LinkReadyAt, &d.CreatedAt, &d.UpdatedAt); err != nil {
+		if err := rows.Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.LastSuccessGenID, &d.PublishedAt, &d.PublishedPath, &d.FileCount, &d.TotalSizeBytes, &d.DeploymentMode, &d.SiteOwner, &d.InventoryStatus, &d.InventoryCheckedAt, &d.InventoryError, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.LinkReadyAt, &d.CreatedAt, &d.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if sb.Valid {
@@ -301,8 +316,8 @@ func (s *DomainStore) ListByIDs(ctx context.Context, ids []string) ([]Domain, er
 func (s *DomainStore) Get(ctx context.Context, id string) (Domain, error) {
 	var d Domain
 	var sb sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, last_success_generation_id, published_at, published_path, file_count, total_size_bytes, deployment_mode, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, created_at, updated_at FROM domains WHERE id=$1`, id).
-		Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.LastSuccessGenID, &d.PublishedAt, &d.PublishedPath, &d.FileCount, &d.TotalSizeBytes, &d.DeploymentMode, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.LinkReadyAt, &d.CreatedAt, &d.UpdatedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, last_success_generation_id, published_at, published_path, file_count, total_size_bytes, deployment_mode, site_owner, inventory_status, inventory_checked_at, inventory_error, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, created_at, updated_at FROM domains WHERE id=$1`, id).
+		Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.LastSuccessGenID, &d.PublishedAt, &d.PublishedPath, &d.FileCount, &d.TotalSizeBytes, &d.DeploymentMode, &d.SiteOwner, &d.InventoryStatus, &d.InventoryCheckedAt, &d.InventoryError, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.LinkReadyAt, &d.CreatedAt, &d.UpdatedAt)
 	if err != nil {
 		return Domain{}, err
 	}
@@ -316,8 +331,8 @@ func (s *DomainStore) Get(ctx context.Context, id string) (Domain, error) {
 func (s *DomainStore) GetByURL(ctx context.Context, url string) (Domain, error) {
 	var d Domain
 	var sb sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, last_success_generation_id, published_at, published_path, file_count, total_size_bytes, deployment_mode, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, created_at, updated_at FROM domains WHERE url=$1`, url).
-		Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.LastSuccessGenID, &d.PublishedAt, &d.PublishedPath, &d.FileCount, &d.TotalSizeBytes, &d.DeploymentMode, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.LinkReadyAt, &d.CreatedAt, &d.UpdatedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, last_success_generation_id, published_at, published_path, file_count, total_size_bytes, deployment_mode, site_owner, inventory_status, inventory_checked_at, inventory_error, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, created_at, updated_at FROM domains WHERE url=$1`, url).
+		Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.LastSuccessGenID, &d.PublishedAt, &d.PublishedPath, &d.FileCount, &d.TotalSizeBytes, &d.DeploymentMode, &d.SiteOwner, &d.InventoryStatus, &d.InventoryCheckedAt, &d.InventoryError, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.LinkReadyAt, &d.CreatedAt, &d.UpdatedAt)
 	if err != nil {
 		return Domain{}, err
 	}
@@ -351,6 +366,34 @@ func (s *DomainStore) UpdatePublishState(ctx context.Context, id, publishedPath 
 		    updated_at=NOW()
 		WHERE id=$4`,
 		nullableString(nullString(pathVal)), fileCount, totalSizeBytes, id)
+	return err
+}
+
+// UpdateInventoryState обновляет данные инвентаризации домена на удаленном сервере.
+func (s *DomainStore) UpdateInventoryState(
+	ctx context.Context,
+	id string,
+	publishedPath sql.NullString,
+	siteOwner sql.NullString,
+	inventoryStatus sql.NullString,
+	inventoryError sql.NullString,
+	checkedAt time.Time,
+) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE domains
+		SET published_path=$1,
+		    site_owner=$2,
+		    inventory_status=$3,
+		    inventory_checked_at=$4,
+		    inventory_error=$5,
+		    updated_at=NOW()
+		WHERE id=$6`,
+		nullableString(publishedPath),
+		nullableString(siteOwner),
+		nullableString(inventoryStatus),
+		checkedAt,
+		nullableString(inventoryError),
+		id,
+	)
 	return err
 }
 

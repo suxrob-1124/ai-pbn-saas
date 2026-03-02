@@ -139,7 +139,9 @@ func (s *Service) Register(ctx context.Context, ip string, creds Credentials, ca
 		_ = s.users.SetVerified(ctx, email)
 		u.Verified = true
 	} else {
-		_, _ = s.RequestEmailVerification(ctx, email, "", "")
+		if _, err := s.requestEmailVerification(ctx, email, "", "", false); err != nil && s.logger != nil {
+			s.logger.Warnw("failed to send verification email after register", "email", email, "err", err)
+		}
 	}
 	return u, nil
 }
@@ -252,12 +254,12 @@ func (s *Service) SaveUserAPIKey(ctx context.Context, email, apiKey string) erro
 	if apiKey == "" {
 		return errors.New("api key is required")
 	}
-	
+
 	// Базовая проверка формата
 	if len(apiKey) < 20 {
 		return errors.New("api key seems too short")
 	}
-	
+
 	enc, err := secretbox.Encrypt(s.apiKeySecret, []byte(apiKey))
 	if err != nil {
 		return fmt.Errorf("encrypt api key: %w", err)
@@ -302,7 +304,12 @@ func (s *Service) RequestEmailChange(ctx context.Context, email, newEmail string
 	}
 	link := fmt.Sprintf("%s/me/email/confirm?token=%s", strings.TrimRight(s.appURL, "/"), token)
 	body := fmt.Sprintf("Подтвердите смену email: %s", link)
-	_ = s.mailer.Send(ctx, newEmail, "Email change confirmation", body)
+	if err := s.mailer.Send(ctx, newEmail, "Email change confirmation", body); err != nil {
+		if s.logger != nil {
+			s.logger.Warnw("failed to send email change confirmation", "email", newEmail, "err", err)
+		}
+		return "", errors.New("could not send confirmation email")
+	}
 	return token, nil
 }
 
@@ -400,10 +407,14 @@ func (s *Service) LogoutAllSessions(ctx context.Context, email, currentJTI strin
 }
 
 func (s *Service) RequestEmailVerification(ctx context.Context, email, captchaID, captchaToken string) (string, error) {
+	return s.requestEmailVerification(ctx, email, captchaID, captchaToken, true)
+}
+
+func (s *Service) requestEmailVerification(ctx context.Context, email, captchaID, captchaToken string, requireCaptcha bool) (string, error) {
 	if s.verifications == nil {
 		return "", errors.New("verification store not configured")
 	}
-	if s.captchaCfg.CaptchaRequiredVerify {
+	if requireCaptcha && s.captchaCfg.CaptchaRequiredVerify {
 		if err := s.verifyCaptcha(ctx, "", email, captchaID, captchaToken); err != nil {
 			return "", err
 		}
@@ -425,7 +436,12 @@ func (s *Service) RequestEmailVerification(ctx context.Context, email, captchaID
 	}
 	link := fmt.Sprintf("%s/verify?token=%s", strings.TrimRight(s.appURL, "/"), token)
 	body := fmt.Sprintf("Подтвердите email по ссылке: %s\n\nЕсли ссылка не работает, введите токен: %s", link, token)
-	_ = s.mailer.Send(ctx, email, "Verify your email", body)
+	if err := s.mailer.Send(ctx, email, "Verify your email", body); err != nil {
+		if s.logger != nil {
+			s.logger.Warnw("failed to send verification email", "email", email, "err", err)
+		}
+		return "", errors.New("could not send verification email")
+	}
 	return token, nil
 }
 
@@ -464,7 +480,10 @@ func (s *Service) RequestPasswordReset(ctx context.Context, email, captchaID, ca
 	}
 	link := fmt.Sprintf("%s/reset/confirm?token=%s", strings.TrimRight(s.appURL, "/"), token)
 	body := fmt.Sprintf("Сбросьте пароль по ссылке: %s\n\nЕсли ссылка не работает, введите токен: %s", link, token)
-	_ = s.mailer.Send(ctx, email, "Password reset", body)
+	if err := s.mailer.Send(ctx, email, "Password reset", body); err != nil && s.logger != nil {
+		// Не возвращаем ошибку наружу, чтобы не раскрывать существование пользователя.
+		s.logger.Warnw("failed to send password reset email", "email", email, "err", err)
+	}
 	return token, nil
 }
 

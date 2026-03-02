@@ -52,6 +52,12 @@ func (s *PublishStep) Execute(ctx context.Context, state *PipelineState) (map[st
 		return nil, fmt.Errorf("publish: unzip: %w", err)
 	}
 	publishedPath := state.Publisher.GetPublishedPath(state.DomainID)
+	ownerValue := "mock:www-data"
+	if strings.EqualFold(strings.TrimSpace(deployMode), "ssh_remote") && state.Domain != nil {
+		if owner := strings.TrimSpace(state.Domain.SiteOwner.String); state.Domain.SiteOwner.Valid && owner != "" {
+			ownerValue = owner
+		}
+	}
 
 	deploymentAttemptID := ""
 	if state.Deployments != nil {
@@ -62,7 +68,7 @@ func (s *PublishStep) Execute(ctx context.Context, state *PipelineState) (map[st
 			GenerationID: state.GenerationID,
 			Mode:         deployMode,
 			TargetPath:   publishedPath,
-			OwnerBefore:  sqlstore.NullableString("mock:www-data"),
+			OwnerBefore:  sqlstore.NullableString(ownerValue),
 			Status:       "processing",
 		}
 		if err := state.Deployments.Create(ctx, item); err != nil && state.AppendLog != nil {
@@ -73,7 +79,7 @@ func (s *PublishStep) Execute(ctx context.Context, state *PipelineState) (map[st
 	if err := state.Publisher.Publish(ctx, state.DomainID, files); err != nil {
 		if state.Deployments != nil && deploymentAttemptID != "" {
 			errMsg := err.Error()
-			ownerAfter := "mock:www-data"
+			ownerAfter := ownerValue
 			if finishErr := state.Deployments.Finish(ctx, deploymentAttemptID, "error", &errMsg, &ownerAfter, 0, 0, time.Now().UTC()); finishErr != nil && state.AppendLog != nil {
 				state.AppendLog(fmt.Sprintf("publish: failed to finish deployment attempt with error: %v", finishErr))
 			}
@@ -126,7 +132,7 @@ func (s *PublishStep) Execute(ctx context.Context, state *PipelineState) (map[st
 		}
 	}
 	if state.Deployments != nil && deploymentAttemptID != "" {
-		ownerAfter := "mock:www-data"
+		ownerAfter := ownerValue
 		if err := state.Deployments.Finish(ctx, deploymentAttemptID, "success", nil, &ownerAfter, fileCount, totalSizeBytes, time.Now().UTC()); err != nil && state.AppendLog != nil {
 			state.AppendLog(fmt.Sprintf("publish: failed to finish deployment attempt: %v", err))
 		}

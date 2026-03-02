@@ -284,7 +284,7 @@ func (s *Server) buildEditorContextPack(ctx context.Context, domain sqlstore.Dom
 	for _, p := range finalPaths {
 		file := byPath[p]
 		meta.SourceFiles = append(meta.SourceFiles, p)
-		raw, err := s.readDomainFileBytes(domain, p)
+		raw, err := s.readDomainFileBytes(ctx, domain, p)
 		if err != nil {
 			continue
 		}

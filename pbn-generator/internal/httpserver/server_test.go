@@ -21,56 +21,58 @@ import (
 
 	"obzornik-pbn-generator/internal/auth"
 	"obzornik-pbn-generator/internal/config"
+	"obzornik-pbn-generator/internal/domainfs"
 	"obzornik-pbn-generator/internal/store/sqlstore"
 	"obzornik-pbn-generator/internal/tasks"
 )
 
 func setupServer(t *testing.T) *Server {
-	t.Helper()
-	logger := zap.NewNop().Sugar()
-	cfg := config.Config{
-		Port:                 "0",
-		AllowedOrigin:        "*",
-		SessionTTL:           24 * time.Hour,
-		AccessTTL:            15 * time.Minute,
-		RefreshTTL:           7 * 24 * time.Hour,
-		SessionCleanInterval: time.Minute,
-		LoginRateLimit:       100,
-		LoginRateWindow:      time.Minute,
-		RegisterRateLimit:    100,
-		RegisterRateWindow:   time.Minute,
-		LoginEmailIpLimit:    100,
-		LoginEmailIpWindow:   time.Minute,
-		LoginLockoutFails:    2,
-		LoginLockoutDuration: time.Minute,
-		EmailVerificationTTL: 24 * time.Hour,
-		PasswordResetTTL:     time.Hour,
-	}
-	svc := auth.NewService(auth.ServiceDeps{
-		Config:             cfg,
-		Users:              newStubUserStore(),
-		Sessions:           newStubSessionStore(),
-		VerificationTokens: newStubVerificationStore(),
-		ResetTokens:        newStubResetStore(),
-		Captchas:           newStubCaptchaStore(),
-		Mailer:             stubMailer{},
-		Logger:             logger,
-	})
-	proj := newStubProjectStore()
-	dom := newStubDomainStore()
-	gen := newStubGenerationStore()
-	prompts := newStubPromptStore()
-	promptOverrides := newStubPromptOverrideStore()
-	deployments := newStubDeploymentAttemptStore()
-	schedules := newStubScheduleStore()
-	linkSchedules := newStubLinkScheduleStore()
-	siteFiles := newStubSiteFileStore()
-	fileEdits := newStubFileEditStore()
-	linkTasks := newStubLinkTaskStore()
-	genQueue := newStubGenQueueStore()
-	indexChecks := newStubIndexCheckStore()
-	checkHistory := newStubCheckHistoryStore()
-	return New(cfg, svc, logger, proj, nil, dom, gen, prompts, promptOverrides, deployments, schedules, linkSchedules, nil, siteFiles, fileEdits, linkTasks, genQueue, indexChecks, checkHistory, nil, nil, newStubEnqueuer())
+  t.Helper()
+  logger := zap.NewNop().Sugar()
+  cfg := config.Config{
+    Port:                 "0",
+    AllowedOrigin:        "*",
+    SessionTTL:           24 * time.Hour,
+    AccessTTL:            15 * time.Minute,
+    RefreshTTL:           7 * 24 * time.Hour,
+    SessionCleanInterval: time.Minute,
+    LoginRateLimit:       100,
+    LoginRateWindow:      time.Minute,
+    RegisterRateLimit:    100,
+    RegisterRateWindow:   time.Minute,
+    LoginEmailIpLimit:    100,
+    LoginEmailIpWindow:   time.Minute,
+    LoginLockoutFails:    2,
+    LoginLockoutDuration: time.Minute,
+    EmailVerificationTTL: 24 * time.Hour,
+    PasswordResetTTL:     time.Hour,
+    DeployMode:           "local_mock", // <-- ДОБАВЛЕНО СЮДА
+  }
+  svc := auth.NewService(auth.ServiceDeps{
+    Config:             cfg,
+    Users:              newStubUserStore(),
+    Sessions:           newStubSessionStore(),
+    VerificationTokens: newStubVerificationStore(),
+    ResetTokens:        newStubResetStore(),
+    Captchas:           newStubCaptchaStore(),
+    Mailer:             stubMailer{},
+    Logger:             logger,
+  })
+  proj := newStubProjectStore()
+  dom := newStubDomainStore()
+  gen := newStubGenerationStore()
+  prompts := newStubPromptStore()
+  promptOverrides := newStubPromptOverrideStore()
+  deployments := newStubDeploymentAttemptStore()
+  schedules := newStubScheduleStore()
+  linkSchedules := newStubLinkScheduleStore()
+  siteFiles := newStubSiteFileStore()
+  fileEdits := newStubFileEditStore()
+  linkTasks := newStubLinkTaskStore()
+  genQueue := newStubGenQueueStore()
+  indexChecks := newStubIndexCheckStore()
+  checkHistory := newStubCheckHistoryStore()
+  return New(cfg, svc, logger, proj, nil, dom, gen, prompts, promptOverrides, deployments, schedules, linkSchedules, nil, siteFiles, fileEdits, linkTasks, genQueue, indexChecks, checkHistory, nil, nil, newStubEnqueuer())
 }
 
 func TestRegisterAndLogin(t *testing.T) {
@@ -452,6 +454,150 @@ func TestAdminCanGenerateWithoutMembership(t *testing.T) {
 	s.handleDomainGenerate(rec, req, domainID)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("expected 202 for admin generate, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDomainGenerateSSHRemoteRequiresServerID(t *testing.T) {
+	s := setupServer(t)
+	s.cfg.DeployMode = "ssh_remote"
+	cfg := s.cfg
+	cfg.APIKeySecret = "test-secret-key"
+	users := newStubUserStore()
+	s.svc = auth.NewService(auth.ServiceDeps{
+		Config:             cfg,
+		Users:              users,
+		Sessions:           newStubSessionStore(),
+		VerificationTokens: newStubVerificationStore(),
+		ResetTokens:        newStubResetStore(),
+		Captchas:           newStubCaptchaStore(),
+		Mailer:             stubMailer{},
+		Logger:             zap.NewNop().Sugar(),
+	})
+
+	const (
+		projectID = "project-preflight-no-server"
+		domainID  = "domain-preflight-no-server"
+		admin     = "admin@example.com"
+		owner     = "owner@example.com"
+	)
+	now := time.Now().UTC()
+	users.users[admin] = "pass"
+	users.verified[admin] = true
+	users.roles[admin] = "admin"
+	users.approved[admin] = true
+	_ = users.SetAPIKey(context.Background(), admin, []byte("enc-key"), now)
+	users.users[owner] = "pass"
+	users.verified[owner] = true
+	users.roles[owner] = "manager"
+	users.approved[owner] = true
+
+	s.projects.(*stubProjectStore).projects[projectID] = sqlstore.Project{
+		ID:        projectID,
+		UserEmail: owner,
+		Name:      "Project",
+		Status:    "active",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	s.domains.(*stubDomainStore).domains[domainID] = sqlstore.Domain{
+		ID:             domainID,
+		ProjectID:      projectID,
+		URL:            "preflight.example",
+		MainKeyword:    "keyword",
+		Status:         "waiting",
+		DeploymentMode: sqlstore.NullableString("ssh_remote"),
+		PublishedPath:  sqlstore.NullableString("/var/www/preflight.example"),
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+
+	adminCtx := context.WithValue(context.Background(), currentUserContextKey, auth.User{Email: admin, Role: "admin"})
+	req := httptest.NewRequest(http.MethodPost, "/api/domains/"+domainID+"/generate", strings.NewReader(`{}`)).WithContext(adminCtx)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.handleDomainGenerate(rec, req, domainID)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Не указан сервер (server_id) для удаленной публикации.") {
+		t.Fatalf("unexpected body: %s", rec.Body.String())
+	}
+	if len(s.generations.(*stubGenerationStore).generations) != 0 {
+		t.Fatalf("generation should not be created on preflight failure")
+	}
+}
+
+func TestDomainGenerateSSHRemotePreflightPathNotReady(t *testing.T) {
+	s := setupServer(t)
+	s.cfg.DeployMode = "ssh_remote"
+	s.SetContentBackend(domainfs.NewLocalFSBackend(t.TempDir()))
+	cfg := s.cfg
+	cfg.APIKeySecret = "test-secret-key"
+	users := newStubUserStore()
+	s.svc = auth.NewService(auth.ServiceDeps{
+		Config:             cfg,
+		Users:              users,
+		Sessions:           newStubSessionStore(),
+		VerificationTokens: newStubVerificationStore(),
+		ResetTokens:        newStubResetStore(),
+		Captchas:           newStubCaptchaStore(),
+		Mailer:             stubMailer{},
+		Logger:             zap.NewNop().Sugar(),
+	})
+
+	const (
+		projectID = "project-preflight-path"
+		domainID  = "domain-preflight-path"
+		admin     = "admin@example.com"
+		owner     = "owner@example.com"
+	)
+	now := time.Now().UTC()
+	users.users[admin] = "pass"
+	users.verified[admin] = true
+	users.roles[admin] = "admin"
+	users.approved[admin] = true
+	_ = users.SetAPIKey(context.Background(), admin, []byte("enc-key"), now)
+	users.users[owner] = "pass"
+	users.verified[owner] = true
+	users.roles[owner] = "manager"
+	users.approved[owner] = true
+
+	s.projects.(*stubProjectStore).projects[projectID] = sqlstore.Project{
+		ID:        projectID,
+		UserEmail: owner,
+		Name:      "Project",
+		Status:    "active",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	s.domains.(*stubDomainStore).domains[domainID] = sqlstore.Domain{
+		ID:             domainID,
+		ProjectID:      projectID,
+		ServerID:       sqlstore.NullableString("media1"),
+		URL:            "preflight-path.example",
+		MainKeyword:    "keyword",
+		Status:         "waiting",
+		DeploymentMode: sqlstore.NullableString("ssh_remote"),
+		PublishedPath:  sqlstore.NullableString("/var/www/preflight-path.example"),
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+
+	adminCtx := context.WithValue(context.Background(), currentUserContextKey, auth.User{Email: admin, Role: "admin"})
+	req := httptest.NewRequest(http.MethodPost, "/api/domains/"+domainID+"/generate", strings.NewReader(`{}`)).WithContext(adminCtx)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.handleDomainGenerate(rec, req, domainID)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Сайт еще не настроен на сервере, обратитесь к администратору.") {
+		t.Fatalf("unexpected body: %s", rec.Body.String())
+	}
+	if len(s.generations.(*stubGenerationStore).generations) != 0 {
+		t.Fatalf("generation should not be created on preflight failure")
 	}
 }
 

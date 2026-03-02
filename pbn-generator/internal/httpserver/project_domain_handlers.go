@@ -22,6 +22,8 @@ import (
 
 // --- Projects / Domains / Generations ---
 
+var errDomainGeneratePreflightServerID = errors.New("domain generate preflight: missing server_id")
+
 func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
 	user, ok := currentUserFromContext(r.Context())
 	if !ok || user.Email == "" {
@@ -850,6 +852,30 @@ func (s *Server) handleProjectDomains(w http.ResponseWriter, r *http.Request, pr
 			if targetLanguage == "" {
 				targetLanguage = p.TargetLanguage
 			}
+
+			var pubPath, siteOwner string
+			domainStatus := "waiting"
+
+			if s.resolveDomainDeploymentMode(sqlstore.Domain{}) == "ssh_remote" {
+				parsedUrl, _ := url.Parse(cleanURL)
+				host := parsedUrl.Hostname()
+				if host == "" {
+					host = cleanURL
+				}
+
+				discoveredPath, discoveredOwner, discErr := s.contentBackend.DiscoverDomain(r.Context(), serverID, host)
+				if discErr != nil {
+					if s.logger != nil {
+						s.logger.Warnf("Сайт %s пропущен: не настроен на сервере (%v)", cleanURL, discErr)
+					}
+					// Если домена нет на сервере, просто пропускаем его и не добавляем в БД
+					skipped++
+					continue
+				}
+				pubPath = discoveredPath
+				siteOwner = discoveredOwner
+				domainStatus = "published"
+			}
 			d := sqlstore.Domain{
 				ID:             uuid.NewString(),
 				ProjectID:      projectID,
@@ -858,7 +884,14 @@ func (s *Server) handleProjectDomains(w http.ResponseWriter, r *http.Request, pr
 				TargetCountry:  targetCountry,
 				TargetLanguage: targetLanguage,
 				ServerID:       sqlstore.NullableString(serverID),
-				Status:         "waiting",
+				Status:         domainStatus,
+			}
+
+			if pubPath != "" {
+				d.PublishedPath = sqlstore.NullableString(pubPath)
+			}
+			if siteOwner != "" {
+				d.SiteOwner = sqlstore.NullableString(siteOwner)
 			}
 			if err := s.domains.Create(r.Context(), d); err != nil {
 				if s.logger != nil {
@@ -918,6 +951,32 @@ func (s *Server) handleProjectDomains(w http.ResponseWriter, r *http.Request, pr
 			return
 		}
 		_ = s.domains.EnsureDefaultServer(r.Context(), p.UserEmail)
+
+		serverIDToUse := sqlstore.DefaultServerID
+		if body.ServerID != "" {
+			serverIDToUse = body.ServerID
+		}
+
+		var pubPath, siteOwner string
+		domainStatus := "waiting"
+
+		if s.resolveDomainDeploymentMode(sqlstore.Domain{}) == "ssh_remote" {
+			parsedUrl, _ := url.Parse(cleanURL)
+			host := parsedUrl.Hostname()
+			if host == "" {
+				host = cleanURL
+			}
+
+			discoveredPath, discoveredOwner, discErr := s.contentBackend.DiscoverDomain(r.Context(), serverIDToUse, host)
+			if discErr != nil {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("Сайт еще не настроен на сервере: %v", discErr))
+				return
+			}
+			pubPath = discoveredPath
+			siteOwner = discoveredOwner
+			domainStatus = "published"
+		}
+
 		d := sqlstore.Domain{
 			ID:             uuid.NewString(),
 			ProjectID:      projectID,
@@ -925,11 +984,15 @@ func (s *Server) handleProjectDomains(w http.ResponseWriter, r *http.Request, pr
 			MainKeyword:    body.Keyword,
 			TargetCountry:  p.TargetCountry,
 			TargetLanguage: p.TargetLanguage,
-			ServerID:       sqlstore.NullableString(sqlstore.DefaultServerID),
-			Status:         "waiting",
+			ServerID:       sqlstore.NullableString(serverIDToUse),
+			Status:         domainStatus,
 		}
-		if body.ServerID != "" {
-			d.ServerID = sqlstore.NullableString(body.ServerID)
+
+		if pubPath != "" {
+			d.PublishedPath = sqlstore.NullableString(pubPath)
+		}
+		if siteOwner != "" {
+			d.SiteOwner = sqlstore.NullableString(siteOwner)
 		}
 		if err := s.domains.Create(r.Context(), d); err != nil {
 			writeError(w, http.StatusInternalServerError, "could not create domain")
@@ -1152,6 +1215,32 @@ func (s *Server) handleDomainBase(w http.ResponseWriter, r *http.Request, domain
 	}
 }
 
+func (s *Server) resolveDomainDeploymentMode(domain sqlstore.Domain) string {
+	if mode := strings.ToLower(strings.TrimSpace(s.cfg.DeployMode)); mode == "local_mock" {
+		return "local_mock"
+	}
+	return "ssh_remote"
+}
+
+func (s *Server) ensureDomainGeneratePreflight(ctx context.Context, domain sqlstore.Domain) error {
+	if s.resolveDomainDeploymentMode(domain) != "ssh_remote" {
+		return nil
+	}
+	if strings.TrimSpace(nullableStringValue(domain.ServerID)) == "" {
+		return errDomainGeneratePreflightServerID
+	}
+	if strings.TrimSpace(nullableStringValue(domain.PublishedPath)) == "" {
+		return errors.New("published_path is empty")
+	}
+	if strings.TrimSpace(s.cfg.DeployMode) != "ssh_remote" {
+		return fmt.Errorf("remote backend is disabled: DEPLOY_MODE=%s", strings.TrimSpace(s.cfg.DeployMode))
+	}
+	if _, err := s.statDomainPathInBackend(ctx, domain, ""); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (s *Server) handleDomainGenerate(w http.ResponseWriter, r *http.Request, domainID string) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -1247,6 +1336,24 @@ func (s *Server) handleDomainGenerate(w http.ResponseWriter, r *http.Request, do
 	}
 	if strings.TrimSpace(d.MainKeyword) == "" {
 		writeError(w, http.StatusBadRequest, "keyword is required")
+		return
+	}
+	if err := s.ensureDomainGeneratePreflight(r.Context(), d); err != nil {
+		if s.logger != nil {
+			s.logger.Warnw("domain generate preflight failed",
+				"domain_id", d.ID,
+				"project_id", d.ProjectID,
+				"deployment_mode", s.resolveDomainDeploymentMode(d),
+				"server_id", nullableStringValue(d.ServerID),
+				"published_path", nullableStringValue(d.PublishedPath),
+				"error", err,
+			)
+		}
+		if errors.Is(err, errDomainGeneratePreflightServerID) {
+			writeError(w, http.StatusBadRequest, "Не указан сервер (server_id) для удаленной публикации.")
+			return
+		}
+		writeError(w, http.StatusBadRequest, "Сайт еще не настроен на сервере, обратитесь к администратору.")
 		return
 	}
 	genID := uuid.NewString()

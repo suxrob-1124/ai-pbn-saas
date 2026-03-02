@@ -1,12 +1,16 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"fmt"
+
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 type Config struct {
@@ -75,6 +79,17 @@ type Config struct {
 	GenQueueShards                 int
 	LinkQueueShards                int
 	DeployBaseDir                  string
+	DeployMode                     string
+	DeployTimeout                  time.Duration
+	DeployMaxParallel              int
+	DeployStagingStrategy          string
+	DeployStagingDirName           string
+	DeployTargetsJSON              string
+	DeployKnownHostsPath           string
+	DeploySSHPoolMaxOpen           int
+	DeploySSHPoolMaxIdle           int
+	DeploySSHPoolIdleTTL           time.Duration
+	DeploySSHKeyPath               string
 	GenerationTransitionStaleAfter time.Duration
 	IndexCheckerInterval           time.Duration
 	IndexCheckStaleTimeout         time.Duration
@@ -148,6 +163,17 @@ func Load() Config {
 		GenQueueShards:                 envInt("GEN_QUEUE_SHARDS", 8),
 		LinkQueueShards:                envInt("LINK_QUEUE_SHARDS", envInt("GEN_QUEUE_SHARDS", 8)),
 		DeployBaseDir:                  env("DEPLOY_BASE_DIR", "server"),
+		DeployMode:                     strings.ToLower(env("DEPLOY_MODE", "local_mock")),
+		DeployTimeout:                  envDuration("DEPLOY_TIMEOUT", 30*time.Second),
+		DeployMaxParallel:              envInt("DEPLOY_MAX_PARALLEL", 5),
+		DeployStagingStrategy:          strings.ToLower(env("DEPLOY_STAGING_STRATEGY", "co_located")),
+		DeployStagingDirName:           env("DEPLOY_STAGING_DIR_NAME", ".tmp_deploy"),
+		DeployTargetsJSON:              env("DEPLOY_TARGETS_JSON", ""),
+		DeployKnownHostsPath:           env("DEPLOY_KNOWN_HOSTS_PATH", ""),
+		DeploySSHPoolMaxOpen:           envInt("DEPLOY_SSH_POOL_MAX_OPEN", 5),
+		DeploySSHPoolMaxIdle:           envInt("DEPLOY_SSH_POOL_MAX_IDLE", 2),
+		DeploySSHPoolIdleTTL:           envDuration("DEPLOY_SSH_POOL_IDLE_TTL", 60*time.Second),
+		DeploySSHKeyPath:               env("DEPLOY_SSH_KEY_PATH", ""),
 		GenerationTransitionStaleAfter: envDuration("GEN_TRANSITION_STALE_AFTER", 2*time.Minute),
 		IndexCheckerInterval:           envDuration("INDEX_CHECK_INTERVAL", 10*time.Minute),
 		IndexCheckStaleTimeout:         envDuration("INDEX_CHECK_STALE_TIMEOUT", 20*time.Minute),
@@ -183,10 +209,136 @@ func (c Config) Validate() error {
 	if c.APIKeySecret == "" {
 		errs = append(errs, "API_KEY_SECRET must be set")
 	}
+	if c.DeployMode != "local_mock" && c.DeployMode != "ssh_remote" {
+		errs = append(errs, "DEPLOY_MODE must be one of: local_mock, ssh_remote")
+	}
+	if trimmedTargets := strings.TrimSpace(c.DeployTargetsJSON); trimmedTargets != "" {
+		if !json.Valid([]byte(trimmedTargets)) {
+			errs = append(errs, "DEPLOY_TARGETS_JSON must be valid JSON")
+		}
+	}
+	if c.DeployMode == "ssh_remote" {
+		if c.DeployTimeout <= 0 {
+			errs = append(errs, "DEPLOY_TIMEOUT must be > 0 for ssh_remote")
+		}
+		if c.DeployMaxParallel <= 0 {
+			errs = append(errs, "DEPLOY_MAX_PARALLEL must be > 0 for ssh_remote")
+		}
+		if strings.TrimSpace(c.DeployStagingStrategy) == "" {
+			errs = append(errs, "DEPLOY_STAGING_STRATEGY is required for ssh_remote")
+		} else if c.DeployStagingStrategy != "co_located" {
+			errs = append(errs, "DEPLOY_STAGING_STRATEGY must be co_located for ssh_remote")
+		}
+		if strings.TrimSpace(c.DeployStagingDirName) == "" {
+			errs = append(errs, "DEPLOY_STAGING_DIR_NAME is required for ssh_remote")
+		}
+		if c.DeploySSHPoolMaxOpen <= 0 {
+			errs = append(errs, "DEPLOY_SSH_POOL_MAX_OPEN must be > 0 for ssh_remote")
+		}
+		if c.DeploySSHPoolMaxIdle <= 0 {
+			errs = append(errs, "DEPLOY_SSH_POOL_MAX_IDLE must be > 0 for ssh_remote")
+		}
+		if c.DeploySSHPoolMaxIdle > c.DeploySSHPoolMaxOpen {
+			errs = append(errs, "DEPLOY_SSH_POOL_MAX_IDLE must be <= DEPLOY_SSH_POOL_MAX_OPEN")
+		}
+		if c.DeploySSHPoolIdleTTL <= 0 {
+			errs = append(errs, "DEPLOY_SSH_POOL_IDLE_TTL must be > 0 for ssh_remote")
+		}
+		if err := validateKnownHosts(c.DeployKnownHostsPath); err != nil {
+			errs = append(errs, err.Error())
+		}
+		if err := validateDeployKeyPermissions(c.DeploySSHKeyPath, c.DeployTargetsJSON); err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
 	if len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "; "))
 	}
 	return nil
+}
+
+func validateKnownHosts(path string) error {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return fmt.Errorf("DEPLOY_KNOWN_HOSTS_PATH is required for ssh_remote")
+	}
+	absPath := filepath.Clean(trimmed)
+	if info, err := os.Stat(absPath); err != nil {
+		return fmt.Errorf("DEPLOY_KNOWN_HOSTS_PATH is not accessible: %v", err)
+	} else if info.IsDir() {
+		return fmt.Errorf("DEPLOY_KNOWN_HOSTS_PATH must point to a file, got directory")
+	}
+	if _, err := knownhosts.New(absPath); err != nil {
+		return fmt.Errorf("DEPLOY_KNOWN_HOSTS_PATH has invalid known_hosts format: %v", err)
+	}
+	return nil
+}
+
+func validateDeployKeyPermissions(legacyKeyPath string, targetsJSON string) error {
+	paths := make([]string, 0, 4)
+	if trimmed := strings.TrimSpace(legacyKeyPath); trimmed != "" {
+		paths = append(paths, trimmed)
+	}
+	fromJSON, err := extractKeyPathsFromTargetsJSON(targetsJSON)
+	if err != nil {
+		return err
+	}
+	paths = append(paths, fromJSON...)
+	seen := make(map[string]struct{}, len(paths))
+	for _, raw := range paths {
+		path := filepath.Clean(strings.TrimSpace(raw))
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		info, err := os.Stat(path)
+		if err != nil {
+			return fmt.Errorf("deploy ssh key path is not accessible (%s): %v", path, err)
+		}
+		if info.IsDir() {
+			return fmt.Errorf("deploy ssh key path must be a file (%s)", path)
+		}
+		if info.Mode().Perm() != 0o600 {
+			return fmt.Errorf("deploy ssh key path must have 0600 permissions (%s), got %04o", path, info.Mode().Perm())
+		}
+	}
+	return nil
+}
+
+func extractKeyPathsFromTargetsJSON(raw string) ([]string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil, nil
+	}
+	var payload any
+	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
+		return nil, fmt.Errorf("DEPLOY_TARGETS_JSON must be valid JSON: %v", err)
+	}
+	paths := make([]string, 0, 4)
+	var walk func(any)
+	walk = func(v any) {
+		switch tv := v.(type) {
+		case map[string]any:
+			for key, value := range tv {
+				lk := strings.ToLower(strings.TrimSpace(key))
+				if lk == "ssh_key_path" || lk == "sshkeypath" || lk == "key_path" || lk == "keypath" {
+					if s, ok := value.(string); ok && strings.TrimSpace(s) != "" {
+						paths = append(paths, strings.TrimSpace(s))
+					}
+				}
+				walk(value)
+			}
+		case []any:
+			for _, item := range tv {
+				walk(item)
+			}
+		}
+	}
+	walk(payload)
+	return paths, nil
 }
 
 func env(key, fallback string) string {

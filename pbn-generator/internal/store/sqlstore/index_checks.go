@@ -12,17 +12,19 @@ import (
 
 // IndexCheck описывает проверку индексации домена.
 type IndexCheck struct {
-	ID            string
-	DomainID      string
-	CheckDate     time.Time
-	Status        string
-	IsIndexed     sql.NullBool
-	Attempts      int
-	LastAttemptAt sql.NullTime
-	NextRetryAt   sql.NullTime
-	ErrorMessage  sql.NullString
-	CompletedAt   sql.NullTime
-	CreatedAt     time.Time
+	ID                 string
+	DomainID           string
+	CheckDate          time.Time
+	Status             string
+	IsIndexed          sql.NullBool
+	Attempts           int
+	LastAttemptAt      sql.NullTime
+	NextRetryAt        sql.NullTime
+	ErrorMessage       sql.NullString
+	CompletedAt        sql.NullTime
+	CreatedAt          time.Time
+	ContentQuote       sql.NullString // Цитата из контента сайта для проверки intext:
+	IsContentIndexed   sql.NullBool   // Результат проверки site:domain intext:"quote"
 }
 
 // IndexCheckStore определяет операции над проверками индексации.
@@ -46,6 +48,8 @@ type IndexCheckStore interface {
 	IncrementAttempts(ctx context.Context, checkID string) error
 	SetNextRetry(ctx context.Context, checkID string, nextRetry time.Time) error
 	ResetForManual(ctx context.Context, checkID string, nextRetry time.Time) error
+	UpdateContentResult(ctx context.Context, checkID string, quote string, isContentIndexed *bool) error
+	ListSuccessWithoutQuote(ctx context.Context, limit int) ([]IndexCheck, error)
 	AggregateStats(ctx context.Context, filters IndexCheckFilters) (IndexCheckStats, error)
 	AggregateStatsByDomain(ctx context.Context, domainID string, filters IndexCheckFilters) (IndexCheckStats, error)
 	AggregateStatsByProject(ctx context.Context, projectID string, filters IndexCheckFilters) (IndexCheckStats, error)
@@ -106,8 +110,9 @@ func (s *IndexCheckSQLStore) Create(ctx context.Context, check IndexCheck) error
 		status = "pending"
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO domain_index_checks(
-			id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at
-		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())`,
+			id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at,
+			content_quote, is_content_indexed
+		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(),$11,$12)`,
 		check.ID,
 		check.DomainID,
 		check.CheckDate,
@@ -118,6 +123,8 @@ func (s *IndexCheckSQLStore) Create(ctx context.Context, check IndexCheck) error
 		nullableTime(check.NextRetryAt),
 		nullableString(check.ErrorMessage),
 		nullableTime(check.CompletedAt),
+		nullableString(check.ContentQuote),
+		nullableBool(check.IsContentIndexed),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create index check: %w", err)
@@ -137,8 +144,9 @@ func (s *IndexCheckSQLStore) UpsertManualByDomainAndDate(
 	)
 	id := uuid.NewString()
 	row := s.db.QueryRowContext(ctx, `INSERT INTO domain_index_checks(
-			id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at
-		) VALUES($1,$2,$3,'pending',NULL,0,NULL,$4,NULL,NULL,$4)
+			id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at,
+			content_quote, is_content_indexed
+		) VALUES($1,$2,$3,'pending',NULL,0,NULL,$4,NULL,NULL,$4,NULL,NULL)
 		ON CONFLICT(domain_id, check_date) DO UPDATE
 		SET status='pending',
 			is_indexed=NULL,
@@ -146,9 +154,12 @@ func (s *IndexCheckSQLStore) UpsertManualByDomainAndDate(
 			last_attempt_at=NULL,
 			next_retry_at=$4,
 			error_message=NULL,
-			completed_at=NULL
+			completed_at=NULL,
+			content_quote=NULL,
+			is_content_indexed=NULL
 		RETURNING
 			id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at,
+			content_quote, is_content_indexed,
 			(xmax = 0) AS inserted`,
 		id,
 		domainID,
@@ -167,6 +178,8 @@ func (s *IndexCheckSQLStore) UpsertManualByDomainAndDate(
 		&check.ErrorMessage,
 		&check.CompletedAt,
 		&check.CreatedAt,
+		&check.ContentQuote,
+		&check.IsContentIndexed,
 		&created,
 	); err != nil {
 		return IndexCheck{}, false, fmt.Errorf("failed to upsert manual index check: %w", err)
@@ -177,7 +190,7 @@ func (s *IndexCheckSQLStore) UpsertManualByDomainAndDate(
 // Get возвращает проверку по ID.
 func (s *IndexCheckSQLStore) Get(ctx context.Context, checkID string) (*IndexCheck, error) {
 	var check IndexCheck
-	if err := s.db.QueryRowContext(ctx, `SELECT id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at
+	if err := s.db.QueryRowContext(ctx, `SELECT id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at, content_quote, is_content_indexed
 		FROM domain_index_checks WHERE id=$1`, checkID).
 		Scan(
 			&check.ID,
@@ -191,6 +204,8 @@ func (s *IndexCheckSQLStore) Get(ctx context.Context, checkID string) (*IndexChe
 			&check.ErrorMessage,
 			&check.CompletedAt,
 			&check.CreatedAt,
+			&check.ContentQuote,
+			&check.IsContentIndexed,
 		); err != nil {
 		return nil, err
 	}
@@ -200,7 +215,7 @@ func (s *IndexCheckSQLStore) Get(ctx context.Context, checkID string) (*IndexChe
 // GetByDomainAndDate возвращает проверку по домену и дате.
 func (s *IndexCheckSQLStore) GetByDomainAndDate(ctx context.Context, domainID string, date time.Time) (*IndexCheck, error) {
 	var check IndexCheck
-	if err := s.db.QueryRowContext(ctx, `SELECT id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at
+	if err := s.db.QueryRowContext(ctx, `SELECT id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at, content_quote, is_content_indexed
 		FROM domain_index_checks WHERE domain_id=$1 AND check_date=$2`, domainID, date).
 		Scan(
 			&check.ID,
@@ -214,6 +229,8 @@ func (s *IndexCheckSQLStore) GetByDomainAndDate(ctx context.Context, domainID st
 			&check.ErrorMessage,
 			&check.CompletedAt,
 			&check.CreatedAt,
+			&check.ContentQuote,
+			&check.IsContentIndexed,
 		); err != nil {
 		return nil, err
 	}
@@ -292,7 +309,7 @@ func (s *IndexCheckSQLStore) CountFailed(ctx context.Context, filters IndexCheck
 
 // ListPendingRetries возвращает проверки, готовые к повторной попытке.
 func (s *IndexCheckSQLStore) ListPendingRetries(ctx context.Context) ([]IndexCheck, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at
+	rows, err := s.db.QueryContext(ctx, `SELECT id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at, content_quote, is_content_indexed
 		FROM domain_index_checks
 		WHERE status='checking' AND next_retry_at IS NOT NULL AND next_retry_at <= NOW()
 		ORDER BY next_retry_at ASC, created_at ASC`)
@@ -306,7 +323,7 @@ func (s *IndexCheckSQLStore) ListPendingRetries(ctx context.Context) ([]IndexChe
 
 // ListStaleChecking returns checks stuck in checking without scheduled retry.
 func (s *IndexCheckSQLStore) ListStaleChecking(ctx context.Context, olderThan time.Time) ([]IndexCheck, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at
+	rows, err := s.db.QueryContext(ctx, `SELECT id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at, content_quote, is_content_indexed
 		FROM domain_index_checks
 		WHERE status='checking'
 			AND next_retry_at IS NULL
@@ -330,7 +347,7 @@ func (s *IndexCheckSQLStore) TryMarkChecking(ctx context.Context, checkID string
 				status='pending'
 				OR (status='checking' AND next_retry_at IS NOT NULL AND next_retry_at <= NOW())
 			)
-		RETURNING id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at`, checkID)
+		RETURNING id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at, content_quote, is_content_indexed`, checkID)
 	var check IndexCheck
 	if err := row.Scan(
 		&check.ID,
@@ -344,6 +361,8 @@ func (s *IndexCheckSQLStore) TryMarkChecking(ctx context.Context, checkID string
 		&check.ErrorMessage,
 		&check.CompletedAt,
 		&check.CreatedAt,
+		&check.ContentQuote,
+		&check.IsContentIndexed,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			current, getErr := s.Get(ctx, checkID)
@@ -416,6 +435,60 @@ func (s *IndexCheckSQLStore) ResetForManual(ctx context.Context, checkID string,
 	return nil
 }
 
+// UpdateContentResult сохраняет цитату и результат проверки индексации контента.
+func (s *IndexCheckSQLStore) UpdateContentResult(ctx context.Context, checkID string, quote string, isContentIndexed *bool) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE domain_index_checks
+		SET content_quote=$1, is_content_indexed=$2
+		WHERE id=$3`,
+		quote,
+		nullableBool(nullBool(isContentIndexed)),
+		checkID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update content result: %w", err)
+	}
+	return nil
+}
+
+// ListSuccessWithoutQuote возвращает успешные проверки без цитаты для backfill.
+func (s *IndexCheckSQLStore) ListSuccessWithoutQuote(ctx context.Context, limit int) ([]IndexCheck, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at, content_quote, is_content_indexed
+		FROM domain_index_checks
+		WHERE status='success' AND content_quote IS NULL
+		ORDER BY created_at DESC
+		LIMIT $1`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list success without quote: %w", err)
+	}
+	defer rows.Close()
+	var out []IndexCheck
+	for rows.Next() {
+		var c IndexCheck
+		if err := rows.Scan(
+			&c.ID,
+			&c.DomainID,
+			&c.CheckDate,
+			&c.Status,
+			&c.IsIndexed,
+			&c.Attempts,
+			&c.LastAttemptAt,
+			&c.NextRetryAt,
+			&c.ErrorMessage,
+			&c.CompletedAt,
+			&c.CreatedAt,
+			&c.ContentQuote,
+			&c.IsContentIndexed,
+		); err != nil {
+			return nil, fmt.Errorf("scan success without quote: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 func (s *IndexCheckSQLStore) listIndexChecks(ctx context.Context, filters IndexCheckFilters) ([]IndexCheck, error) {
 	return s.listIndexChecksWithBase(ctx,
 		"domain_index_checks c",
@@ -445,7 +518,7 @@ func (s *IndexCheckSQLStore) listIndexChecksWithBase(
 		hasDomainJoin,
 	)
 
-	query := fmt.Sprintf(`SELECT c.id, c.domain_id, c.check_date, c.status, c.is_indexed, c.attempts, c.last_attempt_at, c.next_retry_at, c.error_message, c.completed_at, c.created_at
+	query := fmt.Sprintf(`SELECT c.id, c.domain_id, c.check_date, c.status, c.is_indexed, c.attempts, c.last_attempt_at, c.next_retry_at, c.error_message, c.completed_at, c.created_at, c.content_quote, c.is_content_indexed
 		FROM %s`, fromTable)
 	if len(clauses) > 0 {
 		query += " WHERE " + strings.Join(clauses, " AND ")
@@ -680,6 +753,8 @@ func scanIndexChecks(rows *sql.Rows) ([]IndexCheck, error) {
 			&check.ErrorMessage,
 			&check.CompletedAt,
 			&check.CreatedAt,
+			&check.ContentQuote,
+			&check.IsContentIndexed,
 		); err != nil {
 			return nil, err
 		}

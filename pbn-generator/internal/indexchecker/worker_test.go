@@ -234,6 +234,25 @@ func (s *stubIndexCheckStore) SetNextRetry(ctx context.Context, checkID string, 
 	return nil
 }
 
+func (s *stubIndexCheckStore) ListSuccessWithoutQuote(_ context.Context, limit int) ([]sqlstore.IndexCheck, error) {
+	return nil, nil
+}
+
+func (s *stubIndexCheckStore) UpdateContentResult(ctx context.Context, checkID string, quote string, isContentIndexed *bool) error {
+	check, ok := s.checks[checkID]
+	if !ok {
+		return sql.ErrNoRows
+	}
+	check.ContentQuote = sql.NullString{String: quote, Valid: quote != ""}
+	if isContentIndexed != nil {
+		check.IsContentIndexed = sql.NullBool{Bool: *isContentIndexed, Valid: true}
+	} else {
+		check.IsContentIndexed = sql.NullBool{}
+	}
+	s.checks[checkID] = check
+	return nil
+}
+
 type stubHistoryStore struct {
 	created []sqlstore.CheckHistory
 	err     error
@@ -261,6 +280,10 @@ func (s *stubChecker) Check(ctx context.Context, domain, geo string) (bool, erro
 		return val, nil
 	}
 	return s.defaultIndexed, nil
+}
+
+func (s *stubChecker) CheckWithQuote(ctx context.Context, domain, quote, geo string) (bool, error) {
+	return false, nil
 }
 
 func TestRunIndexCheckerTickSuccess(t *testing.T) {

@@ -93,39 +93,28 @@ func baseMimeType(m string) string {
 	return strings.TrimSpace(strings.SplitN(m, ";", 2)[0])
 }
 
-func listDomainDirs(domain sqlstore.Domain) ([]string, error) {
-	domainDir, err := domainFilesDir(domain.URL)
+func (s *Server) listDomainDirs(ctx context.Context, domain sqlstore.Domain) ([]string, error) {
+	items, err := s.resolveContentBackend().ListTree(ctx, makeDomainFSContext(domain), "")
 	if err != nil {
 		return nil, err
 	}
 	out := make([]string, 0, 16)
-	err = filepath.WalkDir(domainDir, func(curr string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
+	for _, item := range items {
+		if !item.IsDir {
+			continue
 		}
-		if curr == domainDir || !d.IsDir() {
-			return nil
-		}
-		rel, err := filepath.Rel(domainDir, curr)
-		if err != nil {
-			return nil
-		}
-		rel = filepath.ToSlash(strings.TrimSpace(rel))
+		rel := filepath.ToSlash(strings.TrimSpace(item.Path))
 		if rel == "" || rel == "." {
-			return nil
+			continue
 		}
 		clean, err := sanitizeFilePath(rel)
 		if err != nil {
-			return nil
+			continue
 		}
 		if err := validateEditorPath(clean); err != nil {
-			return filepath.SkipDir
+			continue
 		}
 		out = append(out, clean)
-		return nil
-	})
-	if err != nil {
-		return nil, err
 	}
 	sort.Strings(out)
 	return out, nil
@@ -181,17 +170,9 @@ func (s *Server) readDomainFileContent(ctx context.Context, domain sqlstore.Doma
 	if err != nil {
 		return "", "", err
 	}
-	domainDir, err := domainFilesDir(domain.URL)
+	content, err := s.readDomainFileBytesFromBackend(ctx, domain, relPath)
 	if err != nil {
-		return "", "", err
-	}
-	fullPath := filepath.Join(domainDir, filepath.FromSlash(relPath))
-	if err := ensurePathWithin(domainDir, fullPath); err != nil {
-		return "", "", err
-	}
-	content, err := os.ReadFile(fullPath)
-	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return "", "", sql.ErrNoRows
 		}
 		return "", "", err
@@ -223,18 +204,10 @@ func detectImageDimensions(domain sqlstore.Domain, relPath string) (int, int, bo
 	return cfg.Width, cfg.Height, true
 }
 
-func (s *Server) readDomainFileBytes(domain sqlstore.Domain, relPath string) ([]byte, error) {
-	domainDir, err := domainFilesDir(domain.URL)
+func (s *Server) readDomainFileBytes(ctx context.Context, domain sqlstore.Domain, relPath string) ([]byte, error) {
+	content, err := s.readDomainFileBytesFromBackend(ctx, domain, relPath)
 	if err != nil {
-		return nil, err
-	}
-	fullPath := filepath.Join(domainDir, filepath.FromSlash(relPath))
-	if err := ensurePathWithin(domainDir, fullPath); err != nil {
-		return nil, err
-	}
-	content, err := os.ReadFile(fullPath)
-	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil, sql.ErrNoRows
 		}
 		return nil, err

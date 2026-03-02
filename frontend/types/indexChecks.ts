@@ -13,6 +13,8 @@ export type IndexCheckDTO = {
   check_date: string;
   status: IndexCheckStatus;
   is_indexed?: boolean | null;
+  content_quote?: string | null;
+  is_content_indexed?: boolean | null;
   attempts: number;
   last_attempt_at?: string | null;
   next_retry_at?: string | null;

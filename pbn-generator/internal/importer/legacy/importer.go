@@ -200,7 +200,9 @@ func (i *Importer) processRow(ctx context.Context, row ManifestRow, opts RunOpti
 		}
 		res.Actions = append(res.Actions, projectActions...)
 
-		domain, domainExisted, domainActions, err := i.resolveDomain(ctx, row, project, normalizedDomain, opts.Mode)
+		var domainExisted bool
+		var domainActions []string
+		domain, domainExisted, domainActions, err = i.resolveDomain(ctx, row, project, normalizedDomain, opts.Mode)
 		if err != nil {
 			return fail(err)
 		}
@@ -386,6 +388,11 @@ func (i *Importer) resolveDomain(ctx context.Context, row ManifestRow, project s
 			if err := i.domains.Create(ctx, d); err != nil {
 				return sqlstore.Domain{}, false, nil, fmt.Errorf("create domain: %w", err)
 			}
+			created, err := i.domains.GetByURL(ctx, normalizedDomain)
+			if err != nil {
+				return sqlstore.Domain{}, false, nil, fmt.Errorf("reload created domain: %w", err)
+			}
+			d = created
 			actions = append(actions, "domain_created")
 		} else {
 			actions = append(actions, "domain_would_create")
@@ -525,6 +532,7 @@ func (i *Importer) syncLegacyArtifacts(ctx context.Context, domain sqlstore.Doma
 	promptID := LegacyDecodePromptID
 	logs := []byte(`["legacy decode artifacts synthetic generation"]`)
 
+	generationDomainID := strings.TrimSpace(domain.ID)
 	var generationID string
 	if legacyGen != nil {
 		generationID = legacyGen.ID
@@ -536,7 +544,7 @@ func (i *Importer) syncLegacyArtifacts(ctx context.Context, domain sqlstore.Doma
 		generationID = genID
 		gen := sqlstore.Generation{
 			ID:          genID,
-			DomainID:    domain.ID,
+			DomainID:    generationDomainID,
 			RequestedBy: sqlstore.NullableString(ownerEmail),
 			Status:      "success",
 			Progress:    100,
@@ -547,12 +555,31 @@ func (i *Importer) syncLegacyArtifacts(ctx context.Context, domain sqlstore.Doma
 			PromptID:    sqlstore.NullableString(promptID),
 		}
 		if err := i.gens.Create(ctx, gen); err != nil {
-			return nil, nil, fmt.Errorf("create legacy synthetic generation: %w", err)
+			if isGenerationDomainFKError(err) {
+				refreshedDomain, refreshErr := i.domains.GetByURL(ctx, strings.TrimSpace(domain.URL))
+				if refreshErr == nil {
+					refreshedID := strings.TrimSpace(refreshedDomain.ID)
+					if refreshedID != "" && refreshedID != gen.DomainID {
+						gen.DomainID = refreshedID
+						if retryErr := i.gens.Create(ctx, gen); retryErr == nil {
+							generationDomainID = refreshedID
+						} else {
+							return nil, nil, fmt.Errorf("create legacy synthetic generation: %w (retry with refreshed domain_id=%s failed: %v)", err, refreshedID, retryErr)
+						}
+					} else {
+						return nil, nil, fmt.Errorf("create legacy synthetic generation: %w (domain_id=%q, refreshed_id=%q)", err, gen.DomainID, refreshedID)
+					}
+				} else {
+					return nil, nil, fmt.Errorf("create legacy synthetic generation: %w (refresh domain by url failed: %v)", err, refreshErr)
+				}
+			} else {
+				return nil, nil, fmt.Errorf("create legacy synthetic generation: %w", err)
+			}
 		}
 	}
 
 	if shouldUpdateLastGeneration(domain, gens) {
-		if err := i.domains.SetLastGeneration(ctx, domain.ID, generationID); err != nil {
+		if err := i.domains.SetLastGeneration(ctx, generationDomainID, generationID); err != nil {
 			return nil, nil, fmt.Errorf("update domain last_generation_id: %w", err)
 		}
 	}
@@ -640,6 +667,15 @@ func shouldSkipLinkBaseline(domain sqlstore.Domain, decoded *DecodedLink) bool {
 	status := strings.ToLower(strings.TrimSpace(domain.LinkStatus.String))
 	lastTaskID := strings.TrimSpace(domain.LinkLastTaskID.String)
 	return anchor == strings.TrimSpace(decoded.AnchorText) && target == strings.TrimSpace(decoded.TargetURL) && status == "inserted" && lastTaskID != ""
+}
+
+func isGenerationDomainFKError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "generations_domain_id_fkey") ||
+		(strings.Contains(msg, "foreign key") && strings.Contains(msg, "domain_id"))
 }
 
 func validateRunOptions(opts RunOptions) error {

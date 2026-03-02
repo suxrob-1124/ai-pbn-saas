@@ -111,6 +111,15 @@ export function useEditorPageActions(params: UseEditorPageActionsParams) {
   } | null>(null);
 
   const canPreviewCurrentFile = Boolean(selection?.selectedPath?.toLowerCase().endsWith(".html"));
+  const existingPathSet = useMemo(
+    () =>
+      new Set(
+        files
+          .map((file) => (file.path || "").trim().replace(/^\/+/, "").toLowerCase())
+          .filter(Boolean)
+      ),
+    [files]
+  );
 
   const loadFiles = async () => {
     const fileList = await listFiles(domainId);
@@ -223,10 +232,17 @@ export function useEditorPageActions(params: UseEditorPageActionsParams) {
         setScriptPreview("");
         return;
       }
+      const hasStyle = existingPathSet.has("style.css");
+      const hasScript = existingPathSet.has("script.js");
+      if (!hasStyle && !hasScript) {
+        setStylePreview("");
+        setScriptPreview("");
+        return;
+      }
       try {
         const [styleResp, scriptResp] = await Promise.all([
-          getFile(domainId, "style.css").catch(() => null),
-          getFile(domainId, "script.js").catch(() => null),
+          hasStyle ? getFile(domainId, "style.css").catch(() => null) : Promise.resolve(null),
+          hasScript ? getFile(domainId, "script.js").catch(() => null) : Promise.resolve(null),
         ]);
         if (cancelled) return;
         setStylePreview(styleResp?.content || "");
@@ -241,7 +257,7 @@ export function useEditorPageActions(params: UseEditorPageActionsParams) {
     return () => {
       cancelled = true;
     };
-  }, [domainId, selection?.selectedPath, setScriptPreview, setStylePreview]);
+  }, [domainId, selection?.selectedPath, existingPathSet, setScriptPreview, setStylePreview]);
 
   useEffect(() => {
     if (previewMode === "preview" && !canPreviewCurrentFile) {
@@ -401,7 +417,7 @@ export function useEditorPageActions(params: UseEditorPageActionsParams) {
     if (!selectedPath.endsWith(".html")) return "";
     const html = previewSource === "buffer" ? dirtyState.currentContent : dirtyState.originalContent;
     const withAssets = injectRuntimeAssets(html, stylePreview, scriptPreview);
-    return rewriteHtmlAssetRefs(withAssets, domainId);
+    return rewriteHtmlAssetRefs(withAssets, domainId, existingPathSet);
   }, [
     selection,
     currentFile,
@@ -411,6 +427,7 @@ export function useEditorPageActions(params: UseEditorPageActionsParams) {
     stylePreview,
     scriptPreview,
     domainId,
+    existingPathSet,
   ]);
 
   const previewViewportClass = useMemo(() => {
@@ -429,9 +446,10 @@ export function useEditorPageActions(params: UseEditorPageActionsParams) {
     if (!aiCreatePreviewFile.path.toLowerCase().endsWith(".html")) return "";
     return rewriteHtmlAssetRefs(
       injectRuntimeAssets(aiCreatePreviewFile.content || "", stylePreview, scriptPreview),
-      domainId
+      domainId,
+      existingPathSet
     );
-  }, [aiCreatePreviewFile, stylePreview, scriptPreview, domainId]);
+  }, [aiCreatePreviewFile, stylePreview, scriptPreview, domainId, existingPathSet]);
 
   return {
     conflictState,

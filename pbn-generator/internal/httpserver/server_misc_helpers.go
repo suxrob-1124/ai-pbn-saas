@@ -4,6 +4,9 @@ import (
 	"context"
 	"strings"
 
+	"github.com/redis/go-redis/v9"
+
+	"obzornik-pbn-generator/internal/domainfs"
 	"obzornik-pbn-generator/internal/store/sqlstore"
 )
 
@@ -22,6 +25,17 @@ func minInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func (s *Server) SetContentBackend(backend domainfs.SiteContentBackend) {
+	if backend == nil {
+		return
+	}
+	s.contentBackend = backend
+}
+
+func (s *Server) SetDomainFilesRedisCache(client *redis.Client) {
+	s.domainFilesCache = newRedisDomainFilesCache(client)
 }
 
 func stableDomainStatusFromDomain(domain sqlstore.Domain) string {

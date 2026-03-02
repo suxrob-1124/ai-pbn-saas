@@ -27,6 +27,81 @@ type SiteFileStore interface {
 	Delete(ctx context.Context, fileID string) error
 }
 
+// SyncPublishedFilesFromMap синхронизирует файлы домена в БД по уже собранной map.
+func SyncPublishedFilesFromMap(ctx context.Context, domainID string, files map[string][]byte, store SiteFileStore) (int, int64, error) {
+	if store == nil {
+		return 0, 0, errors.New("site file store is nil")
+	}
+	if ctx.Err() != nil {
+		return 0, 0, ctx.Err()
+	}
+	if len(files) == 0 {
+		return 0, 0, errors.New("sync files: no files provided")
+	}
+
+	fileCount := 0
+	var totalSize int64
+	seenPaths := map[string]struct{}{}
+
+	for rawPath, content := range files {
+		if ctx.Err() != nil {
+			return 0, 0, ctx.Err()
+		}
+		clean, err := sanitizeFilePath(rawPath)
+		if err != nil {
+			return 0, 0, fmt.Errorf("sync files: invalid file path %q: %w", rawPath, err)
+		}
+		seenPaths[clean] = struct{}{}
+		hash := sha256.Sum256(content)
+		hashStr := hex.EncodeToString(hash[:])
+		mimeType := detectMimeType(clean, content)
+		size := int64(len(content))
+
+		existing, err := store.GetByPath(ctx, domainID, clean)
+		if err != nil {
+			if !errors.Is(err, sql.ErrNoRows) {
+				return 0, 0, err
+			}
+			file := sqlstore.SiteFile{
+				ID:          uuid.NewString(),
+				DomainID:    domainID,
+				Path:        clean,
+				ContentHash: sql.NullString{String: hashStr, Valid: true},
+				SizeBytes:   size,
+				MimeType:    mimeType,
+			}
+			if err := store.Create(ctx, file); err != nil {
+				return 0, 0, err
+			}
+		} else {
+			if err := store.Update(ctx, existing.ID, content); err != nil {
+				return 0, 0, err
+			}
+		}
+
+		fileCount++
+		totalSize += size
+	}
+
+	existingFiles, err := store.List(ctx, domainID)
+	if err != nil {
+		return 0, 0, err
+	}
+	for _, file := range existingFiles {
+		if _, ok := seenPaths[file.Path]; ok {
+			continue
+		}
+		if err := store.Delete(ctx, file.ID); err != nil {
+			return 0, 0, err
+		}
+	}
+
+	if fileCount == 0 {
+		return 0, 0, errors.New("sync files: no files found")
+	}
+	return fileCount, totalSize, nil
+}
+
 // SyncPublishedFiles сканирует опубликованные файлы и синхронизирует их с БД.
 func SyncPublishedFiles(ctx context.Context, baseDir, domainName, domainID string, store SiteFileStore) (int, int64, error) {
 	if store == nil {

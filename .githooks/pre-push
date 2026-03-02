@@ -32,5 +32,9 @@ while read -r local_ref local_sha remote_ref remote_sha; do
 done
 
 if [[ -s "$TMP_DIFF" ]]; then
-  "$CHECKER" --diff-file "$TMP_DIFF"
+  if [[ -x "$CHECKER" ]]; then
+    "$CHECKER" --diff-file "$TMP_DIFF"
+  else
+    echo "[pre-push] secret checker not found at $CHECKER, skipping"
+  fi
 fi

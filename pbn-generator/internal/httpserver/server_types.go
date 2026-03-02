@@ -11,6 +11,7 @@ import (
 
 	"obzornik-pbn-generator/internal/auth"
 	"obzornik-pbn-generator/internal/config"
+	"obzornik-pbn-generator/internal/domainfs"
 	"obzornik-pbn-generator/internal/store/sqlstore"
 	"obzornik-pbn-generator/internal/tasks"
 )
@@ -181,32 +182,34 @@ type ModelPricingStore interface {
 }
 
 type Server struct {
-	cfg             config.Config
-	svc             *auth.Service
-	projects        ProjectStore
-	projectMembers  *sqlstore.ProjectMemberStore
-	domains         DomainStore
-	generations     GenerationStore
-	prompts         PromptStore
-	promptOverrides PromptOverrideStore
-	deployments     DeploymentAttemptStore
-	schedules       ScheduleStore
-	linkSchedules   LinkScheduleStore
-	auditRules      *sqlstore.AuditStore
-	siteFiles       SiteFileStore
-	fileEdits       FileEditStore
-	linkTasks       LinkTaskStore
-	genQueue        GenQueueStore
-	indexChecks     IndexCheckStore
-	checkHistory    CheckHistoryStore
-	llmUsage        LLMUsageStore
-	modelPricing    ModelPricingStore
-	tasks           tasks.Enqueuer
-	reqDuration     *prometheus.HistogramVec
-	reqCounter      *prometheus.CounterVec
-	genStatus       *prometheus.GaugeVec
-	registry        *prometheus.Registry
-	logger          *zap.SugaredLogger
-	editorCtxMu     sync.Mutex
-	editorCtxCache  map[string]editorContextPackCacheEntry
+	cfg              config.Config
+	svc              *auth.Service
+	projects         ProjectStore
+	projectMembers   *sqlstore.ProjectMemberStore
+	domains          DomainStore
+	generations      GenerationStore
+	prompts          PromptStore
+	promptOverrides  PromptOverrideStore
+	deployments      DeploymentAttemptStore
+	schedules        ScheduleStore
+	linkSchedules    LinkScheduleStore
+	auditRules       *sqlstore.AuditStore
+	siteFiles        SiteFileStore
+	fileEdits        FileEditStore
+	contentBackend   domainfs.SiteContentBackend
+	domainFilesCache domainFilesCache
+	linkTasks        LinkTaskStore
+	genQueue         GenQueueStore
+	indexChecks      IndexCheckStore
+	checkHistory     CheckHistoryStore
+	llmUsage         LLMUsageStore
+	modelPricing     ModelPricingStore
+	tasks            tasks.Enqueuer
+	reqDuration      *prometheus.HistogramVec
+	reqCounter       *prometheus.CounterVec
+	genStatus        *prometheus.GaugeVec
+	registry         *prometheus.Registry
+	logger           *zap.SugaredLogger
+	editorCtxMu      sync.Mutex
+	editorCtxCache   map[string]editorContextPackCacheEntry
 }

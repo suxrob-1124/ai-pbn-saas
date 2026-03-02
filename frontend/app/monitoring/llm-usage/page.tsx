@@ -161,21 +161,27 @@ export default function LLMUsageMonitoringPage() {
                 <th className="py-2 pr-4">Когда</th>
                 <th className="py-2 pr-4">Кто</th>
                 <th className="py-2 pr-4">Операция</th>
+                <th className="py-2 pr-4">Этап</th>
                 <th className="py-2 pr-4">Модель</th>
+                <th className="py-2 pr-4">Статус</th>
                 <th className="py-2 pr-4">Токены</th>
                 <th className="py-2 pr-4">Cost USD</th>
                 <th className="py-2 pr-4">Источник</th>
               </tr>
             </thead>
             <tbody>
-              {events.map((item) => {
-                const isEstimated = item.token_source !== "provider";
-                return (
+              {events.map((item) => (
                 <tr key={item.id} className="border-t border-slate-200 dark:border-slate-800">
                   <td className="py-2 pr-4 whitespace-nowrap">{new Date(item.created_at).toLocaleString()}</td>
                   <td className="py-2 pr-4">{item.requester_email}</td>
                   <td className="py-2 pr-4">{item.operation}</td>
+                  <td className="py-2 pr-4">{item.stage || "—"}</td>
                   <td className="py-2 pr-4">{item.model}</td>
+                  <td className="py-2 pr-4">
+                    <span className={`rounded px-2 py-1 text-xs ${item.status === "error" ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300" : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"}`}>
+                      {item.status}
+                    </span>
+                  </td>
                   <td className="py-2 pr-4">{item.total_tokens ?? "n/a"}</td>
                   <td className="py-2 pr-4">
                     <UsageCostValue
@@ -187,11 +193,10 @@ export default function LLMUsageMonitoringPage() {
                     <UsageTokenSourceBadge tokenSource={item.token_source} />
                   </td>
                 </tr>
-                );
-              })}
+              ))}
               {events.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="py-6 text-center text-slate-500">Нет данных</td>
+                  <td colSpan={9} className="py-6 text-center text-slate-500">Нет данных</td>
                 </tr>
               )}
             </tbody>

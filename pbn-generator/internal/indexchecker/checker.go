@@ -22,6 +22,8 @@ const defaultSerpBaseURL = "https://alfasearchspy.alfasearch.ru/api/v1/ranking/p
 // IndexChecker определяет контракт проверки индексации домена.
 type IndexChecker interface {
 	Check(ctx context.Context, domain string, geo string) (indexed bool, err error)
+	// CheckWithQuote проверяет индексацию цитаты: site:{domain} intext:"{quote}".
+	CheckWithQuote(ctx context.Context, domain string, quote string, geo string) (indexed bool, err error)
 }
 
 // MockChecker используется в тестах и всегда возвращает false.
@@ -29,6 +31,11 @@ type MockChecker struct{}
 
 // Check всегда возвращает false без ошибки.
 func (m MockChecker) Check(ctx context.Context, domain string, geo string) (bool, error) {
+	return false, nil
+}
+
+// CheckWithQuote всегда возвращает false без ошибки.
+func (m MockChecker) CheckWithQuote(ctx context.Context, domain string, quote string, geo string) (bool, error) {
 	return false, nil
 }
 
@@ -47,15 +54,39 @@ func (s *SerpChecker) Check(ctx context.Context, domain string, geo string) (boo
 	if domain == "" {
 		return false, errors.New("domain is required")
 	}
-
-	geo = strings.ToLower(strings.TrimSpace(geo))
-	if geo == "" {
-		geo = "se"
-	}
-
 	puny, err := normalizeDomain(domain)
 	if err != nil {
 		return false, fmt.Errorf("normalize domain: %w", err)
+	}
+	return s.querySerpIndexed(ctx, "site:"+puny, geo)
+}
+
+// CheckWithQuote выполняет запрос site:{domain} intext:"{quote}" к SERP API.
+func (s *SerpChecker) CheckWithQuote(ctx context.Context, domain string, quote string, geo string) (bool, error) {
+	if ctx == nil {
+		return false, errors.New("context is required")
+	}
+	domain = strings.TrimSpace(domain)
+	if domain == "" {
+		return false, errors.New("domain is required")
+	}
+	quote = strings.TrimSpace(quote)
+	if quote == "" {
+		return false, errors.New("quote is required")
+	}
+	puny, err := normalizeDomain(domain)
+	if err != nil {
+		return false, fmt.Errorf("normalize domain: %w", err)
+	}
+	keyword := `site:` + puny + ` intext:"` + quote + `"`
+	return s.querySerpIndexed(ctx, keyword, geo)
+}
+
+// querySerpIndexed выполняет SERP-запрос с заданным keyword и возвращает наличие позиций.
+func (s *SerpChecker) querySerpIndexed(ctx context.Context, keyword string, geo string) (bool, error) {
+	geo = strings.ToLower(strings.TrimSpace(geo))
+	if geo == "" {
+		geo = "se"
 	}
 
 	base := strings.TrimSpace(s.BaseURL)
@@ -64,7 +95,7 @@ func (s *SerpChecker) Check(ctx context.Context, domain string, geo string) (boo
 	}
 
 	params := url.Values{}
-	params.Set("keyword", "site:"+puny)
+	params.Set("keyword", keyword)
 	params.Set("geo", geo)
 	params.Set("group_by", "10")
 	params.Set("device", "MOBILE")
@@ -85,9 +116,9 @@ func (s *SerpChecker) Check(ctx context.Context, domain string, geo string) (boo
 
 		resp, err := client.Do(req)
 		if err != nil {
-			lastErr = fmt.Errorf("serp request failed for domain %q: %v", puny, err)
+			lastErr = fmt.Errorf("serp request failed for keyword %q: %v", keyword, err)
 			if ue, ok := err.(*url.Error); ok && ue.Err != nil {
-				lastErr = fmt.Errorf("serp request failed for domain %q: %v", puny, ue.Err)
+				lastErr = fmt.Errorf("serp request failed for keyword %q: %v", keyword, ue.Err)
 			}
 			if isRetriableSerpErr(err) && attempt < retries {
 				backoff := time.Duration(2*(attempt+1)) * time.Second
@@ -102,15 +133,15 @@ func (s *SerpChecker) Check(ctx context.Context, domain string, geo string) (boo
 		}
 
 		if resp.Body == nil {
-			return false, fmt.Errorf("serp response body is empty for domain %q", puny)
+			return false, fmt.Errorf("serp response body is empty for keyword %q", keyword)
 		}
 		if resp.StatusCode >= 400 {
 			_ = resp.Body.Close()
-			return false, fmt.Errorf("serp status %d for domain %q", resp.StatusCode, puny)
+			return false, fmt.Errorf("serp status %d for keyword %q", resp.StatusCode, keyword)
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
 			_ = resp.Body.Close()
-			lastErr = fmt.Errorf("serp decode failed for domain %q: %v", puny, err)
+			lastErr = fmt.Errorf("serp decode failed for keyword %q: %v", keyword, err)
 			if isRetriableSerpErr(err) && attempt < retries {
 				backoff := time.Duration(2*(attempt+1)) * time.Second
 				select {
@@ -123,7 +154,7 @@ func (s *SerpChecker) Check(ctx context.Context, domain string, geo string) (boo
 			return false, lastErr
 		}
 		if err := resp.Body.Close(); err != nil {
-			lastErr = fmt.Errorf("serp body close failed for domain %q: %v", puny, err)
+			lastErr = fmt.Errorf("serp body close failed for keyword %q: %v", keyword, err)
 			if isRetriableSerpErr(err) && attempt < retries {
 				backoff := time.Duration(2*(attempt+1)) * time.Second
 				select {

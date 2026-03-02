@@ -31,7 +31,7 @@
 - `scheduler` — планировщик generation/link расписаний.
 - `indexchecker` — проверки индексации.
 - `migrate` — миграции.
-- `seed`, `seed_backend` — сидинг.
+- `seed` — сидинг SQL-данными.
 - `frontend` — UI и docs.
 - `db`, `redis`, `prometheus`, `grafana`.
 
@@ -53,6 +53,10 @@ docker compose up --build
 
 По умолчанию поднимутся API, воркеры, frontend, БД, Redis и мониторинг.
 
+Данные PostgreSQL сохраняются в проекте через bind mount:
+- `data/postgres` — рабочие файлы БД
+- `backups/postgres/container` — бэкапы внутри контейнера
+
 ### 3) Доступные URL
 
 - Frontend: `http://localhost:3000`
@@ -62,13 +66,11 @@ docker compose up --build
 - Prometheus: `http://localhost:9090`
 - Grafana: `http://localhost:3001`
 
-### 4) Dev-сидинг через API
+### 4) Dev-сидинг через SQL
 
 ```bash
-./scripts/seed_backend.sh
+docker compose run --rm seed
 ```
-
-Скрипт идемпотентный, создает пользователей/проекты/домены для локальной среды.
 
 ## Локальная разработка (без Docker)
 
@@ -187,10 +189,18 @@ go run ./cmd/migrate
 
 - `GEMINI_API_KEY`
 
-Для dev bootstrap:
+Для deploy scaffold (`local_mock`/`ssh_remote`):
 
-- `BOOTSTRAP_ADMIN_EMAIL`
-- `AUTO_APPROVE_USERS`
+- `DEPLOY_MODE`
+- `DEPLOY_TIMEOUT`
+- `DEPLOY_MAX_PARALLEL`
+- `DEPLOY_STAGING_STRATEGY`
+- `DEPLOY_STAGING_DIR_NAME`
+- `DEPLOY_TARGETS_JSON` (должен быть валидным JSON)
+- `DEPLOY_KNOWN_HOSTS_PATH` (обязателен для `ssh_remote`)
+- `DEPLOY_SSH_POOL_MAX_OPEN`
+- `DEPLOY_SSH_POOL_MAX_IDLE`
+- `DEPLOY_SSH_POOL_IDLE_TTL`
 
 Для SMTP/verification (опционально):
 
@@ -198,6 +208,13 @@ go run ./cmd/migrate
 - `REQUIRE_EMAIL_VERIFICATION`
 
 Используйте `.env` для локальной разработки и `.env.prod` как шаблон прод‑настроек.
+Для onboarding команды используйте `.env.example` (без секретов).
+
+Быстрая локальная ротация внутренних ключей:
+
+```bash
+./ops/security/rotate_local_secrets.sh .env
+```
 
 ## Тестирование
 
@@ -232,29 +249,38 @@ npm run -s verify:project-queue
 ## Безопасность
 
 - Не храните реальные секреты в git.
-- Установите pre-commit/pre-push hooks:
+- Используйте CI-проверки и локальный pre-commit workflow команды.
+- Если секреты уже использовались в dev/логах:
+  - сгенерируйте новые локальные значения через `./ops/security/rotate_local_secrets.sh .env`;
+  - отдельно ротируйте внешние секреты у провайдеров (Gemini API key, SMTP password).
+
+## Бэкап PostgreSQL
+
+Создание бэкапа одновременно:
+- в контейнере `db` (`/var/lib/postgresql/backups`)
+- на локальной машине (`backups/postgres`)
 
 ```bash
-./scripts/install_git_hooks.sh
+./ops/db/backup_postgres.sh
 ```
 
-- Ручная проверка staged diff:
+Переопределение путей при необходимости:
 
 ```bash
-./scripts/check_no_secrets.sh --staged
+BACKUP_CONTAINER_DIR=/var/lib/postgresql/backups \
+BACKUP_LOCAL_DIR=./backups/postgres \
+./ops/db/backup_postgres.sh
 ```
 
-## Текущие рабочие документы по развитию
+## Импорт legacy данных (единая утилита)
 
-- `DOCS_D0_GAP_REPORT.md` — аудит документации и API-покрытия.
-- `REFACTOR_V7_FRONT_BACK_TASKS.md` — план рефакторинга frontend/backend.
-- `EDITOR_V3_FIXES_TODO.md` — backlog редактора.
-- `todo-v4.md` — актуальные рабочие задачи по продукту.
-
-## Импорт/бэкфилл legacy данных
-
-- Импорт: `pbn-generator/cmd/import_legacy/README.md`
-- Бэкфилл артефактов: `pbn-generator/cmd/backfill_legacy_artifacts/README.md`
+- Единый CLI: `pbn-generator/cmd/import_legacy/README.md`
+- В режиме `DEPLOY_MODE=ssh_remote` утилита:
+  - делает inventory/probe удаленного сайта,
+  - зеркалит файлы в temp-папку,
+  - импортирует домен/проект/файлы,
+  - обновляет synthetic generation/artifacts,
+  - записывает `published_path/site_owner/inventory_*` и ставит `deployment_mode=ssh_remote`.
 
 ## Лицензия
 

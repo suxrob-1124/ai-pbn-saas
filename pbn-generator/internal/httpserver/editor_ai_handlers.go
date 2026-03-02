@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -320,7 +319,7 @@ func (s *Server) handleDomainEditorAICreatePage(w http.ResponseWriter, r *http.R
 		"warnings": warnings,
 		"prompt_trace": map[string]any{
 			"resolved_source": promptSource,
-			"model":           selectedModel,
+			"model":           tokenUsage["model"],
 			"stage":           "editor_page_create",
 			"repair_attempts": repairCount,
 		},
@@ -467,20 +466,6 @@ func (s *Server) handleDomainEditorAIRegenerateAsset(w http.ResponseWriter, r *h
 		}
 	}
 
-	domainDir, err := domainFilesDir(domain.URL)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid domain")
-		return
-	}
-	fullPath := filepath.Join(domainDir, filepath.FromSlash(cleanPath))
-	if err := ensurePathWithin(domainDir, fullPath); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid path")
-		return
-	}
-	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not create parent directory")
-		return
-	}
 	existing, getErr := s.siteFiles.GetByPath(r.Context(), domain.ID, cleanPath)
 	if getErr != nil && !errors.Is(getErr, sql.ErrNoRows) {
 		writeError(w, http.StatusInternalServerError, "could not load file")
@@ -488,10 +473,10 @@ func (s *Server) handleDomainEditorAIRegenerateAsset(w http.ResponseWriter, r *h
 	}
 	var oldContent []byte
 	if existing != nil {
-		oldContent, _ = os.ReadFile(fullPath)
+		oldContent, _ = s.readDomainFileBytesFromBackend(r.Context(), domain, cleanPath)
 		_ = s.fileEdits.CreateRevision(r.Context(), buildRevision(existing, oldContent, "ai", requesterEmail, "baseline before ai regenerate asset"))
 	}
-	if err := os.WriteFile(fullPath, imageBytes, 0o644); err != nil {
+	if err := s.writeDomainFileBytesToBackend(r.Context(), domain, cleanPath, imageBytes); err != nil {
 		writeError(w, http.StatusInternalServerError, "could not write file")
 		return
 	}
@@ -520,13 +505,14 @@ func (s *Server) handleDomainEditorAIRegenerateAsset(w http.ResponseWriter, r *h
 			EditDescription:  sql.NullString{String: "ai regenerated asset", Valid: true},
 			ContentAfterHash: sql.NullString{String: hex.EncodeToString(hash[:]), Valid: true},
 		})
+		s.invalidateDomainFilesCache(r.Context(), domain.ID)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"status":   "regenerated",
 			"file":     toFileDTO(domain, file),
 			"warnings": regenWarnings,
 			"prompt_trace": map[string]any{
 				"resolved_source": promptSource,
-				"model":           selectedModel,
+				"model":           tokenUsage["model"],
 				"stage":           "editor_asset_regenerate",
 			},
 			"token_usage":       tokenUsage,
@@ -558,13 +544,14 @@ func (s *Server) handleDomainEditorAIRegenerateAsset(w http.ResponseWriter, r *h
 		writeError(w, http.StatusInternalServerError, "could not load updated file")
 		return
 	}
+	s.invalidateDomainFilesCache(r.Context(), domain.ID)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":   "regenerated",
 		"file":     toFileDTO(domain, *updated),
 		"warnings": regenWarnings,
 		"prompt_trace": map[string]any{
 			"resolved_source": promptSource,
-			"model":           selectedModel,
+			"model":           tokenUsage["model"],
 			"stage":           "editor_asset_regenerate",
 		},
 		"token_usage":       tokenUsage,
@@ -598,6 +585,19 @@ func (s *Server) handleDomainEditorAISuggest(w http.ResponseWriter, r *http.Requ
 		if errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "file not found")
 			return
+		}
+		if s.logger != nil {
+			dctx := makeDomainFSContext(domain)
+			s.logger.Errorf(
+				"ai read file failed: domain_id=%s domain_url=%s mode=%s server_id=%s published_path=%s path=%s err=%v",
+				domain.ID,
+				domain.URL,
+				dctx.DeploymentMode,
+				dctx.ServerID,
+				dctx.PublishedPath,
+				relPath,
+				err,
+			)
 		}
 		writeError(w, http.StatusInternalServerError, "could not read file")
 		return
@@ -656,7 +656,7 @@ func (s *Server) handleDomainEditorAISuggest(w http.ResponseWriter, r *http.Requ
 		"warnings": warnings,
 		"prompt_trace": map[string]any{
 			"resolved_source": promptSource,
-			"model":           selectedModel,
+			"model":           tokenUsage["model"],
 			"stage":           "editor_file_edit",
 		},
 		"token_usage":       tokenUsage,

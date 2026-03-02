@@ -18,7 +18,7 @@ export const EDITOR_IMAGE_MODEL_OPTIONS: EditorModelOption[] = [
 ];
 
 export const AI_CONTEXT_MODE_OPTIONS: AIContextModeOption[] = [
-  { value: "auto", label: "Авто (рекомендуется)" },
+  { value: "manual", label: "Только выбранные файлы (рекомендуется)" },
   { value: "hybrid", label: "Гибрид: авто + выбранные файлы" },
-  { value: "manual", label: "Только выбранные файлы" },
+  { value: "auto", label: "Авто" },
 ];
