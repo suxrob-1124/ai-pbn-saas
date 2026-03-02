@@ -107,7 +107,7 @@ export default function DomainEditorPage() {
   const [aiOutputSourcePath, setAiOutputSourcePath] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
   const [aiModel, setAiModel] = useState("");
-  const [aiContextMode, setAiContextMode] = useState<AIContextMode>("auto");
+  const [aiContextMode, setAiContextMode] = useState<AIContextMode>("manual");
   const [aiContextSelectedFiles, setAiContextSelectedFiles] = useState<string[]>([]);
   const [aiSuggestView, setAiSuggestView] = useState<"diff" | "content">("diff");
   const [aiSuggestMeta, setAiSuggestMeta] = useState<{
@@ -124,7 +124,7 @@ export default function DomainEditorPage() {
   const [aiCreateBusy, setAiCreateBusy] = useState(false);
   const [aiCreateAssetBusyPath, setAiCreateAssetBusyPath] = useState("");
   const [aiCreateModel, setAiCreateModel] = useState("");
-  const [aiCreateContextMode, setAiCreateContextMode] = useState<AIContextMode>("auto");
+  const [aiCreateContextMode, setAiCreateContextMode] = useState<AIContextMode>("manual");
   const [aiCreateContextSelectedFiles, setAiCreateContextSelectedFiles] = useState<string[]>([]);
   const [aiCreateFiles, setAiCreateFiles] = useState<AIPageSuggestionFile[]>([]);
   const [aiCreateAssets, setAiCreateAssets] = useState<AIPageSuggestionAsset[]>([]);

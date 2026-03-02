@@ -76,7 +76,17 @@ export default function ProjectLLMUsagePage() {
 
   const operationOptions = useMemo(() => {
     const values = new Set<string>([
-      "generation_step",
+      "generation_step/competitor_analysis",
+      "generation_step/technical_spec",
+      "generation_step/content_generation",
+      "generation_step/design_architecture",
+      "generation_step/logo_generation",
+      "generation_step/html_generation",
+      "generation_step/css_generation",
+      "generation_step/js_generation",
+      "generation_step/image_generation",
+      "generation_step/image_prompt_generation",
+      "generation_step/404_page",
       "editor_ai_suggest",
       "editor_ai_create_page",
       "editor_ai_regenerate_asset",
