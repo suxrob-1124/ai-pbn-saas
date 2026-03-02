@@ -61,31 +61,25 @@ func (b *SSHBackend) WriteFile(ctx context.Context, dctx DomainFSContext, filePa
 		return err
 	}
 	return b.withSSH(ctx, target, func(client *ssh.Client) error {
-		if _, stderr, runErr := runSSHCommand(ctx, client, "mkdir -p -- "+shellQuote(path.Dir(fullPath)), nil); runErr != nil {
+		dir := path.Dir(fullPath)
+
+		// 1. Убеждаемся, что директория для файла существует
+		if _, stderr, runErr := runSSHCommand(ctx, client, "sudo mkdir -p -- "+shellQuote(dir), nil); runErr != nil {
+			return mapSSHError(runErr, stderr, dir)
+		}
+
+		// 2. Безопасно пишем файл через sudo tee (это обходит любые блокировки папок)
+		writeCmd := "sudo tee -- " + shellQuote(fullPath) + " > /dev/null"
+		if _, stderr, runErr := runSSHCommand(ctx, client, writeCmd, content); runErr != nil {
 			return mapSSHError(runErr, stderr, fullPath)
 		}
-		if _, stderr, runErr := runSSHCommand(ctx, client, "cat > "+shellQuote(fullPath), content); runErr != nil {
-			if isPermissionDeniedOutput(stderr, runErr) {
-				exists, existsErr := b.pathExists(ctx, client, fullPath)
-				if existsErr != nil {
-					return existsErr
-				}
-				if exists {
-					if chownErr := b.chownPath(ctx, client, strings.TrimSpace(target.User), fullPath); chownErr != nil {
-						return chownErr
-					}
-					if _, retryStderr, retryErr := runSSHCommand(ctx, client, "cat > "+shellQuote(fullPath), content); retryErr != nil {
-						return mapSSHError(retryErr, retryStderr, fullPath)
-					}
-				} else {
-					return mapSSHError(runErr, stderr, fullPath)
-				}
-			} else {
-				return mapSSHError(runErr, stderr, fullPath)
-			}
+
+		// 3. Возвращаем правильного владельца файлу (и на всякий случай папке, если она была создана только что)
+		if dctx.SiteOwner != "" {
+			_ = b.applyOwnership(ctx, client, dctx.SiteOwner, fullPath, false)
+			_ = b.applyOwnership(ctx, client, dctx.SiteOwner, dir, false)
 		}
-		// Для editor-write смена owner — best-effort. Ошибка chown не должна ломать сохранение файла.
-		_ = b.applyOwnership(ctx, client, dctx.SiteOwner, fullPath, false)
+
 		return nil
 	})
 }
@@ -97,8 +91,18 @@ func (b *SSHBackend) EnsureDir(ctx context.Context, dctx DomainFSContext, dirPat
 	}
 	return b.withSSH(ctx, target, func(client *ssh.Client) error {
 		if _, stderr, runErr := runSSHCommand(ctx, client, "mkdir -p -- "+shellQuote(fullPath), nil); runErr != nil {
-			return mapSSHError(runErr, stderr, fullPath)
+			if isPermissionDeniedOutput(stderr, runErr) {
+				if _, sudoStderr, sudoErr := runSSHCommand(ctx, client, "sudo mkdir -p -- "+shellQuote(fullPath), nil); sudoErr != nil {
+					return mapSSHError(sudoErr, sudoStderr, fullPath)
+				}
+				if target.User != "" {
+					_ = b.chownPath(ctx, client, target.User, fullPath)
+				}
+			} else {
+				return mapSSHError(runErr, stderr, fullPath)
+			}
 		}
+		// Всегда отдаем права исходному владельцу сайта (чтобы Nginx мог читать файлы)
 		return b.applyOwnership(ctx, client, dctx.SiteOwner, fullPath, false)
 	})
 }
@@ -199,10 +203,14 @@ func (b *SSHBackend) Move(ctx context.Context, dctx DomainFSContext, oldPath, ne
 		return err
 	}
 	return b.withSSH(ctx, target, func(client *ssh.Client) error {
-		if _, stderr, runErr := runSSHCommand(ctx, client, "mkdir -p -- "+shellQuote(path.Dir(newFull)), nil); runErr != nil {
+		destDir := shellQuote(path.Dir(newFull))
+		mkdirCmd := "mkdir -p -- " + destDir + " || sudo mkdir -p -- " + destDir
+		if _, stderr, runErr := runSSHCommand(ctx, client, mkdirCmd, nil); runErr != nil {
 			return mapSSHError(runErr, stderr, newFull)
 		}
-		if _, stderr, runErr := runSSHCommand(ctx, client, "mv -- "+shellQuote(oldFull)+" "+shellQuote(newFull), nil); runErr != nil {
+		mvCmd := "mv -- " + shellQuote(oldFull) + " " + shellQuote(newFull) +
+			" || sudo mv -- " + shellQuote(oldFull) + " " + shellQuote(newFull)
+		if _, stderr, runErr := runSSHCommand(ctx, client, mvCmd, nil); runErr != nil {
 			return mapSSHError(runErr, stderr, oldFull)
 		}
 		return nil
@@ -215,7 +223,13 @@ func (b *SSHBackend) Delete(ctx context.Context, dctx DomainFSContext, relPath s
 		return err
 	}
 	return b.withSSH(ctx, target, func(client *ssh.Client) error {
-		cmd := "if [ -d " + shellQuote(fullPath) + " ]; then rmdir -- " + shellQuote(fullPath) + "; else rm -f -- " + shellQuote(fullPath) + "; fi"
+		// For files/dirs owned by the site owner the SSH user may not have direct
+		// write permission on the parent directory. Try the unprivileged command
+		// first and fall back to sudo so the behaviour is consistent with
+		// DeleteAll which uses sudo chown before rm.
+		cmd := "if [ -d " + shellQuote(fullPath) + " ]; then rmdir -- " + shellQuote(fullPath) +
+			" || sudo rmdir -- " + shellQuote(fullPath) +
+			"; else rm -f -- " + shellQuote(fullPath) + " || sudo rm -f -- " + shellQuote(fullPath) + "; fi"
 		_, stderr, runErr := runSSHCommand(ctx, client, cmd, nil)
 		if runErr != nil {
 			return mapSSHError(runErr, stderr, fullPath)
@@ -225,12 +239,37 @@ func (b *SSHBackend) Delete(ctx context.Context, dctx DomainFSContext, relPath s
 }
 
 func (b *SSHBackend) DeleteAll(ctx context.Context, dctx DomainFSContext, relPath string) error {
-	fullPath, _, target, err := b.resolveTargetAndPath(dctx, relPath)
+	fullPath, rootPath, target, err := b.resolveTargetAndPath(dctx, relPath)
 	if err != nil {
 		return err
 	}
 	return b.withSSH(ctx, target, func(client *ssh.Client) error {
-		_, stderr, runErr := runSSHCommand(ctx, client, "rm -rf -- "+shellQuote(fullPath), nil)
+		// 1. Временно забираем права на директорию себе (рекурсивно) для безопасного удаления
+		if target.User != "" && dctx.SiteOwner != "" {
+			_, stderr, chownErr := runSSHCommand(ctx, client, "sudo chown -R "+strings.TrimSpace(target.User)+" "+shellQuote(fullPath), nil)
+			if chownErr != nil {
+				return fmt.Errorf("failed to take ownership for deletion: %w", mapSSHError(chownErr, stderr, fullPath))
+			}
+		}
+
+		var cmd string
+		if fullPath == rootPath {
+			// Если очищаем весь сайт, удаляем ТОЛЬКО содержимое (включая скрытые файлы),
+			// чтобы не сломать саму папку ISPmanager
+			cmd = "bash -c 'shopt -s dotglob nullglob; rm -rf " + shellQuote(fullPath) + "/*'"
+		} else {
+			// Если это вложенная папка (assets, css и т.д.), удаляем её целиком
+			cmd = "rm -rf -- " + shellQuote(fullPath)
+		}
+
+		// 2. Выполняем удаление безопасно, без sudo
+		_, stderr, runErr := runSSHCommand(ctx, client, cmd, nil)
+
+		// 3. Возвращаем права владельцу сайта на корень (т.к. корень мы не удалили)
+		if fullPath == rootPath && dctx.SiteOwner != "" {
+			_ = b.applyOwnership(ctx, client, dctx.SiteOwner, fullPath, false)
+		}
+
 		if runErr != nil {
 			return mapSSHError(runErr, stderr, fullPath)
 		}
@@ -308,6 +347,24 @@ func (b *SSHBackend) withSSH(ctx context.Context, target SSHTarget, fn func(*ssh
 	if err := fn(lease.Client); err != nil {
 		if isConnectionError(err) {
 			lease.Discard()
+			// Retry once with a fresh connection if the context is still alive.
+			// Stale idle connections silently break; this avoids a spurious 500
+			// on the first read after the SSH server closes the keep-alive.
+			if ctx.Err() != nil {
+				return err
+			}
+			lease2, err2 := b.pool.Acquire(ctx, target)
+			if err2 != nil {
+				return err
+			}
+			defer lease2.Release()
+			if err2 = fn(lease2.Client); err2 != nil {
+				if isConnectionError(err2) {
+					lease2.Discard()
+				}
+				return err2
+			}
+			return nil
 		}
 		return err
 	}
@@ -434,7 +491,7 @@ func runSSHCommand(ctx context.Context, client *ssh.Client, command string, stdi
 	session.Stdout = &stdout
 	session.Stderr = &stderr
 
-	cmd := "sh -lc " + shellQuote(command)
+	cmd := "bash -lc " + shellQuote(command)
 	done := make(chan error, 1)
 	if len(stdin) > 0 {
 		writer, err := session.StdinPipe()
@@ -564,4 +621,148 @@ func isConnectionError(err error) bool {
 		return true
 	}
 	return errors.Is(err, io.EOF) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
+}
+
+func (b *SSHBackend) DiscoverDomain(ctx context.Context, serverID, domainHost string) (string, string, error) {
+	target, err := b.resolveTarget(DomainFSContext{ServerID: serverID})
+	if err != nil {
+		return "", "", err
+	}
+
+	script := buildProbeScript(domainHost)
+
+	var pubPath, owner string
+	err = b.withSSH(ctx, target, func(client *ssh.Client) error {
+		// Обязательно используем bash -lc (мы это правили ранее)
+		stdout, stderr, runErr := runSSHCommand(ctx, client, script, nil)
+		if runErr != nil {
+			return mapSSHError(runErr, stderr, "discovery")
+		}
+
+		// Парсим ответ вручную (без inventory)
+		values := make(map[string]string)
+		lines := strings.Split(string(stdout), "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) == 2 {
+				values[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+			}
+		}
+
+		status := strings.ToLower(values["INVENTORY_STATUS"])
+		switch status {
+		case "found":
+			pubPath = values["INVENTORY_PATH"]
+			owner = values["INVENTORY_OWNER"]
+			return nil
+		case "not_found":
+			return fmt.Errorf("Сайт %s не найден в конфигах Nginx/Apache", domainHost)
+		case "permission_denied":
+			return fmt.Errorf("Сайт найден, но нет прав на папку: %s", values["INVENTORY_PATH"])
+		case "ambiguous":
+			return fmt.Errorf("Найдено несколько путей для %s, невозможно выбрать автоматически", domainHost)
+		default:
+			return fmt.Errorf("Неизвестный ответ сервера: %s", string(stdout))
+		}
+	})
+
+	if err != nil {
+		return "", "", err
+	}
+	if pubPath == "" {
+		return "", "", fmt.Errorf("Не удалось определить путь для %s", domainHost)
+	}
+	return pubPath, owner, nil
+}
+
+func buildProbeScript(domainHost string) string {
+	domain := shellQuote(domainHost)
+	// Используем strings.ReplaceAll вместо Sprintf, чтобы не ломать bash-символы %
+	script := `set -euo pipefail
+domain=__DOMAIN__
+dirs=(
+  /etc/nginx/sites-enabled
+  /etc/nginx/sites-available
+  /etc/nginx/conf.d
+  /etc/nginx/vhosts
+  /etc/apache2/sites-enabled
+  /etc/apache2/sites-available
+  /etc/apache2/conf-enabled
+  /etc/httpd/conf.d
+  /usr/local/mgr5/etc/nginx/vhosts
+  /usr/local/mgr5/etc/apache2/vhosts
+)
+cfgs=()
+for d in "${dirs[@]}"; do
+  [[ -d "$d" ]] || continue
+  while IFS= read -r f; do cfgs+=("$f"); done < <(grep -RIl -- "$domain" "$d" 2>/dev/null || true)
+done
+declare -a roots=()
+for cfg in "${cfgs[@]}"; do
+  declare -A vars=()
+  while IFS='|' read -r var_name var_value; do
+    [[ -n "$var_name" && -n "$var_value" ]] || continue
+    vars["$var_name"]="$var_value"
+  done < <(awk '
+    BEGIN {IGNORECASE=1}
+    $1=="set" && $2 ~ /^\$/ {
+      v=$2
+      val=$3
+      sub(/;$/, "", val)
+      gsub(/"/, "", val)
+      print v "|" val
+    }
+  ' "$cfg" 2>/dev/null || true)
+  while IFS= read -r candidate; do
+    candidate="${candidate%%;*}"
+    candidate="${candidate%%\"*}"
+    candidate="${candidate##\"}"
+    if [[ "$candidate" == \$* ]]; then
+      var="${candidate%%/*}"
+      rest=""
+      if [[ "$candidate" == */* ]]; then
+        rest="/${candidate#*/}"
+      fi
+      if [[ -n "${vars[$var]+x}" ]]; then
+        candidate="${vars[$var]}$rest"
+      fi
+    fi
+    [[ -n "$candidate" ]] && roots+=("$candidate")
+  done < <(awk 'BEGIN {IGNORECASE=1} $1=="root" {print $2} $1=="DocumentRoot" {print $2}' "$cfg" 2>/dev/null || true)
+done
+declare -A seen=()
+declare -a uniq=()
+for r in "${roots[@]}"; do
+  [[ -n "$r" ]] || continue
+  if [[ -z "${seen[$r]+x}" ]]; then
+    seen[$r]=1
+    uniq+=("$r")
+  fi
+done
+if [[ ${#uniq[@]} -eq 0 ]]; then
+  echo "INVENTORY_STATUS=not_found"
+  exit 0
+fi
+if [[ ${#uniq[@]} -gt 1 ]]; then
+  echo "INVENTORY_STATUS=ambiguous"
+  exit 0
+fi
+path="${uniq[0]}"
+echo "INVENTORY_PATH=$path"
+if [[ ! -e "$path" ]]; then
+  echo "INVENTORY_STATUS=not_found"
+  exit 0
+fi
+if ! owner="$(stat -c '%U:%G' "$path" 2>/dev/null)"; then
+  echo "INVENTORY_STATUS=permission_denied"
+  exit 0
+fi
+echo "INVENTORY_STATUS=found"
+echo "INVENTORY_OWNER=$owner"
+`
+	return strings.ReplaceAll(script, "__DOMAIN__", domain)
 }

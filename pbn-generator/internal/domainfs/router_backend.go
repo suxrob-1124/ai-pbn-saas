@@ -104,3 +104,11 @@ func (b *RouterBackend) pickBackend(dctx DomainFSContext) (SiteContentBackend, e
 	}
 	return b.local, nil
 }
+
+func (b *RouterBackend) DiscoverDomain(ctx context.Context, serverID, domainHost string) (string, string, error) {
+    // Для дискавери мы всегда пытаемся использовать SSH, если он есть, иначе падаем на local
+    if b.ssh != nil {
+        return b.ssh.DiscoverDomain(ctx, serverID, domainHost)
+    }
+    return b.local.DiscoverDomain(ctx, serverID, domainHost)
+}

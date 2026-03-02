@@ -12,4 +12,5 @@ type SiteContentBackend interface {
 	Delete(ctx context.Context, dctx DomainFSContext, path string) error
 	DeleteAll(ctx context.Context, dctx DomainFSContext, path string) error
 	ListTree(ctx context.Context, dctx DomainFSContext, dirPath string) ([]FileInfo, error)
+	DiscoverDomain(ctx context.Context, serverID, domainHost string) (publishedPath string, siteOwner string, err error)
 }

@@ -38,11 +38,11 @@ func (p SSHProber) Probe(ctx context.Context, target Target, domainASCII string)
 	if strings.TrimSpace(target.KeyPath) != "" {
 		args = append(args, "-i", target.KeyPath)
 	}
-	args = append(args, fmt.Sprintf("%s@%s", target.User, target.Host), "bash", "-lc", buildProbeScript(domainASCII))
+	args = append(args, fmt.Sprintf("%s@%s", target.User, target.Host), "bash", "-lc", BuildProbeScript(domainASCII))
 
 	cmd := exec.CommandContext(probeCtx, "ssh", args...)
 	out, err := cmd.CombinedOutput()
-	parsed := parseProbeOutput(string(out))
+	parsed := ParseProbeOutput(string(out))
 	if parsed.Status != "" {
 		return parsed, nil
 	}
@@ -59,7 +59,7 @@ func (p SSHProber) Probe(ctx context.Context, target Target, domainASCII string)
 	return ProbeResult{Status: ProbeError, Message: "empty probe response"}, nil
 }
 
-func buildProbeScript(domainASCII string) string {
+func BuildProbeScript(domainASCII string) string {
 	domain := shQuote(domainASCII)
 	return fmt.Sprintf(`set -euo pipefail
 domain=%s
@@ -146,7 +146,7 @@ echo "INVENTORY_OWNER=$owner"
 `, domain)
 }
 
-func parseProbeOutput(out string) ProbeResult {
+func ParseProbeOutput(out string) ProbeResult {
 	values := map[string]string{}
 	scanner := bufio.NewScanner(strings.NewReader(out))
 	for scanner.Scan() {

@@ -273,3 +273,8 @@ func normalizeDomainHost(raw string) (string, error) {
 	}
 	return host, nil
 }
+
+func (b *LocalFSBackend) DiscoverDomain(ctx context.Context, serverID, domainHost string) (string, string, error) {
+	// Для локального мока всегда возвращаем фейковые данные и успех
+	return fmt.Sprintf("/server/%s", domainHost), "mock:www-data", nil
+}
