@@ -27,51 +27,52 @@ import (
 )
 
 func setupServer(t *testing.T) *Server {
-	t.Helper()
-	logger := zap.NewNop().Sugar()
-	cfg := config.Config{
-		Port:                 "0",
-		AllowedOrigin:        "*",
-		SessionTTL:           24 * time.Hour,
-		AccessTTL:            15 * time.Minute,
-		RefreshTTL:           7 * 24 * time.Hour,
-		SessionCleanInterval: time.Minute,
-		LoginRateLimit:       100,
-		LoginRateWindow:      time.Minute,
-		RegisterRateLimit:    100,
-		RegisterRateWindow:   time.Minute,
-		LoginEmailIpLimit:    100,
-		LoginEmailIpWindow:   time.Minute,
-		LoginLockoutFails:    2,
-		LoginLockoutDuration: time.Minute,
-		EmailVerificationTTL: 24 * time.Hour,
-		PasswordResetTTL:     time.Hour,
-	}
-	svc := auth.NewService(auth.ServiceDeps{
-		Config:             cfg,
-		Users:              newStubUserStore(),
-		Sessions:           newStubSessionStore(),
-		VerificationTokens: newStubVerificationStore(),
-		ResetTokens:        newStubResetStore(),
-		Captchas:           newStubCaptchaStore(),
-		Mailer:             stubMailer{},
-		Logger:             logger,
-	})
-	proj := newStubProjectStore()
-	dom := newStubDomainStore()
-	gen := newStubGenerationStore()
-	prompts := newStubPromptStore()
-	promptOverrides := newStubPromptOverrideStore()
-	deployments := newStubDeploymentAttemptStore()
-	schedules := newStubScheduleStore()
-	linkSchedules := newStubLinkScheduleStore()
-	siteFiles := newStubSiteFileStore()
-	fileEdits := newStubFileEditStore()
-	linkTasks := newStubLinkTaskStore()
-	genQueue := newStubGenQueueStore()
-	indexChecks := newStubIndexCheckStore()
-	checkHistory := newStubCheckHistoryStore()
-	return New(cfg, svc, logger, proj, nil, dom, gen, prompts, promptOverrides, deployments, schedules, linkSchedules, nil, siteFiles, fileEdits, linkTasks, genQueue, indexChecks, checkHistory, nil, nil, newStubEnqueuer())
+  t.Helper()
+  logger := zap.NewNop().Sugar()
+  cfg := config.Config{
+    Port:                 "0",
+    AllowedOrigin:        "*",
+    SessionTTL:           24 * time.Hour,
+    AccessTTL:            15 * time.Minute,
+    RefreshTTL:           7 * 24 * time.Hour,
+    SessionCleanInterval: time.Minute,
+    LoginRateLimit:       100,
+    LoginRateWindow:      time.Minute,
+    RegisterRateLimit:    100,
+    RegisterRateWindow:   time.Minute,
+    LoginEmailIpLimit:    100,
+    LoginEmailIpWindow:   time.Minute,
+    LoginLockoutFails:    2,
+    LoginLockoutDuration: time.Minute,
+    EmailVerificationTTL: 24 * time.Hour,
+    PasswordResetTTL:     time.Hour,
+    DeployMode:           "local_mock", // <-- ДОБАВЛЕНО СЮДА
+  }
+  svc := auth.NewService(auth.ServiceDeps{
+    Config:             cfg,
+    Users:              newStubUserStore(),
+    Sessions:           newStubSessionStore(),
+    VerificationTokens: newStubVerificationStore(),
+    ResetTokens:        newStubResetStore(),
+    Captchas:           newStubCaptchaStore(),
+    Mailer:             stubMailer{},
+    Logger:             logger,
+  })
+  proj := newStubProjectStore()
+  dom := newStubDomainStore()
+  gen := newStubGenerationStore()
+  prompts := newStubPromptStore()
+  promptOverrides := newStubPromptOverrideStore()
+  deployments := newStubDeploymentAttemptStore()
+  schedules := newStubScheduleStore()
+  linkSchedules := newStubLinkScheduleStore()
+  siteFiles := newStubSiteFileStore()
+  fileEdits := newStubFileEditStore()
+  linkTasks := newStubLinkTaskStore()
+  genQueue := newStubGenQueueStore()
+  indexChecks := newStubIndexCheckStore()
+  checkHistory := newStubCheckHistoryStore()
+  return New(cfg, svc, logger, proj, nil, dom, gen, prompts, promptOverrides, deployments, schedules, linkSchedules, nil, siteFiles, fileEdits, linkTasks, genQueue, indexChecks, checkHistory, nil, nil, newStubEnqueuer())
 }
 
 func TestRegisterAndLogin(t *testing.T) {

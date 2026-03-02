@@ -319,7 +319,7 @@ func (s *Server) handleDomainEditorAICreatePage(w http.ResponseWriter, r *http.R
 		"warnings": warnings,
 		"prompt_trace": map[string]any{
 			"resolved_source": promptSource,
-			"model":           selectedModel,
+			"model":           tokenUsage["model"],
 			"stage":           "editor_page_create",
 			"repair_attempts": repairCount,
 		},
@@ -512,7 +512,7 @@ func (s *Server) handleDomainEditorAIRegenerateAsset(w http.ResponseWriter, r *h
 			"warnings": regenWarnings,
 			"prompt_trace": map[string]any{
 				"resolved_source": promptSource,
-				"model":           selectedModel,
+				"model":           tokenUsage["model"],
 				"stage":           "editor_asset_regenerate",
 			},
 			"token_usage":       tokenUsage,
@@ -551,7 +551,7 @@ func (s *Server) handleDomainEditorAIRegenerateAsset(w http.ResponseWriter, r *h
 		"warnings": regenWarnings,
 		"prompt_trace": map[string]any{
 			"resolved_source": promptSource,
-			"model":           selectedModel,
+			"model":           tokenUsage["model"],
 			"stage":           "editor_asset_regenerate",
 		},
 		"token_usage":       tokenUsage,
@@ -656,7 +656,7 @@ func (s *Server) handleDomainEditorAISuggest(w http.ResponseWriter, r *http.Requ
 		"warnings": warnings,
 		"prompt_trace": map[string]any{
 			"resolved_source": promptSource,
-			"model":           selectedModel,
+			"model":           tokenUsage["model"],
 			"stage":           "editor_file_edit",
 		},
 		"token_usage":       tokenUsage,

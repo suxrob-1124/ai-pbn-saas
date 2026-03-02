@@ -16,6 +16,10 @@ type stubBackend struct {
 	writeCalls     []string
 }
 
+func (s *stubBackend) DiscoverDomain(ctx context.Context, serverID, domainHost string) (string, string, error) {
+	return "/var/www/" + domainHost, "mock:www-data", nil
+}
+
 func (s *stubBackend) ReadFile(context.Context, domainfs.DomainFSContext, string) ([]byte, error) {
 	return nil, fs.ErrNotExist
 }

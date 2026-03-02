@@ -9,9 +9,6 @@ import (
 )
 
 func buildPublishContentBackend(cfg config.Config) (domainfs.SiteContentBackend, *domainfs.SSHPool, error) {
-	if !strings.EqualFold(strings.TrimSpace(cfg.DeployMode), "ssh_remote") {
-		return nil, nil, nil
-	}
 	localBackend := domainfs.NewLocalFSBackend(cfg.DeployBaseDir)
 
 	targets, err := domainfs.ParseDeployTargetsJSON(cfg.DeployTargetsJSON)
@@ -24,10 +21,18 @@ func buildPublishContentBackend(cfg config.Config) (domainfs.SiteContentBackend,
 			targets[alias] = target
 		}
 	}
+
+	// Если таргетов нет вообще
 	if len(targets) == 0 {
-		return nil, nil, fmt.Errorf("DEPLOY_TARGETS_JSON must contain at least one target for ssh_remote")
+		// И мы при этом требуем глобальный ssh_remote — это фатальная ошибка
+		if strings.EqualFold(strings.TrimSpace(cfg.DeployMode), "ssh_remote") {
+			return nil, nil, fmt.Errorf("DEPLOY_TARGETS_JSON must contain at least one target for ssh_remote")
+		}
+		// Иначе мы в local_mock и нам просто не нужен SSH пул
+		return localBackend, nil, nil
 	}
 
+	// Если таргеты есть, ВСЕГДА собираем SSH-пул (это критично для Canary Rollout)
 	pool, err := domainfs.NewSSHPool(domainfs.SSHPoolConfig{
 		MaxOpen:        cfg.DeploySSHPoolMaxOpen,
 		MaxIdle:        cfg.DeploySSHPoolMaxIdle,
@@ -44,5 +49,6 @@ func buildPublishContentBackend(cfg config.Config) (domainfs.SiteContentBackend,
 		_ = pool.Close()
 		return nil, nil, err
 	}
+	
 	return domainfs.NewRouterBackend(localBackend, sshBackend), pool, nil
 }

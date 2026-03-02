@@ -327,9 +327,13 @@ func processGeneration(
 							}
 						}
 						stage := sql.NullString{String: req.Stage, Valid: strings.TrimSpace(req.Stage) != ""}
+						operation := "generation_step"
+						if strings.TrimSpace(req.Stage) != "" {
+							operation = "generation_step/" + req.Stage
+						}
 						event := sqlstore.LLMUsageEvent{
 							Provider:                 "gemini",
-							Operation:                "generation_step",
+							Operation:                operation,
 							Stage:                    stage,
 							Model:                    req.Model,
 							Status:                   llmUsageStatus(req.Error),
@@ -363,9 +367,10 @@ func processGeneration(
 	}()
 
 	scopedPrompts := newScopedPromptManager(promptStore, promptOverrideStore, domain.ID, project.ID)
-	deployMode := "local_mock"
-	if mode := strings.TrimSpace(domain.DeploymentMode.String); mode != "" {
-		deployMode = mode
+	deployMode := "ssh_remote" // Теперь по умолчанию боевой режим
+	if mode := strings.ToLower(strings.TrimSpace(cfg.DeployMode)); mode == "local_mock" {
+		// Переходим в мок, ТОЛЬКО если в .env явно сказано local_mock
+		deployMode = "local_mock"
 	}
 	currentPublisher := publisher.Publisher(publisher.NewLocalPublisher(cfg.DeployBaseDir, domainStore, siteFileStore))
 	if strings.EqualFold(strings.TrimSpace(deployMode), "ssh_remote") {

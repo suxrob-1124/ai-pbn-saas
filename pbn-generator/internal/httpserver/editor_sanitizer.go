@@ -8,12 +8,12 @@ import (
 
 func normalizeEditorContextMode(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "manual":
-		return "manual"
+	case "auto":
+		return "auto"
 	case "hybrid":
 		return "hybrid"
 	default:
-		return "auto"
+		return "manual"
 	}
 }
 

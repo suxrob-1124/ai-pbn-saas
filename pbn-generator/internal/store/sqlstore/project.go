@@ -228,13 +228,24 @@ const DefaultServerName = "seotech-web-media1"
 const DefaultServerIP = "46.21.250.153"
 
 func (s *DomainStore) Create(ctx context.Context, d Domain) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO domains(id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, created_at, updated_at)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(),NOW())`,
-		d.ID, d.ProjectID, nullableString(d.ServerID), d.URL, d.MainKeyword, d.TargetCountry, d.TargetLanguage, nullableString(d.ExcludeDomains), nullableBytes(d.SpecificBlacklist), d.Status)
-	if err != nil {
-		return fmt.Errorf("failed to create domain: %w", err)
-	}
-	return nil
+  _, err := s.db.ExecContext(ctx, `INSERT INTO domains(id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, published_path, site_owner, created_at, updated_at)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW(),NOW())`,
+    d.ID, 
+    d.ProjectID, 
+    nullableString(d.ServerID), 
+    d.URL, 
+    d.MainKeyword, 
+    d.TargetCountry, 
+    d.TargetLanguage, 
+    nullableString(d.ExcludeDomains), 
+    nullableBytes(d.SpecificBlacklist), 
+    d.Status,
+    nullableString(d.PublishedPath),
+    nullableString(d.SiteOwner))
+  if err != nil {
+    return fmt.Errorf("failed to create domain: %w", err)
+  }
+  return nil
 }
 
 func (s *DomainStore) ListByProject(ctx context.Context, projectID string) ([]Domain, error) {
