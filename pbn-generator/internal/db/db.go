@@ -153,7 +153,7 @@ func migrationStatements() []string {
 		`ALTER TABLE domains ADD COLUMN IF NOT EXISTS file_count INT DEFAULT 0;`,
 		`ALTER TABLE domains ADD COLUMN IF NOT EXISTS total_size_bytes BIGINT DEFAULT 0;`,
 		`ALTER TABLE domains ADD COLUMN IF NOT EXISTS last_success_generation_id TEXT;`,
-		`ALTER TABLE domains ADD COLUMN IF NOT EXISTS deployment_mode TEXT NOT NULL DEFAULT 'local_mock';`,
+		`ALTER TABLE domains ADD COLUMN IF NOT EXISTS deployment_mode TEXT NOT NULL DEFAULT 'ssh_remote';`,
 		`ALTER TABLE domains ADD COLUMN IF NOT EXISTS site_owner TEXT;`,
 		`ALTER TABLE domains ADD COLUMN IF NOT EXISTS inventory_status TEXT;`,
 		`ALTER TABLE domains ADD COLUMN IF NOT EXISTS inventory_checked_at TIMESTAMPTZ;`,
@@ -405,6 +405,8 @@ func migrationStatements() []string {
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_check_history_check ON index_check_history(check_id);`,
+		`ALTER TABLE domain_index_checks ADD COLUMN IF NOT EXISTS content_quote TEXT;`,
+		`ALTER TABLE domain_index_checks ADD COLUMN IF NOT EXISTS is_content_indexed BOOLEAN;`,
 		`CREATE TABLE IF NOT EXISTS audit_rules (
 			code TEXT PRIMARY KEY,
 			title TEXT NOT NULL,

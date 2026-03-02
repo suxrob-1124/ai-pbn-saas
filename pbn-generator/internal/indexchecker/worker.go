@@ -41,6 +41,8 @@ type IndexCheckStore interface {
 	UpdateStatus(ctx context.Context, checkID string, status string, isIndexed *bool, errMsg *string) error
 	IncrementAttempts(ctx context.Context, checkID string) error
 	SetNextRetry(ctx context.Context, checkID string, nextRetry time.Time) error
+	UpdateContentResult(ctx context.Context, checkID string, quote string, isContentIndexed *bool) error
+	ListSuccessWithoutQuote(ctx context.Context, limit int) ([]sqlstore.IndexCheck, error)
 }
 
 // CheckHistoryStore описывает доступ к истории попыток.
@@ -195,6 +197,58 @@ func RunIndexCheckerTick(
 		"skipped", skipped,
 		"errors", runErrors+gatherErrors,
 	)
+
+	// Backfill content checks for already-completed checks that have no quote yet.
+	if err := backfillContentChecks(ctx, checkStore, domainStore, checker, logger); err != nil {
+		logger.Warnf("index checker: content backfill step failed: %v", err)
+	}
+
+	return nil
+}
+
+const contentBackfillLimit = 3
+
+// backfillContentChecks запускает проверку цитаты для успешных проверок без цитаты.
+func backfillContentChecks(
+	ctx context.Context,
+	checkStore IndexCheckStore,
+	domainStore DomainStore,
+	checker IndexChecker,
+	logger *zap.SugaredLogger,
+) error {
+	checks, err := checkStore.ListSuccessWithoutQuote(ctx, contentBackfillLimit)
+	if err != nil {
+		return fmt.Errorf("list success without quote: %w", err)
+	}
+	for _, check := range checks {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		domain, err := domainStore.Get(ctx, check.DomainID)
+		if err != nil {
+			logger.Warnf("content backfill: load domain %s failed: %v", check.DomainID, err)
+			continue
+		}
+		siteURL := strings.TrimSpace(domain.URL)
+		if siteURL == "" {
+			continue
+		}
+		quote, extractErr := ExtractSiteQuote(ctx, siteURL)
+		if extractErr != nil || quote == "" {
+			continue
+		}
+		geo := strings.ToLower(strings.TrimSpace(domain.TargetCountry))
+		if geo == "" {
+			geo = "se"
+		}
+		var contentIndexedPtr *bool
+		if contentIndexed, contentErr := checker.CheckWithQuote(ctx, siteURL, quote, geo); contentErr == nil {
+			contentIndexedPtr = &contentIndexed
+		}
+		if updateErr := checkStore.UpdateContentResult(ctx, check.ID, quote, contentIndexedPtr); updateErr != nil {
+			logger.Warnf("content backfill: save result for check %s failed: %v", check.ID, updateErr)
+		}
+	}
 	return nil
 }
 
@@ -321,7 +375,28 @@ func processCheck(
 	durationMS := sql.NullInt64{Int64: duration.Milliseconds(), Valid: true}
 
 	if err == nil {
-		payload, encErr := json.Marshal(map[string]any{"indexed": indexed})
+		// Проверка цитаты (best-effort): не влияет на статус основной проверки.
+		quote := strings.TrimSpace(check.ContentQuote.String)
+		if !check.ContentQuote.Valid || quote == "" {
+			if extracted, extractErr := ExtractSiteQuote(ctx, domain); extractErr == nil && extracted != "" {
+				quote = extracted
+			}
+		}
+		var contentIndexedPtr *bool
+		if quote != "" {
+			if contentIndexed, contentErr := checker.CheckWithQuote(ctx, domain, quote, geo); contentErr == nil {
+				contentIndexedPtr = &contentIndexed
+			}
+			if updateErr := checkStore.UpdateContentResult(ctx, check.ID, quote, contentIndexedPtr); updateErr != nil && logger != nil {
+				logger.Warnf("index check %s: failed to save content result: %v", check.ID, updateErr)
+			}
+		}
+
+		payload, encErr := json.Marshal(map[string]any{
+			"indexed":           indexed,
+			"content_quote":     quote,
+			"content_indexed":   contentIndexedPtr,
+		})
 		if encErr != nil {
 			return "", fmt.Errorf("encode response data: %w", encErr)
 		}
