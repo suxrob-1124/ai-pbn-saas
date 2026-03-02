@@ -78,6 +78,7 @@ export function IndexTable({
               <SortableTh label="Статус" sort={sort} sortKey="status" onSort={handleSort} />
               <SortableTh label="Попытки" sort={sort} sortKey="attempts" onSort={handleSort} />
               <SortableTh label="В индексе" sort={sort} sortKey="is_indexed" onSort={handleSort} />
+              <th className="text-left py-2 pr-3 text-xs">Цитата</th>
               <SortableTh label="Последняя попытка" sort={sort} sortKey="last_attempt_at" onSort={handleSort} />
               <SortableTh label="Следующий ретрай" sort={sort} sortKey="next_retry_at" onSort={handleSort} />
               <th className="text-left py-2 pr-3">Действия</th>
@@ -86,7 +87,7 @@ export function IndexTable({
           <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
             {loading || checks.length === 0 ? (
               <TableStateRow
-                colSpan={8}
+                colSpan={9}
                 loading={Boolean(loading)}
                 empty={!loading && checks.length === 0}
                 loadingText="Загрузка..."
@@ -126,6 +127,36 @@ export function IndexTable({
                             ? "Да"
                             : "Нет"}
                       </td>
+                      <td className="py-2 pr-3 max-w-[200px]">
+                        {check.content_quote == null ? (
+                          <span className="text-slate-400 text-xs">—</span>
+                        ) : (
+                          <div>
+                            <span
+                              className={
+                                check.is_content_indexed == null
+                                  ? "text-xs text-slate-500"
+                                  : check.is_content_indexed
+                                    ? "text-xs text-green-600 dark:text-green-400"
+                                    : "text-xs text-red-600 dark:text-red-400"
+                              }
+                              title={check.content_quote}
+                            >
+                              {check.is_content_indexed == null
+                                ? "?"
+                                : check.is_content_indexed
+                                  ? "Да"
+                                  : "Нет"}
+                            </span>
+                            <div
+                              className="mt-0.5 text-[10px] text-slate-400 truncate"
+                              title={check.content_quote}
+                            >
+                              {check.content_quote}
+                            </div>
+                          </div>
+                        )}
+                      </td>
                       <td className="py-2 pr-3 whitespace-nowrap">{formatDateTime(check.last_attempt_at)}</td>
                       <td className="py-2 pr-3 whitespace-nowrap">{formatDateTime(check.next_retry_at)}</td>
                       <td className="py-2 pr-3 whitespace-nowrap">
@@ -154,7 +185,7 @@ export function IndexTable({
                     </tr>
                     {isOpen && (
                       <tr>
-                        <td colSpan={8} className="pb-4">
+                        <td colSpan={9} className="pb-4">
                           {historyIsLoading ? (
                             <div className="text-xs text-slate-500 dark:text-slate-400">
                               Загрузка истории...
