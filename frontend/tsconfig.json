@@ -21,6 +21,10 @@
       "node",
       "monaco-editor"
     ],
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./*"]
+    },
     "plugins": [
       {
         "name": "next"
