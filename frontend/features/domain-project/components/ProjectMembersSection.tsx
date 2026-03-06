@@ -1,4 +1,4 @@
-import { X, UserPlus, Shield, User, Star } from 'lucide-react';
+import { X, UserPlus, User, Star } from 'lucide-react';
 
 type ProjectMember = { email: string; role: string; createdAt: string };
 
@@ -29,8 +29,7 @@ export function ProjectMembersSection({
 }: ProjectMembersSectionProps) {
   const getRoleIcon = (role: string) => {
     if (role === 'owner') return <Star className="w-4 h-4 text-amber-500" />;
-    if (role === 'admin') return <Shield className="w-4 h-4 text-rose-500" />;
-    if (role === 'manager') return <Shield className="w-4 h-4 text-indigo-500" />;
+    if (role === 'editor') return <User className="w-4 h-4 text-indigo-500" />;
     return <User className="w-4 h-4 text-slate-500" />;
   };
 
@@ -65,8 +64,6 @@ export function ProjectMembersSection({
               onChange={(e) => onNewMemberRoleChange(e.target.value)}>
               <option value="viewer">Наблюдатель</option>
               <option value="editor">Редактор (Копирайтер)</option>
-              <option value="manager">Менеджер</option>
-              <option value="admin">Администратор</option>
             </select>
             <button
               onClick={onAddMember}
@@ -118,8 +115,6 @@ export function ProjectMembersSection({
                         onChange={(e) => onUpdateMemberRole(member.email, e.target.value)}>
                         <option value="viewer">Наблюдатель</option>
                         <option value="editor">Редактор</option>
-                        <option value="manager">Менеджер</option>
-                        <option value="admin">Администратор</option>
                       </select>
                       <button
                         onClick={() => onRemoveMember(member.email)}

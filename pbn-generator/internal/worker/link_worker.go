@@ -20,7 +20,6 @@ import (
 	"go.uber.org/zap"
 
 	"obzornik-pbn-generator/internal/config"
-	"obzornik-pbn-generator/internal/crypto/secretbox"
 	"obzornik-pbn-generator/internal/linkbuilder"
 	"obzornik-pbn-generator/internal/llm"
 	"obzornik-pbn-generator/internal/retry"
@@ -739,47 +738,10 @@ Page context (excerpt):
 
 func (w *LinkWorker) selectAPIKey(ctx context.Context, task *sqlstore.LinkTask, domain sqlstore.Domain) (string, string, string, error) {
 	apiKey := w.Config.GeminiAPIKey
-	keyOwnerEmail := ""
-	keyType := "global"
-	if w.Users == nil || w.Projects == nil {
-		if strings.TrimSpace(apiKey) == "" {
-			return "", "", "", errors.New("API key not configured")
-		}
-		return apiKey, keyOwnerEmail, keyType, nil
-	}
-	project, err := w.Projects.GetByID(ctx, domain.ProjectID)
-	if err != nil {
-		return "", "", "", fmt.Errorf("project not found: %w", err)
-	}
-
-	tryUser := func(email string) (string, bool) {
-		if strings.TrimSpace(email) == "" {
-			return "", false
-		}
-		enc, _, err := w.Users.GetAPIKey(ctx, email)
-		if err != nil || len(enc) == 0 {
-			return "", false
-		}
-		keySecret := secretbox.DeriveKey(w.Config.APIKeySecret)
-		decrypted, err := secretbox.Decrypt(keySecret, enc)
-		if err != nil {
-			return "", false
-		}
-		return string(decrypted), true
-	}
-
-	if key, ok := tryUser(task.CreatedBy); ok {
-		return key, task.CreatedBy, "user", nil
-	}
-	if task.CreatedBy != project.UserEmail {
-		if key, ok := tryUser(project.UserEmail); ok {
-			return key, project.UserEmail, "user", nil
-		}
-	}
 	if strings.TrimSpace(apiKey) == "" {
-		return "", "", "", errors.New("API key not configured")
+		return "", "", "", errors.New("API key not configured (GEMINI_API_KEY in .env)")
 	}
-	return apiKey, keyOwnerEmail, keyType, nil
+	return apiKey, "", "global", nil
 }
 
 func (w *LinkWorker) logLLMUsage(

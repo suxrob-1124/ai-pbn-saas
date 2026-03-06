@@ -13,7 +13,6 @@ import (
 	"go.uber.org/zap"
 
 	"obzornik-pbn-generator/internal/config"
-	"obzornik-pbn-generator/internal/crypto/secretbox"
 	"obzornik-pbn-generator/internal/domainfs"
 	"obzornik-pbn-generator/internal/llm"
 	"obzornik-pbn-generator/internal/publisher"
@@ -215,54 +214,14 @@ func processGeneration(
 		}
 	}
 
-	// Определяем API ключ
+	// Определяем API ключ (используем глобальный из .env)
 	apiKey := cfg.GeminiAPIKey
 	keyType := "global"
 	keyOwnerEmail := project.UserEmail
-
-	if gen.RequestedBy.Valid {
-		requested := strings.ToLower(strings.TrimSpace(gen.RequestedBy.String))
-		if requested != "" {
-			if u, err := userStore.Get(ctx, requested); err == nil && strings.EqualFold(u.Role, "admin") {
-				keyOwnerEmail = requested
-			}
-		}
-	}
-
-	userAPIKeyEnc, _, err := userStore.GetAPIKey(ctx, keyOwnerEmail)
-	if err == nil && len(userAPIKeyEnc) > 0 {
-		keySecret := secretbox.DeriveKey(cfg.APIKeySecret)
-		decrypted, err := secretbox.Decrypt(keySecret, userAPIKeyEnc)
-		if err == nil {
-			apiKey = string(decrypted)
-			keyType = "user"
-			appendLog(fmt.Sprintf("используется API ключ пользователя %s", keyOwnerEmail))
-		} else {
-			appendLog("предупреждение: не удалось расшифровать API ключ пользователя, используется глобальный")
-		}
-	} else if keyOwnerEmail != project.UserEmail {
-		// fallback на владельца проекта, если админский ключ отсутствует
-		userAPIKeyEnc, _, err := userStore.GetAPIKey(ctx, project.UserEmail)
-		if err == nil && len(userAPIKeyEnc) > 0 {
-			keySecret := secretbox.DeriveKey(cfg.APIKeySecret)
-			decrypted, err := secretbox.Decrypt(keySecret, userAPIKeyEnc)
-			if err == nil {
-				apiKey = string(decrypted)
-				keyType = "user"
-				keyOwnerEmail = project.UserEmail
-				appendLog(fmt.Sprintf("используется API ключ пользователя %s", keyOwnerEmail))
-			} else {
-				appendLog("предупреждение: не удалось расшифровать API ключ пользователя, используется глобальный")
-			}
-		} else {
-			appendLog("используется глобальный API ключ")
-		}
-	} else {
-		appendLog("используется глобальный API ключ")
-	}
+	appendLog("используется глобальный API ключ")
 
 	if apiKey == "" {
-		errMsg := "Gemini API key не настроен (ни глобальный, ни пользовательский)"
+		errMsg := "Gemini API key не настроен (GEMINI_API_KEY в .env)"
 		appendLog(errMsg)
 		logBytes, _ := json.Marshal(logs)
 		_ = genStore.UpdateFull(ctx, payload.GenerationID, "error", 0, &errMsg, logBytes, nil, &now, pipeline.PtrTime(time.Now()), nil)
