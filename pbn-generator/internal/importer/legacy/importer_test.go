@@ -214,6 +214,10 @@ func (s *stubSiteFiles) Delete(ctx context.Context, fileID string) error {
 	return nil
 }
 
+func (s *stubSiteFiles) ClearHistory(ctx context.Context, domainID string) error {
+	return nil
+}
+
 type stubLinks struct {
 	created []sqlstore.LinkTask
 }
