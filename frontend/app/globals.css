@@ -5,3 +5,91 @@
 body {
   @apply bg-slate-950 text-slate-50;
 }
+
+/* TipTap Placeholder */
+.tiptap p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+  color: theme("colors.slate.500");
+}
+.tiptap .is-empty::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+  color: theme("colors.slate.600");
+}
+
+/* ─── TipTap Table ─── */
+.tiptap .tableWrapper {
+  overflow-x: auto;
+  margin: 1.5rem 0;
+}
+
+.tiptap table {
+  border-collapse: collapse;
+  width: 100%;
+  table-layout: fixed;
+  overflow: hidden;
+}
+
+.tiptap table td,
+.tiptap table th {
+  border: 1px solid theme("colors.slate.200");
+  padding: 0.5rem 0.75rem;
+  vertical-align: top;
+  position: relative;
+  min-width: 80px;
+}
+
+.dark .tiptap table td,
+.dark .tiptap table th {
+  border-color: theme("colors.slate.700");
+}
+
+.tiptap table th {
+  background-color: theme("colors.slate.50");
+  font-weight: 600;
+  color: theme("colors.slate.700");
+}
+
+.dark .tiptap table th {
+  background-color: theme("colors.slate.800");
+  color: theme("colors.slate.200");
+}
+
+.tiptap table .selectedCell {
+  background-color: theme("colors.indigo.50");
+}
+
+.dark .tiptap table .selectedCell {
+  background-color: rgb(99 102 241 / 0.15);
+}
+
+/* Override prose first/last-child zero-padding */
+.tiptap table th:first-child,
+.tiptap table td:first-child {
+  padding-inline-start: 0.75rem;
+}
+.tiptap table th:last-child,
+.tiptap table td:last-child {
+  padding-inline-end: 0.75rem;
+}
+
+/* Column resize handle */
+.tiptap .column-resize-handle {
+  position: absolute;
+  right: -2px;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background-color: theme("colors.indigo.400");
+  pointer-events: none;
+  z-index: 20;
+}
+
+.tiptap.resize-cursor {
+  cursor: col-resize;
+}
