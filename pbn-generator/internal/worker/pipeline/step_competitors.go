@@ -22,7 +22,7 @@ func (s *CompetitorAnalysisStep) ArtifactKey() string {
 }
 
 func (s *CompetitorAnalysisStep) Progress() int {
-	return 50 // Прогресс после выполнения этого шага
+	return 18 // Прогресс после выполнения этого шага
 }
 
 func (s *CompetitorAnalysisStep) Execute(ctx context.Context, state *PipelineState) (map[string]any, error) {

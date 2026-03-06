@@ -21,7 +21,7 @@ func (s *TechnicalSpecStep) ArtifactKey() string {
 }
 
 func (s *TechnicalSpecStep) Progress() int {
-	return 60 // Прогресс после выполнения этого шага
+	return 27 // Прогресс после выполнения этого шага
 }
 
 func (s *TechnicalSpecStep) Execute(ctx context.Context, state *PipelineState) (map[string]any, error) {

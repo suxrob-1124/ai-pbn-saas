@@ -20,7 +20,7 @@ func (s *JSGenerationStep) ArtifactKey() string {
 }
 
 func (s *JSGenerationStep) Progress() int {
-	return 99
+	return 79
 }
 
 func (s *JSGenerationStep) Execute(ctx context.Context, state *PipelineState) (map[string]any, error) {
@@ -84,9 +84,7 @@ func (s *JSGenerationStep) Execute(ctx context.Context, state *PipelineState) (m
 	clean = strings.TrimSuffix(clean, "```")
 	clean = strings.TrimSpace(clean)
 
-	files := mergeGeneratedFiles(state.Artifacts["generated_files"], []GeneratedFile{
-		{Path: "script.js", Content: clean},
-	})
+	files := mergeGeneratedFiles(state.Artifacts["generated_files"], nil)
 
 	artifacts := map[string]any{
 		"js_content":           clean,
