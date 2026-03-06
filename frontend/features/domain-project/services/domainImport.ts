@@ -6,6 +6,8 @@ export type DomainImportPayloadItem = {
   server_id?: string;
   link_anchor_text?: string;
   link_acceptor_url?: string;
+  link_placed?: string;
+  generation_type?: string;
 };
 
 export type DomainImportValidationError = {
@@ -13,7 +15,7 @@ export type DomainImportValidationError = {
   reason: string;
 };
 
-const DOMAIN_IMPORT_MAX_COLUMNS = 7;
+const DOMAIN_IMPORT_MAX_COLUMNS = 9;
 
 const parseImportCsvFields = (line: string): string[] | null => {
   const fields: string[] = [];
@@ -118,7 +120,7 @@ export const parseDomainImportText = (
       continue;
     }
     if (fields.length === 0 || fields.length > DOMAIN_IMPORT_MAX_COLUMNS) {
-      errors.push({ line: lineNo, reason: "ожидается до 7 колонок" });
+      errors.push({ line: lineNo, reason: "ожидается до 9 колонок" });
       continue;
     }
     const normalizedDomain = normalizeDomainForImport(fields[0] || "");
@@ -150,6 +152,14 @@ export const parseDomainImportText = (
     }
     if (acceptor) {
       item.link_acceptor_url = acceptor;
+    }
+    const linkPlaced = (fields[7] || "").trim();
+    if (linkPlaced) {
+      item.link_placed = linkPlaced;
+    }
+    const generationType = (fields[8] || "").trim();
+    if (generationType) {
+      item.generation_type = generationType;
     }
     items.push(item);
   }

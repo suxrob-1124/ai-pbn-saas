@@ -315,3 +315,53 @@ export async function listAdminHistory(
     `/api/admin/index-checks/${encodedCheck}/history${query}`
   );
 }
+
+// ─── Index Checker Control ──────────────────────────────────────────────
+
+type IndexCheckerControlDTO = { enabled: boolean };
+
+/** Получить глобальный статус index checker (admin). */
+export async function getGlobalIndexCheckerControl(): Promise<IndexCheckerControlDTO> {
+  return authFetch<IndexCheckerControlDTO>(`/api/admin/index-checker/control`);
+}
+
+/** Установить глобальный статус index checker (admin). */
+export async function setGlobalIndexCheckerControl(enabled: boolean): Promise<IndexCheckerControlDTO> {
+  return authFetch<IndexCheckerControlDTO>(`/api/admin/index-checker/control`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled })
+  });
+}
+
+/** Получить статус index checker для проекта. */
+export async function getProjectIndexCheckerControl(projectId: string): Promise<IndexCheckerControlDTO> {
+  const encoded = encodeProjectId(projectId);
+  return authFetch<IndexCheckerControlDTO>(`/api/projects/${encoded}/index-checker`);
+}
+
+/** Установить статус index checker для проекта. */
+export async function setProjectIndexCheckerControl(projectId: string, enabled: boolean): Promise<IndexCheckerControlDTO> {
+  const encoded = encodeProjectId(projectId);
+  return authFetch<IndexCheckerControlDTO>(`/api/projects/${encoded}/index-checker`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled })
+  });
+}
+
+/** Получить статус index checker для домена. */
+export async function getDomainIndexCheckerControl(domainId: string): Promise<IndexCheckerControlDTO> {
+  const encoded = encodeDomainId(domainId);
+  return authFetch<IndexCheckerControlDTO>(`/api/domains/${encoded}/index-checker`);
+}
+
+/** Установить статус index checker для домена. */
+export async function setDomainIndexCheckerControl(domainId: string, enabled: boolean): Promise<IndexCheckerControlDTO> {
+  const encoded = encodeDomainId(domainId);
+  return authFetch<IndexCheckerControlDTO>(`/api/domains/${encoded}/index-checker`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled })
+  });
+}

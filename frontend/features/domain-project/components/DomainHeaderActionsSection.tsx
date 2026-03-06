@@ -1,10 +1,8 @@
-import Link from "next/link";
-import type { UrlObject } from "url";
-import type { ReactNode } from "react";
-import { FiEdit3, FiPause, FiPlay, FiRefreshCw, FiX } from "react-icons/fi";
-import { DOMAIN_PROJECT_CTA } from "../services/statusCta";
-import { ActionFlowBanner } from "./ActionFlowBanner";
-import type { FlowState } from "../hooks/useFlowState";
+import type { ReactNode } from 'react';
+import { Play, Pause, X, RefreshCw, Loader2 } from 'lucide-react';
+import { DOMAIN_PROJECT_CTA } from '../services/statusCta';
+import { ActionFlowBanner } from './ActionFlowBanner';
+import type { FlowState } from '../hooks/useFlowState';
 
 type DomainHeaderDomain = {
   url: string;
@@ -33,7 +31,7 @@ type DomainHeaderActionsSectionProps = {
   mainButtonDisabled: boolean;
   loading: boolean;
   canOpenEditor: boolean;
-  editorHref: UrlObject;
+  editorHref: any; // UrlObject
   generationFlow: FlowState;
   linkFlow: FlowState;
   renderStatusBadge: (status: string) => ReactNode;
@@ -45,153 +43,94 @@ type DomainHeaderActionsSectionProps = {
 };
 
 export function DomainHeaderActionsSection({
-  domain,
-  projectName,
-  error,
   currentAttempt,
   mainButtonText,
-  mainButtonIcon,
   mainButtonDisabled,
   loading,
-  canOpenEditor,
-  editorHref,
   generationFlow,
   linkFlow,
-  renderStatusBadge,
   onMainAction,
   onResumeGeneration,
   onPauseGeneration,
   onCancelGeneration,
-  onRefresh
+  onRefresh,
 }: DomainHeaderActionsSectionProps) {
+  // Умное скрытие баннеров
+  const showGenBanner = generationFlow.status !== 'idle' && generationFlow.status !== 'done';
+  const showLinkBanner = linkFlow.status !== 'idle' && linkFlow.status !== 'done';
+
   return (
-    <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-xl">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold">Домен</h1>
-          {domain && (
-            <>
-              <div className="mt-1 text-lg font-semibold">{domain.url}</div>
-              <div className="text-sm text-slate-500 dark:text-slate-400">
-                Проект: {projectName || "—"} · Статус: {renderStatusBadge(domain.status)}
-              </div>
-              <div className="text-sm text-slate-500 dark:text-slate-400 mt-1">Ключевое слово: {domain.main_keyword || "—"}</div>
-              <div className="text-xs text-slate-500 dark:text-slate-400">
-                Сервер: {domain.server_id || "—"} · Страна: {domain.target_country || "—"} · Язык: {domain.target_language || "—"}
-              </div>
-              {domain.exclude_domains && (
-                <div className="text-xs text-slate-500 dark:text-slate-400">Исключить: {domain.exclude_domains}</div>
-              )}
-              <div className="text-xs text-slate-500 dark:text-slate-400">
-                Обновлено: {domain.updated_at ? new Date(domain.updated_at).toLocaleString() : "—"}
-              </div>
-            </>
-          )}
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={onMainAction}
-            disabled={mainButtonDisabled}
-            className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
-          >
-            {mainButtonIcon} {mainButtonText}
-          </button>
-          {currentAttempt && (
-            <>
-              {currentAttempt.status === "paused" && (
-                <button
-                  onClick={() => onResumeGeneration(currentAttempt.id)}
-                  disabled={loading}
-                  className="inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-white px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700 dark:bg-slate-800 dark:text-emerald-300 disabled:opacity-50"
-                >
-                  <FiPlay /> {DOMAIN_PROJECT_CTA.generationResume}
-                </button>
-              )}
-              {(currentAttempt.status === "pending" ||
-                currentAttempt.status === "processing" ||
-                currentAttempt.status === "pause_requested" ||
-                currentAttempt.status === "cancelling") && (
-                <>
-                  {currentAttempt.status !== "cancelling" && (
-                    <button
-                      onClick={() => onPauseGeneration(currentAttempt.id)}
-                      disabled={loading || currentAttempt.status === "pause_requested"}
-                      className="inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm font-semibold text-amber-700 hover:bg-amber-50 dark:border-amber-700 dark:bg-slate-800 dark:text-amber-300 disabled:opacity-50"
-                    >
-                      <FiPause />{" "}
-                      {currentAttempt.status === "pause_requested"
-                        ? DOMAIN_PROJECT_CTA.generationPauseRequested
-                        : DOMAIN_PROJECT_CTA.generationPause}
-                    </button>
-                  )}
-                  <button
-                    onClick={() => onCancelGeneration(currentAttempt.id)}
-                    disabled={loading || currentAttempt.status === "cancelling"}
-                    className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 dark:border-red-700 dark:bg-slate-800 dark:text-red-300 disabled:opacity-50"
-                  >
-                    <FiX />{" "}
-                    {currentAttempt.status === "cancelling"
-                      ? DOMAIN_PROJECT_CTA.generationCancelling
-                      : DOMAIN_PROJECT_CTA.generationCancel}
-                  </button>
-                </>
-              )}
-              {currentAttempt.status === "cancelled" && (
-                <button
-                  onClick={() => onCancelGeneration(currentAttempt.id)}
-                  disabled={loading}
-                  className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 dark:border-red-700 dark:bg-slate-800 dark:text-red-300 disabled:opacity-50"
-                >
-                  <FiX /> {DOMAIN_PROJECT_CTA.generationCancel}
-                </button>
-              )}
-            </>
-          )}
-          <button
-            onClick={onRefresh}
-            disabled={loading}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-          >
-            <FiRefreshCw /> Обновить
-          </button>
-          {canOpenEditor ? (
-            <Link
-              href={editorHref}
-              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-            >
-              <FiEdit3 /> Открыть в редакторе
-            </Link>
-          ) : (
-            <span
-              title="Редактор доступен после публикации и синхронизации файлов"
-              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400"
-            >
-              <FiEdit3 /> Открыть в редакторе
-            </span>
-          )}
-          {domain?.project_id ? (
-            <Link
-              href={`/projects/${domain.project_id}`}
-              className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
-            >
-              ← К проекту
-            </Link>
-          ) : (
+    <div className="flex items-center gap-2">
+      {/* ГЛАВНАЯ КНОПКА ГЕНЕРАЦИИ */}
+      <button
+        onClick={onMainAction}
+        disabled={mainButtonDisabled || loading}
+        className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50 transition-all shadow-sm active:scale-95">
+        <Play className="w-4 h-4 fill-current" /> {mainButtonText}
+      </button>
+
+      {/* КНОПКИ УПРАВЛЕНИЯ ПАЙПЛАЙНОМ */}
+      {currentAttempt && (
+        <>
+          {currentAttempt.status === 'paused' && (
             <button
-              disabled
-              className="inline-flex items-center gap-2 rounded-lg bg-slate-300 px-3 py-2 text-sm font-semibold text-slate-600 cursor-not-allowed"
-            >
-              ← К проекту
+              onClick={() => onResumeGeneration(currentAttempt.id)}
+              disabled={loading}
+              className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-sm font-semibold text-emerald-700 hover:bg-emerald-100 dark:border-emerald-900/50 dark:bg-emerald-500/10 dark:text-emerald-400 transition-colors">
+              <Play className="w-4 h-4" /> {DOMAIN_PROJECT_CTA.generationResume}
             </button>
           )}
+
+          {(currentAttempt.status === 'pending' ||
+            currentAttempt.status === 'processing' ||
+            currentAttempt.status === 'pause_requested' ||
+            currentAttempt.status === 'cancelling') && (
+            <>
+              {currentAttempt.status !== 'cancelling' && (
+                <button
+                  onClick={() => onPauseGeneration(currentAttempt.id)}
+                  disabled={loading || currentAttempt.status === 'pause_requested'}
+                  className="inline-flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm font-semibold text-amber-700 hover:bg-amber-100 dark:border-amber-900/50 dark:bg-amber-500/10 dark:text-amber-400 transition-colors">
+                  <Pause className="w-4 h-4" />
+                  {currentAttempt.status === 'pause_requested'
+                    ? 'Остановка...'
+                    : DOMAIN_PROJECT_CTA.generationPause}
+                </button>
+              )}
+              <button
+                onClick={() => onCancelGeneration(currentAttempt.id)}
+                disabled={loading || currentAttempt.status === 'cancelling'}
+                className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-sm font-semibold text-red-700 hover:bg-red-100 dark:border-red-900/50 dark:bg-red-500/10 dark:text-red-400 transition-colors">
+                <X className="w-4 h-4" />
+                {currentAttempt.status === 'cancelling'
+                  ? 'Отмена...'
+                  : DOMAIN_PROJECT_CTA.generationCancel}
+              </button>
+            </>
+          )}
+        </>
+      )}
+
+      {/* КНОПКА ОБНОВЛЕНИЯ СТРАНИЦЫ */}
+      <button
+        onClick={onRefresh}
+        disabled={loading}
+        className="inline-flex items-center justify-center p-2.5 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-[#060d18] dark:text-slate-300 dark:hover:bg-slate-800 transition-all"
+        title="Обновить данные">
+        {loading ? (
+          <Loader2 className="w-4 h-4 animate-spin text-slate-400" />
+        ) : (
+          <RefreshCw className="w-4 h-4" />
+        )}
+      </button>
+
+      {/* ПЛАВАЮЩИЕ УВЕДОМЛЕНИЯ О ПРОЦЕССЕ */}
+      {(showGenBanner || showLinkBanner) && (
+        <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-2">
+          {showGenBanner && <ActionFlowBanner title="Генерация" flow={generationFlow} />}
+          {showLinkBanner && <ActionFlowBanner title="Ссылки" flow={linkFlow} />}
         </div>
-      </div>
-      {error && <div className="mt-2 text-red-500 text-sm">{error}</div>}
-      <div className="mt-3 space-y-2">
-        <ActionFlowBanner title="Генерация" flow={generationFlow} />
-        <ActionFlowBanner title="Ссылки" flow={linkFlow} />
-      </div>
+      )}
     </div>
   );
 }
-

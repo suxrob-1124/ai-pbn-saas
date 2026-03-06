@@ -1,10 +1,8 @@
-"use client";
+'use client';
 
-import { useEffect, useState } from "react";
-import {
-  buildScheduleConfig,
-  ScheduleFormValue
-} from "../lib/scheduleFormValidation";
+import { useEffect, useState } from 'react';
+import { Clock, Info } from 'lucide-react';
+import { buildScheduleConfig, ScheduleFormValue } from '../lib/scheduleFormValidation';
 
 type ScheduleFormProps = {
   value: ScheduleFormValue;
@@ -29,7 +27,7 @@ export function ScheduleForm({
   timezoneLabel,
   onCancel,
   onChange,
-  onSubmit
+  onSubmit,
 }: ScheduleFormProps) {
   const [localError, setLocalError] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
@@ -39,30 +37,38 @@ export function ScheduleForm({
     return () => window.clearInterval(timer);
   }, []);
 
-  const pad = (value: number) => value.toString().padStart(2, "0");
+  const pad = (value: number) => value.toString().padStart(2, '0');
   const localTime = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
   const utcTime = `${pad(now.getUTCHours())}:${pad(now.getUTCMinutes())}`;
+
   const offsetMinutes = -now.getTimezoneOffset();
-  const offsetSign = offsetMinutes >= 0 ? "+" : "-";
+  const offsetSign = offsetMinutes >= 0 ? '+' : '-';
   const offsetAbs = Math.abs(offsetMinutes);
   const offset = `${offsetSign}${pad(Math.floor(offsetAbs / 60))}:${pad(offsetAbs % 60)}`;
-  const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  const tz = (timezone || "").trim() || browserZone;
-  const tzLabel = (timezoneLabel || "").trim() || tz;
+
+  const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  const tz = (timezone || '').trim() || browserZone;
+  const tzLabel = (timezoneLabel || '').trim() || tz;
+
   const formatTimeForZone = (value: Date, zone: string) => {
     try {
-      return new Intl.DateTimeFormat("ru-RU", {
-        hour: "2-digit",
-        minute: "2-digit",
+      return new Intl.DateTimeFormat('ru-RU', {
+        hour: '2-digit',
+        minute: '2-digit',
         hour12: false,
-        timeZone: zone
+        timeZone: zone,
       }).format(value);
     } catch {
-      return value.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", hour12: false });
+      return value.toLocaleTimeString('ru-RU', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      });
     }
   };
+
   const tzTime = formatTimeForZone(now, tz);
-  const timeHint = `Сейчас: ${tzTime} (${tzLabel}), локальное: ${localTime} (UTC${offset}), UTC: ${utcTime}`;
+  const timeHint = `Текущее время: ${tzTime} (${tzLabel})`;
 
   const handleSubmit = () => {
     const result = buildScheduleConfig(value);
@@ -74,132 +80,192 @@ export function ScheduleForm({
     onSubmit(result.config);
   };
 
-  const showDaily = value.strategy === "daily";
-  const showWeekly = value.strategy === "weekly";
-  const showCustom = value.strategy === "custom";
+  const showDaily = value.strategy === 'daily';
+  const showWeekly = value.strategy === 'weekly';
+  const showCustom = value.strategy === 'custom';
+
+  const inputBaseClass =
+    'w-full bg-white dark:bg-[#060d18] border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm rounded-lg outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 dark:text-slate-100 transition-all';
 
   return (
-    <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3">
-      <h3 className="font-semibold">{title || "Новое расписание"}</h3>
-      {error && <div className="text-sm text-red-500">{error}</div>}
-      {localError && <div className="text-sm text-red-500">{localError}</div>}
-      <div className="grid gap-3 md:grid-cols-2">
-        <input
-          className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-          placeholder="Название"
-          value={value.name}
-          onChange={(e) => onChange({ ...value, name: e.target.value })}
-        />
-        <select
-          className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-          value={value.strategy}
-          onChange={(e) => onChange({ ...value, strategy: e.target.value })}
-        >
-          <option value="immediate">Сразу</option>
-          <option value="daily">Ежедневно</option>
-          <option value="weekly">Еженедельно</option>
-          <option value="custom">CRON</option>
-        </select>
-        <input
-          className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 md:col-span-2"
-          placeholder="Описание"
-          value={value.description}
-          onChange={(e) => onChange({ ...value, description: e.target.value })}
-        />
-        {showDaily && (
-          <>
-            <input
-              type="number"
-              min={1}
-              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-              placeholder="Лимит (день)"
-              value={value.dailyLimit}
-              onChange={(e) => onChange({ ...value, dailyLimit: e.target.value })}
-            />
-            <input
-              type="time"
-              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-              value={value.dailyTime}
-              onChange={(e) => onChange({ ...value, dailyTime: e.target.value })}
-            />
-            <div className="text-xs text-slate-500 dark:text-slate-400 md:col-span-2">
-              {timeHint}. Время расписания интерпретируется как {tzLabel}.
-            </div>
-          </>
+    <div className="bg-white dark:bg-[#0f1523] border border-slate-200 dark:border-slate-700 rounded-2xl shadow-sm overflow-hidden animate-in fade-in duration-300">
+      <div className="p-5 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#0a1020]">
+        <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+          {title || 'Новое расписание'}
+        </h3>
+      </div>
+
+      <div className="p-5 space-y-4">
+        {error && (
+          <div className="p-3 bg-red-50 text-red-600 rounded-lg text-xs border border-red-100 dark:bg-red-950/30 dark:border-red-900/50">
+            {error}
+          </div>
         )}
-        {showWeekly && (
-          <>
-            <input
-              type="number"
-              min={1}
-              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-              placeholder="Лимит (неделя)"
-              value={value.weeklyLimit}
-              onChange={(e) => onChange({ ...value, weeklyLimit: e.target.value })}
-            />
+        {localError && (
+          <div className="p-3 bg-red-50 text-red-600 rounded-lg text-xs border border-red-100 dark:bg-red-950/30 dark:border-red-900/50">
+            {localError}
+          </div>
+        )}
+
+        <div className="grid gap-4 md:grid-cols-[1fr_200px]">
+          <div>
+            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">
+              Название и описание
+            </label>
+            <div className="space-y-2">
+              <input
+                className={inputBaseClass}
+                placeholder="Название расписания"
+                value={value.name}
+                onChange={(e) => onChange({ ...value, name: e.target.value })}
+              />
+              <input
+                className={inputBaseClass}
+                placeholder="Описание (опционально)"
+                value={value.description}
+                onChange={(e) => onChange({ ...value, description: e.target.value })}
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">
+              Стратегия запуска
+            </label>
             <select
-              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-              value={value.weeklyDay}
-              onChange={(e) => onChange({ ...value, weeklyDay: e.target.value })}
-            >
-              <option value="mon">Пн</option>
-              <option value="tue">Вт</option>
-              <option value="wed">Ср</option>
-              <option value="thu">Чт</option>
-              <option value="fri">Пт</option>
-              <option value="sat">Сб</option>
-              <option value="sun">Вс</option>
+              className={inputBaseClass}
+              value={value.strategy}
+              onChange={(e) => onChange({ ...value, strategy: e.target.value })}>
+              <option value="immediate">Запустить один раз сейчас</option>
+              <option value="daily">Каждый день</option>
+              <option value="weekly">Раз в неделю</option>
+              <option value="custom">По Cron-выражению</option>
             </select>
-            <input
-              type="time"
-              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 md:col-span-2"
-              value={value.weeklyTime}
-              onChange={(e) => onChange({ ...value, weeklyTime: e.target.value })}
-            />
-            <div className="text-xs text-slate-500 dark:text-slate-400 md:col-span-2">
-              {timeHint}. Время расписания интерпретируется как {tzLabel}.
-            </div>
-          </>
-        )}
-        {showCustom && (
-          <div className="md:col-span-2 space-y-1">
-            <input
-              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 w-full"
-              placeholder="CRON выражение (например: 0 9 * * *)"
-              value={value.customCron}
-              onChange={(e) => onChange({ ...value, customCron: e.target.value })}
-            />
-            <div className="text-xs text-slate-500 dark:text-slate-400">
-              Формат cron: минута час день месяц день_недели
+          </div>
+        </div>
+
+        {/* НАСТРОЙКИ СТРАТЕГИИ */}
+        {(showDaily || showWeekly || showCustom) && (
+          <div className="p-4 bg-slate-50/50 dark:bg-slate-800/30 rounded-xl border border-slate-100 dark:border-slate-700/50">
+            {showDaily && (
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                  Каждый день брать по
+                </span>
+                <input
+                  type="number"
+                  min={1}
+                  className={`${inputBaseClass} w-20`}
+                  value={value.dailyLimit}
+                  onChange={(e) => onChange({ ...value, dailyLimit: e.target.value })}
+                />
+                <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                  доменов в
+                </span>
+                <input
+                  type="time"
+                  className={`${inputBaseClass} w-28`}
+                  value={value.dailyTime}
+                  onChange={(e) => onChange({ ...value, dailyTime: e.target.value })}
+                />
+              </div>
+            )}
+
+            {showWeekly && (
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                  Каждую(ый)
+                </span>
+                <select
+                  className={`${inputBaseClass} w-32`}
+                  value={value.weeklyDay}
+                  onChange={(e) => onChange({ ...value, weeklyDay: e.target.value })}>
+                  <option value="mon">Понедельник</option>
+                  <option value="tue">Вторник</option>
+                  <option value="wed">Среду</option>
+                  <option value="thu">Четверг</option>
+                  <option value="fri">Пятницу</option>
+                  <option value="sat">Субботу</option>
+                  <option value="sun">Воскресенье</option>
+                </select>
+                <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                  брать по
+                </span>
+                <input
+                  type="number"
+                  min={1}
+                  className={`${inputBaseClass} w-20`}
+                  value={value.weeklyLimit}
+                  onChange={(e) => onChange({ ...value, weeklyLimit: e.target.value })}
+                />
+                <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                  доменов в
+                </span>
+                <input
+                  type="time"
+                  className={`${inputBaseClass} w-28`}
+                  value={value.weeklyTime}
+                  onChange={(e) => onChange({ ...value, weeklyTime: e.target.value })}
+                />
+              </div>
+            )}
+
+            {showCustom && (
+              <div className="space-y-2">
+                <input
+                  className={inputBaseClass}
+                  placeholder="CRON выражение (например: 0 9 * * *)"
+                  value={value.customCron}
+                  onChange={(e) => onChange({ ...value, customCron: e.target.value })}
+                />
+                <p className="text-[11px] text-slate-500 font-mono">
+                  Формат: минута час день месяц день_недели
+                </p>
+              </div>
+            )}
+
+            <div className="mt-3 flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+              <Clock className="w-3 h-3" />
+              <span>
+                {timeHint} (ваша таймзона: {tzLabel})
+              </span>
             </div>
           </div>
         )}
-        <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
-          <input
-            type="checkbox"
-            checked={value.isActive}
-            onChange={(e) => onChange({ ...value, isActive: e.target.checked })}
-          />
-          Активно
-        </label>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <button
-          onClick={handleSubmit}
-          disabled={loading || !value.name.trim()}
-          className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
-        >
-          {submitLabel || "Создать расписание"}
-        </button>
-        {onCancel && (
-          <button
-            onClick={onCancel}
-            disabled={loading}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-          >
-            Отмена
-          </button>
-        )}
+
+        <div className="flex items-center justify-between pt-2">
+          <label className="flex items-center gap-2 cursor-pointer group">
+            <div className="relative flex items-center">
+              <input
+                type="checkbox"
+                checked={value.isActive}
+                onChange={(e) => onChange({ ...value, isActive: e.target.checked })}
+                className="sr-only peer"
+              />
+              <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-slate-600 peer-checked:bg-indigo-600"></div>
+            </div>
+            <span className="text-sm font-medium text-slate-700 dark:text-slate-300 group-hover:text-slate-900 dark:group-hover:text-white transition-colors">
+              Активно
+            </span>
+          </label>
+
+          <div className="flex items-center gap-2">
+            {onCancel && (
+              <button
+                onClick={onCancel}
+                disabled={loading}
+                className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg dark:text-slate-300 dark:hover:bg-slate-800 transition-colors">
+                Отмена
+              </button>
+            )}
+            <button
+              onClick={handleSubmit}
+              disabled={loading || !value.name.trim()}
+              className="px-5 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg disabled:opacity-50 transition-all shadow-sm active:scale-95">
+              {loading ? 'Сохранение...' : submitLabel || 'Создать'}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );
