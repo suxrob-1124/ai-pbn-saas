@@ -57,6 +57,19 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Auto-login when user is already verified and approved (e.g. verification disabled)
+	if u.Verified && u.IsApproved {
+		tokens, err := s.svc.IssueSession(r.Context(), u.Email)
+		if err == nil {
+			setAuthCookies(w, s.cfg, tokens)
+			writeJSON(w, http.StatusCreated, map[string]any{
+				"email":     u.Email,
+				"autoLogin": true,
+			})
+			return
+		}
+	}
+
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"email":     u.Email,
 		"createdAt": u.CreatedAt,

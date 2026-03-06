@@ -76,7 +76,7 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if body.Status == "" {
-			body.Status = "draft"
+			body.Status = "active"
 		}
 		tz := strings.TrimSpace(body.Timezone)
 		if tz == "" {
@@ -281,7 +281,7 @@ func (s *Server) handleProjectByID(w http.ResponseWriter, r *http.Request) {
 			Timezone:       sqlstore.NullableString(tz),
 		}
 		if p.Status == "" {
-			p.Status = "draft"
+			p.Status = "active"
 		}
 		if err := s.projects.Update(r.Context(), p); err != nil {
 			writeError(w, http.StatusInternalServerError, "could not update project")
