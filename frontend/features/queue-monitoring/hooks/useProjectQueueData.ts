@@ -33,8 +33,8 @@ export function useProjectQueueData(projectId: string | undefined) {
   const [historyItems, setHistoryItems] = useState<QueueItemDTO[]>([]);
   const [domains, setDomains] = useState<Record<string, Domain>>({});
   const [projectName, setProjectName] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [historyLoading, setHistoryLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [historyLoading, setHistoryLoading] = useState(true);
   const [cleaning, setCleaning] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -42,7 +42,7 @@ export function useProjectQueueData(projectId: string | undefined) {
   const [permissionDenied, setPermissionDenied] = useState(false);
 
   const [linkTasks, setLinkTasks] = useState<LinkTaskDTO[]>([]);
-  const [linkLoading, setLinkLoading] = useState(false);
+  const [linkLoading, setLinkLoading] = useState(true);
   const [linkRefreshing, setLinkRefreshing] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
   const [linkErrorDiagnostics, setLinkErrorDiagnostics] = useState<string | null>(null);
@@ -219,14 +219,26 @@ export function useProjectQueueData(projectId: string | undefined) {
   };
 
   useEffect(() => {
+    if (!projectId) {
+      setLoading(false);
+      return;
+    }
     void load();
   }, [projectId, genPage, search]);
 
   useEffect(() => {
+    if (!projectId) {
+      setHistoryLoading(false);
+      return;
+    }
     void loadHistory();
   }, [projectId, historyPage, historyStatusFilter, historyDateFrom, historyDateTo, historySearch]);
 
   useEffect(() => {
+    if (!projectId) {
+      setLinkLoading(false);
+      return;
+    }
     void loadLinkTasks();
   }, [projectId, linkPage, linkStatusFilter, linkDateFrom, linkDateTo, linkSearch]);
 

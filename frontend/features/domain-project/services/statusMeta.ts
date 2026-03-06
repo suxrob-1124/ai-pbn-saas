@@ -2,7 +2,7 @@ import { hasInsertedLink, isLinkTaskInProgress, normalizeLinkTaskStatus } from "
 import { getMainGenerationActionLabel } from "./statusCta";
 import type { DomainLinkView, LinkTaskView } from "../types/view";
 
-export function getEffectiveDomainLinkStatus(domain: Pick<DomainLinkView, "link_status_effective" | "link_status"> | null | undefined): string {
+export function getEffectiveDomainLinkStatus(domain: Partial<Pick<DomainLinkView, "link_status_effective" | "link_status">> | null | undefined): string {
   return domain?.link_status_effective || domain?.link_status || "";
 }
 

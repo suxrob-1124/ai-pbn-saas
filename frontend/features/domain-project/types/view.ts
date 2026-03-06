@@ -17,9 +17,3 @@ export type DomainLinkView = {
   link_anchor_text?: string;
   link_acceptor_url?: string;
 };
-
-export type DomainEditorAvailabilityView = {
-  status?: string;
-  file_count?: number;
-  published_at?: string;
-};
