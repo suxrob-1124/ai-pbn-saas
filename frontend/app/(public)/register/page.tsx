@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { FiEye, FiEyeOff } from "react-icons/fi";
 import { post } from "@/lib/http";
 import { useCaptcha } from "@/lib/useCaptcha";
@@ -15,6 +16,7 @@ export default function RegisterPage() {
   const [loading, setLoading] = useState(false);
   const [showPwd, setShowPwd] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const router = useRouter();
   const { captchaId, question, ttl, remainingAttempts, answer, setAnswer, refresh: refreshCaptcha } = useCaptcha(true);
 
   const onSubmit = async (e: FormEvent) => {
@@ -27,7 +29,11 @@ export default function RegisterPage() {
     setError(null);
     setStatus(null);
     try {
-      await post("/api/register", { email, password, captchaId, captchaAnswer: answer });
+      const res = await post<{ autoLogin?: boolean }>("/api/register", { email, password, captchaId, captchaAnswer: answer });
+      if (res.autoLogin) {
+        router.push("/projects");
+        return;
+      }
       setStatus("Аккаунт создан. Проверьте почту для подтверждения.");
     } catch (err: any) {
       setError(err?.message || "Ошибка регистрации");

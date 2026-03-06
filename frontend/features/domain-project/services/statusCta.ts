@@ -13,7 +13,6 @@ const GENERATION_STATUS_META: Record<string, GenerationStatusMeta> = {
   processing: { text: "В работе", tone: "amber", icon: "play" },
   running: { text: "В работе", tone: "amber", icon: "play" },
   published: { text: "Опубликован", tone: "green", icon: "play" },
-  draft: { text: "Черновик", tone: "slate", icon: "pause" },
   active: { text: "Активен", tone: "green", icon: "play" },
   paused: { text: "Приостановлено", tone: "slate", icon: "pause" },
   pause_requested: { text: "Пауза запрошена", tone: "yellow", icon: "pause" },
