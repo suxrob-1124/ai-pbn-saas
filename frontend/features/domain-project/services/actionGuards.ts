@@ -1,4 +1,4 @@
-import type { DomainEditorAvailabilityView, DomainProjectRole } from "../types/view";
+import type { DomainProjectRole } from "../types/view";
 
 export const GENERATION_ACTIVE_STATUSES = ["pending", "processing", "pause_requested", "cancelling"] as const;
 
@@ -14,10 +14,8 @@ export function canEditPromptOverrides(role?: string | null): boolean {
   return role === "admin" || role === "owner" || role === "editor";
 }
 
-export function canOpenDomainEditor(domain: DomainEditorAvailabilityView | null | undefined): boolean {
-  if (!domain) return false;
-  if (domain.status !== "published") return false;
-  return (typeof domain.file_count === "number" && domain.file_count > 0) || Boolean(domain.published_at);
+export function canOpenDomainEditor(domain: unknown): boolean {
+  return !!domain;
 }
 
 export function hasLinkSettings(anchor?: string | null, acceptor?: string | null): boolean {

@@ -19,6 +19,7 @@ type UserStore interface {
 	SetAPIKey(ctx context.Context, email string, ciphertext []byte, updatedAt time.Time) error
 	ClearAPIKey(ctx context.Context, email string) error
 	GetAPIKey(ctx context.Context, email string) ([]byte, *time.Time, error)
+	Delete(ctx context.Context, email string) error
 }
 
 type SessionStore interface {

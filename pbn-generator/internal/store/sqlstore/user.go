@@ -29,14 +29,14 @@ func (s *UserStore) Create(ctx context.Context, email, password string) (auth.Us
 	}
 	now := time.Now().UTC()
 	_, err = s.db.ExecContext(ctx, `INSERT INTO users(email, password_hash, created_at, verified, name, avatar_url, role, is_approved) VALUES($1, $2, $3, $4, $5, $6, $7, $8)`,
-		email, hash, now, false, "", "", "manager", false)
+		email, hash, now, false, "", "", "user", false)
 	if err != nil {
 		if isUnique(err) {
 			return auth.User{}, errors.New("user already exists")
 		}
 		return auth.User{}, fmt.Errorf("failed to insert user: %w", err)
 	}
-	return auth.User{Email: email, PasswordHash: hash, CreatedAt: now, Verified: false, Role: "manager", IsApproved: false}, nil
+	return auth.User{Email: email, PasswordHash: hash, CreatedAt: now, Verified: false, Role: "user", IsApproved: false}, nil
 }
 
 func (s *UserStore) Authenticate(ctx context.Context, email, password string) (auth.User, error) {
@@ -211,6 +211,40 @@ func (s *UserStore) ClearAPIKey(ctx context.Context, email string) error {
 		return errors.New("user not found")
 	}
 	return nil
+}
+
+func (s *UserStore) Delete(ctx context.Context, email string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Clean up related data
+	if _, err := tx.ExecContext(ctx, `DELETE FROM email_verifications WHERE email = $1`, email); err != nil {
+		return fmt.Errorf("failed to cleanup email verifications: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM password_resets WHERE email = $1`, email); err != nil {
+		return fmt.Errorf("failed to cleanup password resets: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM email_changes WHERE email = $1`, email); err != nil {
+		return fmt.Errorf("failed to cleanup email changes: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE email = $1`, email); err != nil {
+		return fmt.Errorf("failed to cleanup sessions: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM project_members WHERE user_email = $1`, email); err != nil {
+		return fmt.Errorf("failed to cleanup project members: %w", err)
+	}
+
+	res, err := tx.ExecContext(ctx, `DELETE FROM users WHERE email = $1`, email)
+	if err != nil {
+		return fmt.Errorf("failed to delete user: %w", err)
+	}
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		return errors.New("user not found")
+	}
+	return tx.Commit()
 }
 
 func (s *UserStore) GetAPIKey(ctx context.Context, email string) ([]byte, *time.Time, error) {

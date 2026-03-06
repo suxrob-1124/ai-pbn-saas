@@ -78,6 +78,8 @@ func TestE2E_RegisterVerifyReset(t *testing.T) {
 		newStubCheckHistoryStore(),
 		nil,
 		nil,
+		nil,
+		nil,
 		newStubEnqueuer(),
 	)
 	handler := server.Handler()
@@ -205,6 +207,8 @@ func TestE2E_RefreshLogoutChangeEmail(t *testing.T) {
 		newStubGenQueueStore(),
 		newStubIndexCheckStore(),
 		newStubCheckHistoryStore(),
+		nil,
+		nil,
 		nil,
 		nil,
 		newStubEnqueuer(),
@@ -510,6 +514,21 @@ func (s *e2eUserStore) GetAPIKey(ctx context.Context, email string) ([]byte, *ti
 	}
 	ts := s.apiKeyAt[email]
 	return append([]byte(nil), key...), &ts, nil
+}
+
+func (s *e2eUserStore) Delete(ctx context.Context, email string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.users[email]; !ok {
+		return errors.New("not found")
+	}
+	delete(s.users, email)
+	delete(s.verified, email)
+	delete(s.roles, email)
+	delete(s.approved, email)
+	delete(s.apiKeys, email)
+	delete(s.apiKeyAt, email)
+	return nil
 }
 
 // Используем http.Client с кастомным Transport, чтобы обходиться без реального порта.

@@ -11,7 +11,7 @@ import (
 	"obzornik-pbn-generator/internal/tasks"
 )
 
-func New(cfg config.Config, svc *auth.Service, logger *zap.SugaredLogger, projects ProjectStore, projectMembers *sqlstore.ProjectMemberStore, domains DomainStore, generations GenerationStore, prompts PromptStore, promptOverrides PromptOverrideStore, deployments DeploymentAttemptStore, schedules ScheduleStore, linkSchedules LinkScheduleStore, auditRules *sqlstore.AuditStore, siteFiles SiteFileStore, fileEdits FileEditStore, linkTasks LinkTaskStore, genQueue GenQueueStore, indexChecks IndexCheckStore, checkHistory CheckHistoryStore, llmUsage LLMUsageStore, modelPricing ModelPricingStore, tq tasks.Enqueuer) *Server {
+func New(cfg config.Config, svc *auth.Service, logger *zap.SugaredLogger, projects ProjectStore, projectMembers *sqlstore.ProjectMemberStore, domains DomainStore, generations GenerationStore, prompts PromptStore, promptOverrides PromptOverrideStore, deployments DeploymentAttemptStore, schedules ScheduleStore, linkSchedules LinkScheduleStore, auditRules *sqlstore.AuditStore, siteFiles SiteFileStore, fileEdits FileEditStore, linkTasks LinkTaskStore, genQueue GenQueueStore, indexChecks IndexCheckStore, checkHistory CheckHistoryStore, llmUsage LLMUsageStore, modelPricing ModelPricingStore, legacyImports LegacyImportStore, appSettings AppSettingsStore, tq tasks.Enqueuer) *Server {
 	if logger == nil {
 		logger = zap.NewNop().Sugar()
 	}
@@ -57,6 +57,8 @@ func New(cfg config.Config, svc *auth.Service, logger *zap.SugaredLogger, projec
 		checkHistory:     checkHistory,
 		llmUsage:         llmUsage,
 		modelPricing:     modelPricing,
+		legacyImports:    legacyImports,
+		appSettings:      appSettings,
 		tasks:            tq,
 		reqDuration:      reqDuration,
 		reqCounter:       reqCounter,

@@ -19,7 +19,7 @@ func (s *SERPAnalysisStep) ArtifactKey() string {
 }
 
 func (s *SERPAnalysisStep) Progress() int {
-	return 20 // Прогресс после выполнения этого шага
+	return 8 // Прогресс после выполнения этого шага
 }
 
 func (s *SERPAnalysisStep) Execute(ctx context.Context, state *PipelineState) (map[string]any, error) {

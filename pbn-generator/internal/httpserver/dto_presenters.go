@@ -20,9 +20,10 @@ type projectDTO struct {
 	Timezone        *string         `json:"timezone,omitempty"`
 	DefaultServerID *string         `json:"default_server_id,omitempty"`
 	GlobalBlacklist json.RawMessage `json:"global_blacklist,omitempty"`
-	CreatedAt       time.Time       `json:"created_at"`
-	UpdatedAt       time.Time       `json:"updated_at"`
-	OwnerHasApiKey  bool            `json:"ownerHasApiKey,omitempty"` // Есть ли API ключ у владельца проекта
+	IndexCheckEnabled bool            `json:"index_check_enabled"`
+	CreatedAt         time.Time       `json:"created_at"`
+	UpdatedAt         time.Time       `json:"updated_at"`
+	OwnerHasApiKey    bool            `json:"ownerHasApiKey,omitempty"` // Есть ли API ключ у владельца проекта
 }
 
 type domainDTO struct {
@@ -52,6 +53,8 @@ type domainDTO struct {
 	LinkFilePath        *string    `json:"link_file_path,omitempty"`
 	LinkAnchorSnapshot  *string    `json:"link_anchor_snapshot,omitempty"`
 	LinkReadyAt         *time.Time `json:"link_ready_at,omitempty"`
+	IndexCheckEnabled   bool       `json:"index_check_enabled"`
+	GenerationType      string     `json:"generation_type"`
 	CreatedAt           time.Time  `json:"created_at"`
 	UpdatedAt           time.Time  `json:"updated_at"`
 }
@@ -238,6 +241,7 @@ type generationDTO struct {
 	Progress         int        `json:"progress"`
 	Error            *string    `json:"error,omitempty"`
 	PromptID         *string    `json:"prompt_id,omitempty"`
+	GenerationType   string     `json:"generation_type,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`
 	UpdatedAt        time.Time  `json:"updated_at"`
 	StartedAt        *time.Time `json:"started_at,omitempty"`
@@ -416,17 +420,18 @@ func (s *Server) toProjectDTO(ctx context.Context, p sqlstore.Project) projectDT
 	}
 
 	return projectDTO{
-		ID:              p.ID,
-		Name:            p.Name,
-		Status:          p.Status,
-		TargetCountry:   p.TargetCountry,
-		TargetLanguage:  p.TargetLanguage,
-		Timezone:        nullableStringPtr(p.Timezone),
-		DefaultServerID: nullableStringPtr(p.DefaultServerID),
-		GlobalBlacklist: gb,
-		CreatedAt:       p.CreatedAt,
-		UpdatedAt:       p.UpdatedAt,
-		OwnerHasApiKey:  ownerHasApiKey,
+		ID:                p.ID,
+		Name:              p.Name,
+		Status:            p.Status,
+		TargetCountry:     p.TargetCountry,
+		TargetLanguage:    p.TargetLanguage,
+		Timezone:          nullableStringPtr(p.Timezone),
+		DefaultServerID:   nullableStringPtr(p.DefaultServerID),
+		GlobalBlacklist:   gb,
+		IndexCheckEnabled: p.IndexCheckEnabled,
+		CreatedAt:         p.CreatedAt,
+		UpdatedAt:         p.UpdatedAt,
+		OwnerHasApiKey:    ownerHasApiKey,
 	}
 }
 
@@ -437,16 +442,17 @@ func toProjectDTO(p sqlstore.Project) projectDTO {
 		gb = json.RawMessage(p.GlobalBlacklist)
 	}
 	return projectDTO{
-		ID:              p.ID,
-		Name:            p.Name,
-		Status:          p.Status,
-		TargetCountry:   p.TargetCountry,
-		TargetLanguage:  p.TargetLanguage,
-		Timezone:        nullableStringPtr(p.Timezone),
-		DefaultServerID: nullableStringPtr(p.DefaultServerID),
-		GlobalBlacklist: gb,
-		CreatedAt:       p.CreatedAt,
-		UpdatedAt:       p.UpdatedAt,
+		ID:                p.ID,
+		Name:              p.Name,
+		Status:            p.Status,
+		TargetCountry:     p.TargetCountry,
+		TargetLanguage:    p.TargetLanguage,
+		Timezone:          nullableStringPtr(p.Timezone),
+		DefaultServerID:   nullableStringPtr(p.DefaultServerID),
+		GlobalBlacklist:   gb,
+		IndexCheckEnabled: p.IndexCheckEnabled,
+		CreatedAt:         p.CreatedAt,
+		UpdatedAt:         p.UpdatedAt,
 	}
 }
 
@@ -484,6 +490,8 @@ func toDomainDTO(d sqlstore.Domain) domainDTO {
 		LinkFilePath:       nullableStringPtr(d.LinkFilePath),
 		LinkAnchorSnapshot: nullableStringPtr(d.LinkAnchorSnapshot),
 		LinkReadyAt:        nullableTimePtr(d.LinkReadyAt),
+		IndexCheckEnabled:  d.IndexCheckEnabled,
+		GenerationType:     d.GenerationType,
 		CreatedAt:          d.CreatedAt,
 		UpdatedAt:          d.UpdatedAt,
 	}
@@ -786,6 +794,7 @@ func toGenerationDTO(g sqlstore.Generation) generationDTO {
 		Progress:         g.Progress,
 		Error:            nullableStringPtr(g.Error),
 		PromptID:         nullableStringPtr(g.PromptID),
+		GenerationType:   g.GenerationType,
 		CreatedAt:        g.CreatedAt,
 		UpdatedAt:        g.UpdatedAt,
 		StartedAt:        nullableTimePtr(g.StartedAt),
@@ -804,6 +813,7 @@ func toGenerationLightDTO(g sqlstore.Generation) generationDTO {
 		Progress:         g.Progress,
 		Error:            nullableStringPtr(g.Error),
 		PromptID:         nullableStringPtr(g.PromptID),
+		GenerationType:   g.GenerationType,
 		CreatedAt:        g.CreatedAt,
 		UpdatedAt:        g.UpdatedAt,
 		StartedAt:        nullableTimePtr(g.StartedAt),

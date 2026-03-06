@@ -112,6 +112,8 @@ func Analyze(ctx context.Context, keyword, country, lang string, exclude []strin
 }
 
 func fetchSerp(ctx context.Context, keyword, country, lang string, limit int) ([]SerpItem, map[string]any, error) {
+	country, lang = NormalizeSerpGeoLang(country, lang)
+
 	base := "https://alfasearchspy.alfasearch.ru/api/v1/ranking/parse"
 	params := url.Values{}
 	params.Set("keyword", keyword)
@@ -622,6 +624,108 @@ func stopwordSet(lang string) map[string]struct{} {
 		res[w] = struct{}{}
 	}
 	return res
+}
+
+// langToCountry maps ISO 639-1 language codes to ISO 3166-1 Alpha-2 country
+// codes. The external SERP API expects country codes in both `geo` and `lang`
+// parameters (despite the name). If a user accidentally passes a language code
+// in `lang`, this table lets us silently fix it.
+var langToCountry = map[string]string{
+	"da": "dk", // Danish   → Denmark
+	"sv": "se", // Swedish  → Sweden
+	"nb": "no", // Norwegian Bokmål → Norway
+	"nn": "no", // Norwegian Nynorsk → Norway
+	"fi": "fi", // Finnish  → Finland (same code)
+	"en": "us", // English  → USA (default)
+	"de": "de", // German   → Germany (same code)
+	"fr": "fr", // French   → France  (same code)
+	"es": "es", // Spanish  → Spain   (same code)
+	"it": "it", // Italian  → Italy   (same code)
+	"pt": "pt", // Portuguese → Portugal (same code)
+	"nl": "nl", // Dutch    → Netherlands (same code)
+	"pl": "pl", // Polish   → Poland (same code)
+	"ru": "ru", // Russian  → Russia (same code)
+	"uk": "ua", // Ukrainian → Ukraine
+	"cs": "cz", // Czech    → Czech Republic
+	"el": "gr", // Greek    → Greece
+	"ja": "jp", // Japanese → Japan
+	"ko": "kr", // Korean   → South Korea
+	"zh": "cn", // Chinese  → China
+	"ar": "sa", // Arabic   → Saudi Arabia (default)
+	"he": "il", // Hebrew   → Israel
+	"hi": "in", // Hindi    → India
+	"th": "th", // Thai     → Thailand (same code)
+	"vi": "vn", // Vietnamese → Vietnam
+	"tr": "tr", // Turkish  → Turkey (same code)
+	"ro": "ro", // Romanian → Romania (same code)
+	"et": "ee", // Estonian → Estonia
+	"lv": "lv", // Latvian  → Latvia (same code)
+	"lt": "lt", // Lithuanian → Lithuania (same code)
+	"sl": "si", // Slovenian → Slovenia
+	"hr": "hr", // Croatian → Croatia (same code)
+	"sk": "sk", // Slovak   → Slovakia (same code)
+	"bg": "bg", // Bulgarian → Bulgaria (same code)
+	"sr": "rs", // Serbian  → Serbia
+	"ka": "ge", // Georgian → Georgia
+}
+
+// validCountryCodes contains known ISO 3166-1 Alpha-2 country codes that the
+// SERP API accepts. Used to detect if a value is already a valid country code.
+var validCountryCodes = func() map[string]struct{} {
+	codes := []string{
+		"ad", "ae", "af", "ag", "al", "am", "ao", "ar", "at", "au",
+		"az", "ba", "bb", "bd", "be", "bf", "bg", "bh", "bi", "bj",
+		"bn", "bo", "br", "bs", "bt", "bw", "by", "bz", "ca", "cd",
+		"cf", "cg", "ch", "ci", "cl", "cm", "cn", "co", "cr", "cu",
+		"cy", "cz", "de", "dj", "dk", "dm", "do", "dz", "ec", "ee",
+		"eg", "er", "es", "et", "fi", "fj", "fr", "ga", "gb", "ge",
+		"gh", "gm", "gn", "gq", "gr", "gt", "gw", "gy", "hk", "hn",
+		"hr", "ht", "hu", "id", "ie", "il", "in", "iq", "ir", "is",
+		"it", "jm", "jo", "jp", "ke", "kg", "kh", "kr", "kw", "kz",
+		"la", "lb", "lk", "lr", "ls", "lt", "lu", "lv", "ly", "ma",
+		"md", "me", "mg", "mk", "ml", "mm", "mn", "mo", "mr", "mt",
+		"mu", "mv", "mw", "mx", "my", "mz", "na", "ne", "ng", "ni",
+		"nl", "no", "np", "nz", "om", "pa", "pe", "pg", "ph", "pk",
+		"pl", "pr", "ps", "pt", "py", "qa", "ro", "rs", "ru", "rw",
+		"sa", "sc", "sd", "se", "sg", "si", "sk", "sl", "sn", "so",
+		"sr", "ss", "sv", "sy", "sz", "td", "tg", "th", "tj", "tl",
+		"tm", "tn", "to", "tr", "tt", "tw", "tz", "ua", "ug", "us",
+		"uy", "uz", "ve", "vn", "ws", "ye", "za", "zm", "zw",
+	}
+	m := make(map[string]struct{}, len(codes))
+	for _, c := range codes {
+		m[c] = struct{}{}
+	}
+	return m
+}()
+
+// NormalizeSerpGeoLang normalizes country and lang parameters for the external
+// SERP API. The API expects ISO 3166-1 country codes in both fields (despite
+// `lang` suggesting a language code). This function:
+//   - lowercases both values
+//   - maps language codes (e.g. "da") to country codes (e.g. "dk") in `lang`
+//   - validates `country` is a known country code
+func NormalizeSerpGeoLang(country, lang string) (string, string) {
+	country = strings.ToLower(strings.TrimSpace(country))
+	lang = strings.ToLower(strings.TrimSpace(lang))
+
+	// Normalize country: if it looks like a language code, map to country
+	if _, isCountry := validCountryCodes[country]; !isCountry && country != "" {
+		if mapped, ok := langToCountry[country]; ok {
+			country = mapped
+		}
+	}
+
+	// Normalize lang: the SERP API expects a country code here too.
+	// Always check langToCountry first — in the `lang` field, users almost
+	// always mean a language code (e.g. "sv" = Swedish, not El Salvador).
+	if lang != "" {
+		if mapped, ok := langToCountry[lang]; ok {
+			lang = mapped
+		}
+	}
+
+	return country, lang
 }
 
 var stopwords = map[string][]string{

@@ -20,7 +20,7 @@ func (s *CSSGenerationStep) ArtifactKey() string {
 }
 
 func (s *CSSGenerationStep) Progress() int {
-	return 97
+	return 74
 }
 
 func (s *CSSGenerationStep) Execute(ctx context.Context, state *PipelineState) (map[string]any, error) {
@@ -83,9 +83,7 @@ func (s *CSSGenerationStep) Execute(ctx context.Context, state *PipelineState) (
 	clean = strings.TrimSuffix(clean, "```")
 	clean = strings.TrimSpace(clean)
 
-	files := mergeGeneratedFiles(state.Artifacts["generated_files"], []GeneratedFile{
-		{Path: "style.css", Content: clean},
-	})
+	files := mergeGeneratedFiles(state.Artifacts["generated_files"], nil)
 
 	artifacts := map[string]any{
 		"css_content":           clean,

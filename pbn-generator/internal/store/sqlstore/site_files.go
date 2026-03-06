@@ -45,6 +45,7 @@ type SiteFileStore interface {
 	Move(ctx context.Context, fileID, newPath string) error
 	SetLastEditedBy(ctx context.Context, fileID string, editedBy sql.NullString) error
 	UpdateHash(ctx context.Context, fileID, hash string) error
+	ClearHistory(ctx context.Context, domainID string) error
 }
 
 // SiteFileSQLStore реализует SiteFileStore поверх SQL БД.
@@ -222,6 +223,24 @@ func (s *SiteFileSQLStore) SetLastEditedBy(ctx context.Context, fileID string, e
 func (s *SiteFileSQLStore) UpdateHash(ctx context.Context, fileID, hash string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE site_files SET content_hash=$1, updated_at=NOW() WHERE id=$2 AND deleted_at IS NULL`, hash, fileID)
 	return err
+}
+
+// ClearHistory удаляет все file_revisions и file_edits для файлов домена и сбрасывает версии.
+// Вызывается при перегенерации сайта, чтобы не оставлять историю от предыдущей генерации.
+func (s *SiteFileSQLStore) ClearHistory(ctx context.Context, domainID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM file_revisions WHERE file_id IN (SELECT id FROM site_files WHERE domain_id = $1)`, domainID)
+	if err != nil {
+		return fmt.Errorf("failed to clear file revisions for domain %s: %w", domainID, err)
+	}
+	_, err = s.db.ExecContext(ctx, `DELETE FROM file_edits WHERE file_id IN (SELECT id FROM site_files WHERE domain_id = $1)`, domainID)
+	if err != nil {
+		return fmt.Errorf("failed to clear file edits for domain %s: %w", domainID, err)
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE site_files SET version = 1, updated_at = NOW() WHERE domain_id = $1`, domainID)
+	if err != nil {
+		return fmt.Errorf("failed to reset file versions for domain %s: %w", domainID, err)
+	}
+	return nil
 }
 
 func detectMimeType(path string, content []byte) string {

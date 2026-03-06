@@ -68,24 +68,16 @@ func TestJSGenerationStep(t *testing.T) {
 		t.Errorf("expected code blocks to be removed from js_content, got: %s", jsContent)
 	}
 
-	// Проверяем generated_files
+	// Проверяем generated_files (script.js больше не добавляется — JS инлайнится в assembly)
 	files, ok := artifacts["generated_files"].([]GeneratedFile)
-	if !ok || len(files) == 0 {
+	if !ok {
 		t.Fatalf("expected generated_files slice, got %#v", artifacts["generated_files"])
 	}
 
-	hasJSFile := false
 	for _, f := range files {
 		if f.Path == "script.js" {
-			hasJSFile = true
-			if f.Content != jsContent {
-				t.Errorf("script.js content doesn't match js_content artifact")
-			}
-			break
+			t.Errorf("script.js should not be in generated_files (JS is inlined in assembly)")
 		}
-	}
-	if !hasJSFile {
-		t.Errorf("expected script.js in generated_files")
 	}
 
 	// Проверяем, что js_content сохранен в контекст

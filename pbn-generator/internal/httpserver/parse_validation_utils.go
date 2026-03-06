@@ -236,6 +236,8 @@ type domainImportItem struct {
 	Anchor          string `json:"anchor"`
 	LinkAcceptorURL string `json:"link_acceptor_url"`
 	Acceptor        string `json:"acceptor"`
+	LinkPlaced      string `json:"link_placed"`
+	GenerationType  string `json:"generation_type"`
 }
 
 func parseDomainImportText(text string) ([]domainImportItem, error) {
@@ -284,7 +286,7 @@ func parseDomainImportFields(fields []string) (domainImportItem, error) {
 	if len(fields) == 0 {
 		return domainImportItem{}, errors.New("empty line")
 	}
-	if len(fields) > 7 {
+	if len(fields) > 9 {
 		return domainImportItem{}, errors.New("too many columns")
 	}
 	url := strings.TrimSpace(fields[0])
@@ -310,7 +312,18 @@ func parseDomainImportFields(fields []string) (domainImportItem, error) {
 	if len(fields) > 6 {
 		item.LinkAcceptorURL = strings.TrimSpace(fields[6])
 	}
+	if len(fields) > 7 {
+		item.LinkPlaced = strings.TrimSpace(fields[7])
+	}
+	if len(fields) > 8 {
+		item.GenerationType = strings.TrimSpace(fields[8])
+	}
 	return item, nil
+}
+
+func isDateString(s string) bool {
+	_, err := time.Parse("2006-01-02", s)
+	return err == nil
 }
 
 func domainImportLooksLikeHeader(fields []string) bool {
@@ -318,7 +331,16 @@ func domainImportLooksLikeHeader(fields []string) bool {
 		return false
 	}
 	v := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(fields[0], "\ufeff")))
-	return v == "url" || v == "domain"
+	if v == "url" || v == "domain" {
+		return true
+	}
+	for _, f := range fields {
+		lf := strings.ToLower(strings.TrimSpace(f))
+		if lf == "generation_type" || lf == "type" {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeImportedDomain(input string) (string, error) {

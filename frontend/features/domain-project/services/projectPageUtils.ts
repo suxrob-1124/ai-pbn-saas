@@ -9,6 +9,7 @@ export type Project = {
   timezone?: string;
   status?: string;
   ownerHasApiKey?: boolean;
+  index_check_enabled?: boolean;
 };
 
 export type Domain = {
@@ -26,6 +27,7 @@ export type Domain = {
   file_count?: number;
   total_size_bytes?: number;
   deployment_mode?: string;
+  server_id?: string;
   link_anchor_text?: string;
   link_acceptor_url?: string;
   link_status?: string;
@@ -33,6 +35,8 @@ export type Domain = {
   link_status_source?: "domain" | "active_task";
   link_last_task_id?: string;
   link_ready_at?: string;
+  index_check_enabled?: boolean;
+  generation_type?: string;
   updated_at?: string;
 };
 
@@ -40,6 +44,7 @@ export type Generation = {
   id: string;
   domain_id?: string;
   domain_url?: string | null;
+  generation_type?: string;
   status: string;
   progress: number;
   error?: string;

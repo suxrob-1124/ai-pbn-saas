@@ -32,6 +32,7 @@ func main() {
 	domainStore := sqlstore.NewDomainStore(dbConn)
 	checkStore := sqlstore.NewIndexCheckStore(dbConn)
 	historyStore := sqlstore.NewCheckHistoryStore(dbConn)
+	appSettingsStore := sqlstore.NewAppSettingsStore(dbConn)
 	checker := &indexchecker.SerpChecker{}
 
 	run := func() {
@@ -47,6 +48,7 @@ func main() {
 			checkStore,
 			historyStore,
 			checker,
+			appSettingsStore,
 			sugar,
 		); err != nil {
 			sugar.Errorf("index checker tick failed: %v", err)

@@ -48,13 +48,12 @@ const buildDefaultValue = (): IndexFiltersValue => ({
   search: ""
 });
 
-/** Панель фильтров для мониторинга индексации. */
+/** Панель фильтров для мониторинга индексации. Без карточки — размещается внутри родительского контейнера. */
 export function IndexFiltersBar({
   value,
   defaultValue,
   onApply,
   onReset,
-  onRefresh,
   onSearchChange,
   disabled
 }: IndexFiltersBarProps) {
@@ -78,100 +77,108 @@ export function IndexFiltersBar({
   };
 
   const handleApply = () => {
-    if (disabled) {
-      return;
-    }
+    if (disabled) return;
     onApply({ ...draft, statuses: normalizeIndexCheckStatusList(draft.statuses) });
   };
 
   const handleReset = () => {
-    if (disabled) {
-      return;
-    }
+    if (disabled) return;
     setDraft(resolvedDefault);
     onReset(resolvedDefault);
   };
 
   return (
-    <div className="bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3">
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-6">
-        <div className="md:col-span-2">
-          <label className="text-xs text-slate-500 dark:text-slate-400">Статус</label>
-          <div className="mt-2 grid grid-cols-2 gap-2">
-            {DEFAULT_STATUS_OPTIONS.map((status) => (
-              <label
-                key={status}
-                className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
-              >
-                <input
-                  type="checkbox"
-                  checked={draft.statuses.includes(status)}
-                  onChange={() => toggleStatus(status)}
-                  disabled={disabled}
-                />
-                {getIndexCheckStatusMeta(status).label}
-              </label>
-            ))}
-          </div>
+    <div className="space-y-3">
+      {/* ── Inputs row ──────────────────────────────────────────────── */}
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="flex flex-col gap-1 min-w-[150px]">
+          <span className="text-xs font-medium text-slate-500 dark:text-slate-400">С даты</span>
+          <FilterDateInput
+            value={draft.from}
+            disabled={disabled}
+            onChange={(v) => setDraft((p) => ({ ...p, from: v }))}
+          />
         </div>
-        <FilterDateInput
-          label="С даты"
-          value={draft.from}
-          disabled={disabled}
-          onChange={(value) => setDraft((prev) => ({ ...prev, from: value }))}
-        />
-        <FilterDateInput
-          label="По дату"
-          value={draft.to}
-          disabled={disabled}
-          onChange={(value) => setDraft((prev) => ({ ...prev, to: value }))}
-        />
-        <FilterSelect
-          label="В индексе"
-          value={draft.isIndexed}
-          disabled={disabled}
-          options={[...INDEXED_OPTIONS]}
-          onChange={(value) => setDraft((prev) => ({ ...prev, isIndexed: value as "all" | "true" | "false" }))}
-        />
+        <div className="flex flex-col gap-1 min-w-[150px]">
+          <span className="text-xs font-medium text-slate-500 dark:text-slate-400">По дату</span>
+          <FilterDateInput
+            value={draft.to}
+            disabled={disabled}
+            onChange={(v) => setDraft((p) => ({ ...p, to: v }))}
+          />
+        </div>
+        <div className="flex flex-col gap-1 min-w-[140px]">
+          <span className="text-xs font-medium text-slate-500 dark:text-slate-400">В индексе</span>
+          <FilterSelect
+            value={draft.isIndexed}
+            disabled={disabled}
+            options={[...INDEXED_OPTIONS]}
+            onChange={(v) => setDraft((p) => ({ ...p, isIndexed: v as "all" | "true" | "false" }))}
+          />
+        </div>
+        <div className="flex flex-col gap-1 flex-1 min-w-[200px]">
+          <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Поиск (URL)</span>
+          <FilterSearchInput
+            value={draft.search}
+            placeholder="example.com"
+            disabled={disabled}
+            onChange={(next) => {
+              setDraft((p) => ({ ...p, search: next }));
+              onSearchChange?.(next);
+            }}
+          />
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-        <FilterSearchInput
-          label="Поиск (URL)"
-          value={draft.search}
-          placeholder="example.com"
-          disabled={disabled}
-          onChange={(next) => {
-            setDraft((prev) => ({ ...prev, search: next }));
-            onSearchChange?.(next);
-          }}
-        />
-        <div className="flex items-end gap-2">
-          <button
-            type="button"
-            onClick={handleApply}
-            className="inline-flex items-center gap-2 rounded-lg bg-slate-800 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-700 disabled:opacity-50"
-            disabled={disabled || !dirty}
-          >
-            Применить
-          </button>
-          <button
-            type="button"
-            onClick={handleReset}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-            disabled={disabled || !dirty}
-          >
-            Сбросить
-          </button>
-          <button
-            type="button"
-            onClick={onRefresh}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-            disabled={disabled}
-          >
-            Обновить
-          </button>
-        </div>
+      {/* ── Status chips ────────────────────────────────────────────── */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-medium text-slate-500 dark:text-slate-400 flex-shrink-0">Статус:</span>
+        {DEFAULT_STATUS_OPTIONS.map((status) => {
+          const checked = draft.statuses.includes(status);
+          return (
+            <label
+              key={status}
+              className={[
+                "flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs cursor-pointer select-none transition-colors",
+                checked
+                  ? "border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300"
+                  : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-400 dark:hover:bg-slate-800",
+              ].join(" ")}
+            >
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={() => toggleStatus(status)}
+                disabled={disabled}
+                className="sr-only"
+              />
+              {checked && (
+                <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 dark:bg-indigo-400 flex-shrink-0" />
+              )}
+              {getIndexCheckStatusMeta(status).label}
+            </label>
+          );
+        })}
+      </div>
+
+      {/* ── Action buttons ──────────────────────────────────────────── */}
+      <div className="flex items-center gap-2 pt-0.5">
+        <button
+          type="button"
+          onClick={handleApply}
+          disabled={disabled || !dirty}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-40 transition-colors"
+        >
+          Применить
+        </button>
+        <button
+          type="button"
+          onClick={handleReset}
+          disabled={disabled || !dirty}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 transition-colors"
+        >
+          Сбросить
+        </button>
       </div>
     </div>
   );

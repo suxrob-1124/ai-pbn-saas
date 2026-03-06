@@ -50,13 +50,15 @@ func main() {
 	linkScheduleStore := sqlstore.NewLinkScheduleStore(database)
 	auditStore := sqlstore.NewAuditStore(database)
 	siteFileStore := sqlstore.NewSiteFileStore(database)
-	fileEditStore := sqlstore.NewFileEditStore(database)
+	fileEditStore := sqlstore.NewFileEditStore(database, cfg.FileRevisionMaxPerFile)
 	linkTaskStore := sqlstore.NewLinkTaskStore(database)
 	genQueueStore := sqlstore.NewGenQueueStore(database)
 	indexCheckStore := sqlstore.NewIndexCheckStore(database)
 	checkHistoryStore := sqlstore.NewCheckHistoryStore(database)
 	llmUsageStore := sqlstore.NewLLMUsageStore(database)
 	modelPricingStore := sqlstore.NewModelPricingStore(database)
+	legacyImportStore := sqlstore.NewLegacyImportStore(database)
+	appSettingsStore := sqlstore.NewAppSettingsStore(database)
 	mailer := buildMailer(cfg, logger)
 	taskClient, err := tasks.NewClient(cfg)
 	if err != nil {
@@ -98,6 +100,8 @@ func main() {
 		checkHistoryStore,
 		llmUsageStore,
 		modelPricingStore,
+		legacyImportStore,
+		appSettingsStore,
 		taskClient,
 	)
 	contentBackend, sshPool, err := buildContentBackend(cfg)

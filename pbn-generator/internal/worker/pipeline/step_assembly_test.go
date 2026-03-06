@@ -42,12 +42,18 @@ func TestAssemblyStep(t *testing.T) {
 		t.Fatalf("expected final_html, got %#v", artifacts["final_html"])
 	}
 
-	// Проверяем, что CSS и JS инъектированы
-	if !strings.Contains(finalHTML, "style.css") {
-		t.Errorf("expected final_html to contain style.css link")
+	// Проверяем, что CSS и JS инлайн
+	if !strings.Contains(finalHTML, "<style>") {
+		t.Errorf("expected final_html to contain inline <style>")
 	}
-	if !strings.Contains(finalHTML, "script.js") {
-		t.Errorf("expected final_html to contain script.js")
+	if !strings.Contains(finalHTML, "body { color: red; }") {
+		t.Errorf("expected final_html to contain CSS content inline")
+	}
+	if !strings.Contains(finalHTML, "<script>") {
+		t.Errorf("expected final_html to contain inline <script>")
+	}
+	if !strings.Contains(finalHTML, "console.log('test');") {
+		t.Errorf("expected final_html to contain JS content inline")
 	}
 
 	// Проверяем наличие zip архива
@@ -71,11 +77,9 @@ func TestAssemblyStep(t *testing.T) {
 		t.Fatalf("expected generated_files slice, got %#v", artifacts["generated_files"])
 	}
 
-	// Проверяем наличие обязательных файлов
+	// Проверяем наличие обязательных файлов (style.css/script.js теперь инлайн — не должно быть отдельных файлов)
 	requiredFiles := map[string]bool{
 		"index.html":  false,
-		"style.css":   false,
-		"script.js":   false,
 		"robots.txt":  false,
 		"sitemap.xml": false,
 		".htaccess":   false,
@@ -175,6 +179,9 @@ func TestNormalizeDomain(t *testing.T) {
 }
 
 func TestInjectAssets(t *testing.T) {
+	css := "body { color: red; }"
+	js := "console.log('ok');"
+
 	tests := []struct {
 		name   string
 		input  string
@@ -203,15 +210,23 @@ func TestInjectAssets(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := injectAssets(tt.input)
-			hasCSS := strings.Contains(result, "style.css")
-			hasJS := strings.Contains(result, "script.js")
+			result := injectAssets(tt.input, css, js)
+			hasCSS := strings.Contains(result, "<style>")
+			hasJS := strings.Contains(result, "<script>")
 
 			if hasCSS != tt.hasCSS {
 				t.Errorf("injectAssets: hasCSS = %v, want %v", hasCSS, tt.hasCSS)
 			}
 			if hasJS != tt.hasJS {
 				t.Errorf("injectAssets: hasJS = %v, want %v", hasJS, tt.hasJS)
+			}
+
+			// Ensure no external file references
+			if strings.Contains(result, "style.css") {
+				t.Errorf("injectAssets should not contain external style.css reference")
+			}
+			if strings.Contains(result, `script src=`) {
+				t.Errorf("injectAssets should not contain external script.js reference")
 			}
 		})
 	}

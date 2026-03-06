@@ -37,9 +37,10 @@ type Step interface {
 
 // PipelineState содержит состояние pipeline между шагами
 type PipelineState struct {
-	GenerationID string
-	DomainID     string
-	ForceStep    string // Если установлен, принудительно выполнить этот шаг и все последующие
+	GenerationID   string
+	DomainID       string
+	GenerationType string // Тип генерации (single_page, webarchive_single, ...)
+	ForceStep      string // Если установлен, принудительно выполнить этот шаг и все последующие
 
 	// Stores
 	DomainStore       *sqlstore.DomainStore
@@ -100,14 +101,6 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to load artifacts: %w", err)
 	}
 
-	if p.state.AppendLog != nil {
-		keys := make([]string, 0, len(p.state.Artifacts))
-		for k := range p.state.Artifacts {
-			keys = append(keys, k)
-		}
-		p.state.AppendLog(fmt.Sprintf("Available artifacts: %v", keys))
-	}
-
 	forceFromIndex := -1
 	forcingActive := false
 	if p.state.ForceStep != "" {
@@ -152,12 +145,6 @@ func (p *Pipeline) Run(ctx context.Context) error {
 		if forceFromIndex != -1 && i >= forceFromIndex {
 			forcingActive = true
 		}
-
-		exists := false
-		if _, ok := p.state.Artifacts[artifactKey]; ok {
-			exists = true
-		}
-		p.state.AppendLog(fmt.Sprintf("Checking step skip: step=%s looking_for=%s exists=%v forcing=%v", stepName, artifactKey, exists, forcingActive))
 
 		if !forcingActive {
 			if _, exists := p.state.Artifacts[artifactKey]; exists {
@@ -440,6 +427,17 @@ func stableDomainStatus(state *PipelineState) string {
 func (p *Pipeline) restoreFromArtifacts(stepName, artifactKey string) error {
 	// Восстанавливаем специфичные для шага данные
 	switch stepName {
+	case StepWaybackFetch:
+		if data, ok := p.state.Artifacts["wayback_data"]; ok {
+			p.state.Context["wayback_data"] = data
+		}
+	case StepKeywordGeneration:
+		if data, ok := p.state.Artifacts["generated_keyword"].(map[string]any); ok {
+			p.state.Context["generated_keyword"] = data
+			if kw, ok := data["selected_keyword"].(string); ok && kw != "" {
+				p.state.Domain.MainKeyword = kw
+			}
+		}
 	case StepSERPAnalysis:
 		if serp, ok := p.state.Artifacts["serp_data"].(map[string]any); ok {
 			p.state.Context["serp_data"] = serp

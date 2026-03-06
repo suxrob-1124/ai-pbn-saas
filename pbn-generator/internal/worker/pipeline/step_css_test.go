@@ -68,24 +68,16 @@ func TestCSSGenerationStep(t *testing.T) {
 		t.Errorf("expected code blocks to be removed from css_content, got: %s", cssContent)
 	}
 
-	// Проверяем generated_files
+	// Проверяем generated_files (style.css больше не добавляется — CSS инлайнится в assembly)
 	files, ok := artifacts["generated_files"].([]GeneratedFile)
-	if !ok || len(files) == 0 {
+	if !ok {
 		t.Fatalf("expected generated_files slice, got %#v", artifacts["generated_files"])
 	}
 
-	hasCSSFile := false
 	for _, f := range files {
 		if f.Path == "style.css" {
-			hasCSSFile = true
-			if f.Content != cssContent {
-				t.Errorf("style.css content doesn't match css_content artifact")
-			}
-			break
+			t.Errorf("style.css should not be in generated_files (CSS is inlined in assembly)")
 		}
-	}
-	if !hasCSSFile {
-		t.Errorf("expected style.css in generated_files")
 	}
 
 	// Проверяем, что css_content сохранен в контекст

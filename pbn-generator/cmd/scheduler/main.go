@@ -442,7 +442,7 @@ func processQueueItem(
 	_ = domainStore.SetLastGeneration(ctx, domain.ID, genID)
 	_ = domainStore.UpdateStatus(ctx, domain.ID, "processing")
 
-	task := tasks.NewGenerateTask(genID, domain.ID, "")
+	task := tasks.NewGenerateTask(genID, domain.ID, "", domain.GenerationType)
 	queue := tasks.QueueForProject(domain.ProjectID, genQueueShards)
 	if _, err := taskClient.Enqueue(ctx, task, asynq.Queue(queue)); err != nil {
 		errMsg := fmt.Sprintf("enqueue failed: %v", err)
@@ -498,7 +498,7 @@ func processRetryableGenerations(
 				}
 				continue
 			}
-			task := tasks.NewGenerateTask(gen.ID, gen.DomainID, "")
+			task := tasks.NewGenerateTask(gen.ID, gen.DomainID, "", gen.GenerationType)
 			queue := "default"
 			if domainStore != nil {
 				if d, err := domainStore.Get(ctx, gen.DomainID); err == nil {

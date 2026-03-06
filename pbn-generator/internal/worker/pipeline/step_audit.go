@@ -22,7 +22,7 @@ func (s *AuditStep) Name() string { return StepAudit }
 
 func (s *AuditStep) ArtifactKey() string { return "audit_report" }
 
-func (s *AuditStep) Progress() int { return 99 }
+func (s *AuditStep) Progress() int { return 97 }
 
 func (s *AuditStep) Execute(ctx context.Context, state *PipelineState) (map[string]any, error) {
 	files := parseGeneratedFiles(state.Artifacts["generated_files"])
@@ -41,7 +41,7 @@ func (s *AuditStep) Execute(ctx context.Context, state *PipelineState) (map[stri
 
 	findings := make([]auditFinding, 0)
 
-	required := []string{"index.html", "style.css", "script.js", "404.html"}
+	required := []string{"index.html", "404.html"}
 	for _, req := range required {
 		if _, ok := fileMap[req]; !ok {
 			findings = append(findings, auditFinding{

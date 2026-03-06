@@ -394,9 +394,23 @@ func processGeneration(
 		sugar.Infow("artifacts keys before pipeline", "generation", payload.GenerationID, "keys", keys)
 	}
 
+	// Determine effective generation type: payload > generation record > domain > default
+	effectiveGenType := payload.GenerationType
+	if effectiveGenType == "" {
+		effectiveGenType = gen.GenerationType
+	}
+	if effectiveGenType == "" {
+		effectiveGenType = domain.GenerationType
+	}
+	if effectiveGenType == "" {
+		effectiveGenType = pipeline.GenTypeSinglePage
+	}
+	appendLog(fmt.Sprintf("generation type: %s", effectiveGenType))
+
 	state := &pipeline.PipelineState{
 		GenerationID:      payload.GenerationID,
 		DomainID:          payload.DomainID,
+		GenerationType:    effectiveGenType,
 		ForceStep:         payload.ForceStep,
 		DomainStore:       domainStore,
 		GenerationStore:   genStore,
@@ -421,7 +435,8 @@ func processGeneration(
 	}
 
 	// Создаем шаги pipeline
-	steps := []pipeline.Step{
+	// Общие шаги для всех типов генерации (от SERP до Publish)
+	commonSteps := []pipeline.Step{
 		&pipeline.SERPAnalysisStep{},
 		&pipeline.CompetitorAnalysisStep{},
 		&pipeline.TechnicalSpecStep{},
@@ -436,6 +451,19 @@ func processGeneration(
 		&pipeline.AssemblyStep{},
 		&pipeline.AuditStep{},
 		&pipeline.PublishStep{},
+	}
+
+	var steps []pipeline.Step
+	switch effectiveGenType {
+	case pipeline.GenTypeWebarchiveSingle:
+		// Webarchive: fetch snapshots → generate keyword → then standard pipeline
+		steps = append([]pipeline.Step{
+			&pipeline.WaybackFetchStep{},
+			&pipeline.KeywordGenerationStep{},
+		}, commonSteps...)
+	default:
+		// single_page and fallback: standard pipeline
+		steps = commonSteps
 	}
 
 	// Создаем и запускаем pipeline

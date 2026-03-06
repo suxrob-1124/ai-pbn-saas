@@ -1,10 +1,6 @@
-import { FiX } from "react-icons/fi";
+import { X, UserPlus, Shield, User, Star } from 'lucide-react';
 
-type ProjectMember = {
-  email: string;
-  role: string;
-  createdAt: string;
-};
+type ProjectMember = { email: string; role: string; createdAt: string };
 
 type ProjectMembersSectionProps = {
   members: ProjectMember[];
@@ -29,93 +25,121 @@ export function ProjectMembersSection({
   onAddMember,
   onUpdateMemberRole,
   onRemoveMember,
-  formatDateTime
+  formatDateTime,
 }: ProjectMembersSectionProps) {
+  const getRoleIcon = (role: string) => {
+    if (role === 'owner') return <Star className="w-4 h-4 text-amber-500" />;
+    if (role === 'admin') return <Shield className="w-4 h-4 text-rose-500" />;
+    if (role === 'manager') return <Shield className="w-4 h-4 text-indigo-500" />;
+    return <User className="w-4 h-4 text-slate-500" />;
+  };
+
   return (
-    <div className="border-t border-slate-200 dark:border-slate-800 pt-4 space-y-4">
-      <h3 className="font-semibold">Участники проекта</h3>
-      <div className="bg-white/60 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3">
-        <h4 className="font-semibold">Добавить участника</h4>
-        <div className="grid gap-3 md:grid-cols-3">
-          <input
-            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-            placeholder="email@example.com"
-            value={newMemberEmail}
-            onChange={(e) => onNewMemberEmailChange(e.target.value)}
-          />
-          <select
-            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-            value={newMemberRole}
-            onChange={(e) => onNewMemberRoleChange(e.target.value)}
-          >
-            <option value="viewer">Наблюдатель</option>
-            <option value="editor">Редактор</option>
-            <option value="owner">Владелец</option>
-          </select>
-          <button
-            onClick={onAddMember}
-            disabled={loading || !newMemberEmail.trim()}
-            className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
-          >
-            Добавить
-          </button>
-        </div>
+    <div className="bg-white dark:bg-[#0f1523] border border-slate-200 dark:border-slate-700 rounded-2xl shadow-sm overflow-hidden animate-in fade-in">
+      {/* HEADER */}
+      <div className="p-6 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#0a1020]">
+        <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+          <UserPlus className="w-5 h-5 text-indigo-500" /> Команда проекта
+        </h3>
+        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+          Управление доступом и ролями участников.
+        </p>
       </div>
 
-      <div className="bg-white/60 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow space-y-3">
-        <div className="flex items-center justify-between">
-          <h4 className="font-semibold">Список участников</h4>
-          <span className="text-xs text-slate-500 dark:text-slate-400">Всего: {members.length}</span>
+      <div className="p-6 space-y-8">
+        {/* Форма добавления (В одну строку) */}
+        <div>
+          <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2">
+            Пригласить участника
+          </label>
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+            <input
+              className="flex-1 bg-white dark:bg-[#060d18] border border-slate-300 dark:border-slate-700 px-4 py-2.5 text-sm rounded-xl outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 dark:text-white placeholder:text-slate-400 transition-all shadow-sm"
+              placeholder="email@example.com"
+              value={newMemberEmail}
+              onChange={(e) => onNewMemberEmailChange(e.target.value)}
+            />
+            <select
+              className="sm:w-48 bg-white dark:bg-[#060d18] border border-slate-300 dark:border-slate-700 px-4 py-2.5 text-sm rounded-xl outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 dark:text-white transition-all shadow-sm"
+              value={newMemberRole}
+              onChange={(e) => onNewMemberRoleChange(e.target.value)}>
+              <option value="viewer">Наблюдатель</option>
+              <option value="editor">Редактор (Копирайтер)</option>
+              <option value="manager">Менеджер</option>
+              <option value="admin">Администратор</option>
+            </select>
+            <button
+              onClick={onAddMember}
+              disabled={loading || !newMemberEmail.trim()}
+              className="px-6 py-2.5 text-sm font-semibold text-white bg-slate-900 dark:bg-white dark:text-slate-900 rounded-xl hover:bg-slate-800 dark:hover:bg-slate-200 disabled:opacity-50 transition-all shadow-sm">
+              Пригласить
+            </button>
+          </div>
         </div>
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
-            <thead>
-              <tr className="text-left text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
-                <th className="py-2 pr-4">Почта</th>
-                <th className="py-2 pr-4">Роль</th>
-                <th className="py-2 pr-4">Добавлен</th>
-                <th className="py-2 pr-4 text-right">Действия</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-              {members.map((member) => (
-                <tr key={member.email}>
-                  <td className="py-3 pr-4 font-medium">{member.email}</td>
-                  <td className="py-3 pr-4">
-                    {member.role === "owner" ? (
-                      <span className="text-sm text-slate-600 dark:text-slate-400">Владелец</span>
-                    ) : (
+
+        {/* Список команды */}
+        <div>
+          <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-3 flex justify-between items-center">
+            <span>Список участников</span>
+            <span className="bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded text-slate-500 normal-case">
+              {members.length} чел.
+            </span>
+          </label>
+
+          <div className="border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden divide-y divide-slate-100 dark:divide-slate-800/60 bg-white dark:bg-[#060d18]">
+            {members.map((member) => (
+              <div
+                key={member.email}
+                className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-center flex-shrink-0">
+                    {getRoleIcon(member.role)}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="font-semibold text-slate-900 dark:text-white text-sm truncate">
+                      {member.email}
+                    </p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                      Добавлен: {formatDateTime(member.createdAt)}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  {member.role === 'owner' ? (
+                    <span className="px-3 py-1.5 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 text-xs font-bold rounded-lg border border-amber-200 dark:border-amber-500/20">
+                      Владелец
+                    </span>
+                  ) : (
+                    <div className="flex items-center gap-2">
                       <select
-                        className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                        className="bg-transparent border border-slate-200 dark:border-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium outline-none focus:border-indigo-500 dark:text-slate-200"
                         value={member.role}
-                        onChange={(e) => onUpdateMemberRole(member.email, e.target.value)}
-                      >
+                        onChange={(e) => onUpdateMemberRole(member.email, e.target.value)}>
                         <option value="viewer">Наблюдатель</option>
                         <option value="editor">Редактор</option>
-                        <option value="owner">Владелец</option>
+                        <option value="manager">Менеджер</option>
+                        <option value="admin">Администратор</option>
                       </select>
-                    )}
-                  </td>
-                  <td className="py-3 pr-4 text-slate-500 dark:text-slate-400">{formatDateTime(member.createdAt)}</td>
-                  <td className="py-3 pr-4 text-right">
-                    {member.role !== "owner" && (
                       <button
                         onClick={() => onRemoveMember(member.email)}
                         disabled={loading}
-                        className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-200"
-                      >
-                        <FiX /> Удалить
+                        className="p-1.5 text-slate-400 hover:text-red-500 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors">
+                        <X className="w-4 h-4" />
                       </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {members.length === 0 && <div className="text-sm text-slate-500 mt-2">Участников пока нет.</div>}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+            {members.length === 0 && (
+              <div className="p-6 text-center text-sm text-slate-500">
+                В проекте пока нет приглашенных участников.
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>
   );
 }
-

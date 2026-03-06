@@ -18,7 +18,7 @@ func (s *AssemblyStep) Name() string { return StepAssembly }
 
 func (s *AssemblyStep) ArtifactKey() string { return "zip_archive" }
 
-func (s *AssemblyStep) Progress() int { return 99 }
+func (s *AssemblyStep) Progress() int { return 94 }
 
 func (s *AssemblyStep) Execute(ctx context.Context, state *PipelineState) (map[string]any, error) {
 	// 1. Собираем исходники
@@ -32,8 +32,8 @@ func (s *AssemblyStep) Execute(ctx context.Context, state *PipelineState) (map[s
 		return nil, fmt.Errorf("assembly: html_raw is empty")
 	}
 
-	// 2. Инъекции ссылок на css/js
-	finalHTML := injectAssets(htmlRaw)
+	// 2. Инлайн CSS/JS прямо в HTML (избегаем проблем с кешем отдельных файлов)
+	finalHTML := injectAssets(htmlRaw, cssContent, jsContent)
 
 	// 3. Служебные файлы
 	domain := ""
@@ -95,8 +95,6 @@ RewriteRule .* https://%%{HTTP_HOST}%%{REQUEST_URI}/ [R=301,L]
 
 	extra := []GeneratedFile{
 		{Path: "index.html", Content: finalHTML},
-		{Path: "style.css", Content: cssContent},
-		{Path: "script.js", Content: jsContent},
 		{Path: "robots.txt", Content: robots},
 		{Path: "sitemap.xml", Content: sitemap},
 		{Path: ".htaccess", Content: htaccess},
@@ -106,8 +104,27 @@ RewriteRule .* https://%%{HTTP_HOST}%%{REQUEST_URI}/ [R=301,L]
 		if strings.TrimSpace(content404) == "" {
 			content404 = "<!doctype html><html><head><title>404</title></head><body><h1>Page not found</h1><a href=\"/\">Home</a></body></html>"
 		}
+		content404 = inlineAssetsIn404(content404, cssContent, jsContent)
 		extra = append(extra, GeneratedFile{Path: "404.html", Content: content404})
 	}
+
+	// Инлайним CSS/JS в уже существующие 404.html из generated_files
+	for i, f := range files {
+		if strings.EqualFold(strings.TrimSpace(f.Path), "404.html") {
+			files[i].Content = inlineAssetsIn404(f.Content, cssContent, jsContent)
+		}
+	}
+
+	// Удаляем отдельные style.css/script.js из generated_files (теперь инлайн)
+	filtered := make([]GeneratedFile, 0, len(files))
+	for _, f := range files {
+		p := strings.TrimSpace(f.Path)
+		if p == "style.css" || p == "script.js" {
+			continue
+		}
+		filtered = append(filtered, f)
+	}
+	files = filtered
 	files = mergeGeneratedFiles(files, extra)
 
 	// 5. Строим ZIP
@@ -129,14 +146,29 @@ RewriteRule .* https://%%{HTTP_HOST}%%{REQUEST_URI}/ [R=301,L]
 	return artifacts, nil
 }
 
-// injectAssets вставляет линк/скрипт в html
-func injectAssets(html string) string {
+// injectAssets вставляет CSS/JS инлайн в html (без отдельных файлов — решает проблему с кешем)
+func injectAssets(html, css, js string) string {
 	h := html
-	if strings.Contains(strings.ToLower(h), "</head>") {
-		h = strings.Replace(h, "</head>", "  <link rel=\"stylesheet\" href=\"style.css\">\n</head>", 1)
+	if css != "" && strings.Contains(strings.ToLower(h), "</head>") {
+		tag := "  <style>\n" + css + "\n  </style>\n"
+		h = strings.Replace(h, "</head>", tag+"</head>", 1)
 	}
-	if strings.Contains(strings.ToLower(h), "</body>") {
-		h = strings.Replace(h, "</body>", "  <script src=\"script.js\" defer></script>\n</body>", 1)
+	if js != "" && strings.Contains(strings.ToLower(h), "</body>") {
+		tag := "  <script>\n" + js + "\n  </script>\n"
+		h = strings.Replace(h, "</body>", tag+"</body>", 1)
+	}
+	return h
+}
+
+// inlineAssetsIn404 заменяет внешние ссылки на style.css/script.js на инлайн в 404 странице
+func inlineAssetsIn404(html404, css, js string) string {
+	h := html404
+	if css != "" {
+		h = strings.Replace(h, `<link rel="stylesheet" href="style.css">`, "<style>\n"+css+"\n</style>", 1)
+	}
+	if js != "" {
+		h = strings.Replace(h, `<script src="script.js"></script>`, "<script>\n"+js+"\n</script>", 1)
+		h = strings.Replace(h, `<script src="script.js" defer></script>`, "<script>\n"+js+"\n</script>", 1)
 	}
 	return h
 }

@@ -51,7 +51,7 @@ func migrationStatements() []string {
 			verified BOOLEAN NOT NULL DEFAULT FALSE,
 			name TEXT,
 			avatar_url TEXT,
-			role TEXT NOT NULL DEFAULT 'manager',
+			role TEXT NOT NULL DEFAULT 'user',
 			is_approved BOOLEAN NOT NULL DEFAULT FALSE,
 			api_key_enc BYTEA,
 			api_key_updated_at TIMESTAMPTZ
@@ -59,7 +59,8 @@ func migrationStatements() []string {
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS verified BOOLEAN NOT NULL DEFAULT FALSE;`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS name TEXT;`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT;`,
-		`ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'manager';`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user';`,
+		`ALTER TABLE users ALTER COLUMN role SET DEFAULT 'user';`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_approved BOOLEAN NOT NULL DEFAULT FALSE;`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS api_key_enc BYTEA;`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS api_key_updated_at TIMESTAMPTZ;`,
@@ -502,6 +503,19 @@ func migrationStatements() []string {
 		 ('seed-gemini-2.5-flash', 'gemini', 'gemini-2.5-flash', 0.300000, 0.600000, NOW(), NULL, TRUE, 'system', NOW()),
 		 ('seed-gemini-2.5-flash-image', 'gemini', 'gemini-2.5-flash-image', 0.300000, 0.600000, NOW(), NULL, TRUE, 'system', NOW())
 		 ON CONFLICT (id) DO NOTHING;`,
+		// --- Generation types ---
+		`ALTER TABLE domains ADD COLUMN IF NOT EXISTS generation_type TEXT NOT NULL DEFAULT 'single_page';`,
+		`ALTER TABLE generations ADD COLUMN IF NOT EXISTS generation_type TEXT NOT NULL DEFAULT '';`,
+		// --- Index check control ---
+		`CREATE TABLE IF NOT EXISTS app_settings (
+			key         TEXT PRIMARY KEY,
+			value       TEXT NOT NULL,
+			updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);`,
+		`INSERT INTO app_settings (key, value) VALUES ('index_check_enabled', 'true')
+		 ON CONFLICT (key) DO NOTHING;`,
+		`ALTER TABLE projects ADD COLUMN IF NOT EXISTS index_check_enabled BOOLEAN NOT NULL DEFAULT TRUE;`,
+		`ALTER TABLE domains ADD COLUMN IF NOT EXISTS index_check_enabled BOOLEAN NOT NULL DEFAULT TRUE;`,
 	}
 	return append(stmts, projectStmts...)
 }

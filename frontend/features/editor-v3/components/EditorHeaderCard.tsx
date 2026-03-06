@@ -14,45 +14,46 @@ type EditorHeaderCardProps = {
 
 export function EditorHeaderCard({ domainId, summary, readOnly, confirmLeaveWithDirty }: EditorHeaderCardProps) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white/80 p-4 shadow dark:border-slate-800 dark:bg-slate-900/60">
-      <div className="flex flex-wrap items-center justify-between gap-2">
+    <div className="flex flex-1 flex-wrap items-center justify-between gap-3">
+      <div className="flex items-center gap-3">
         <div>
-          <h1 className="flex items-center gap-2 text-xl font-semibold">
-            <FiFolder /> Редактор сайта v2
+          <h1 className="flex items-center gap-2 text-lg font-bold tracking-tight text-slate-900 dark:text-white">
+            <FiFolder className="h-5 w-5" /> Редактор сайта
           </h1>
-          <p className="text-sm text-slate-500 dark:text-slate-400">
-            {summary?.domain.url || "—"} • Проект: {summary?.project_name || "—"}
-          </p>
-          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-            Роль: {summary?.my_role || "viewer"} {readOnly ? "(только чтение)" : "(редактирование включено)"}
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            {summary?.domain.url || "—"} · Проект: {summary?.project_name || "—"}
+            {" · "}
+            <span className={readOnly ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}>
+              {summary?.my_role || "viewer"} ({readOnly ? "чтение" : "редактирование"})
+            </span>
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <Link
+          href={`/domains/${domainId}`}
+          onClick={(event) => {
+            if (!confirmLeaveWithDirty()) {
+              event.preventDefault();
+            }
+          }}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+        >
+          <FiArrowLeft className="h-3.5 w-3.5" /> К домену
+        </Link>
+        {summary?.domain.project_id && (
           <Link
-            href={`/domains/${domainId}`}
+            href={`/projects/${summary.domain.project_id}`}
             onClick={(event) => {
               if (!confirmLeaveWithDirty()) {
                 event.preventDefault();
               }
             }}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-indigo-500"
           >
-            <FiArrowLeft /> К домену
+            <FiArrowLeft className="h-3.5 w-3.5" /> К проекту
           </Link>
-          {summary?.domain.project_id && (
-            <Link
-              href={`/projects/${summary.domain.project_id}`}
-              onClick={(event) => {
-                if (!confirmLeaveWithDirty()) {
-                  event.preventDefault();
-                }
-              }}
-              className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
-            >
-              <FiArrowLeft /> К проекту
-            </Link>
-          )}
-        </div>
+        )}
       </div>
     </div>
   );

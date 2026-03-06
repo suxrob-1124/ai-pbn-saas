@@ -21,7 +21,7 @@ func TestUserStoreCreateAuthenticate(t *testing.T) {
 	password := "password1"
 
 	mock.ExpectExec(`INSERT INTO users`).
-		WithArgs(email, sqlmock.AnyArg(), sqlmock.AnyArg(), false, "", "", "manager", false).
+		WithArgs(email, sqlmock.AnyArg(), sqlmock.AnyArg(), false, "", "", "user", false).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	user, err := store.Create(context.Background(), email, password)
