@@ -1,0 +1,4304 @@
+{
+  "name": "Multipage generator",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -624,
+        112
+      ],
+      "id": "09872260-aceb-4a7d-b74b-4cd0afb84f95",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "content": "# получаем данные из таблицы. Обновляем статус сайта на находиться в генерации.\n",
+        "height": 528,
+        "width": 1040,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -432,
+        -176
+      ],
+      "typeVersion": 1,
+      "id": "83f0e20b-2ad1-401e-889d-2a5352b067de",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1ajG-RNCzGIYfe0Lw7sW8NWj21wS-AOJW2_LjNtn2igA",
+          "mode": "list",
+          "cachedResultName": "Гипотезы | Швеция",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1ajG-RNCzGIYfe0Lw7sW8NWj21wS-AOJW2_LjNtn2igA/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1598519971,
+          "mode": "list",
+          "cachedResultName": "8n8 pbn multipage",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1ajG-RNCzGIYfe0Lw7sW8NWj21wS-AOJW2_LjNtn2igA/edit#gid=1598519971"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "Status generator",
+              "lookupValue": "waiting"
+            }
+          ]
+        },
+        "options": {
+          "returnFirstMatch": true
+        }
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -400,
+        112
+      ],
+      "id": "7010bc93-4e73-4cdd-9c49-c61275a64150",
+      "name": "BaseData",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "8y3nvLcGKE7rEm4i",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1ajG-RNCzGIYfe0Lw7sW8NWj21wS-AOJW2_LjNtn2igA",
+          "mode": "list",
+          "cachedResultName": "Гипотезы | Швеция",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1ajG-RNCzGIYfe0Lw7sW8NWj21wS-AOJW2_LjNtn2igA/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1598519971,
+          "mode": "list",
+          "cachedResultName": "8n8 pbn multipage",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1ajG-RNCzGIYfe0Lw7sW8NWj21wS-AOJW2_LjNtn2igA/edit#gid=1598519971"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "={{ $json.sheet_row_number }}",
+            "Status generator": "generated"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "URL",
+              "displayName": "URL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "URL Rating",
+              "displayName": "URL Rating",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Country",
+              "displayName": "Country",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Lang",
+              "displayName": "Lang",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Status generator",
+              "displayName": "Status generator",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        704,
+        112
+      ],
+      "id": "540b073d-f08b-4cdb-84a9-c481ce45e1a6",
+      "name": "updateGenerationStatus",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "8y3nvLcGKE7rEm4i",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "# определяем тематику сайта основываясь на данных Веб-архива\n",
+        "height": 608,
+        "width": 2544
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        1536,
+        -224
+      ],
+      "typeVersion": 1,
+      "id": "90603f8c-d79d-4e4e-96ec-6aa9dc4afaf0",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.downloadUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2048,
+        -160
+      ],
+      "id": "fbee27ce-8ac3-48db-92b6-9245b683227a",
+      "name": "HTTP Request для скачивания HTML",
+      "retryOnFail": false,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-pro",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-pro"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=# РОЛЬ\nТы — AI-ассистент, специализирующийся на извлечении и структурировании информации из \"грязного\" HTML-кода.\n\n# ЗАДАЧА\nИз предоставленных фрагментов HTML-кода (их может быть несколько) извлеки весь значимый текстовый контент, очисти его и на его основе напиши краткое резюме и определи основную тематику.\n\n# ИНСТРУКЦИИ\n1.  **Объедини контент:** Мысленно объедини все предоставленные HTML в один большой документ.\n2.  **Игнорируй шум:** Полностью игнорируй теги `<script>`, `<style>`, `<nav>`, `<footer>`, а также любой код, относящийся к \"Wayback Machine\" или \"Internet Archive\".\n3.  **Извлеки чистый текст:** Собери весь видимый пользователю текст из тегов `<title>`, `<h1>`, `<h2>`, `<p>`, `<li>`, `<a>` и т.д. Удали все HTML-теги, оставив только текст.\n4.  **Сделай резюме:** На основе очищенного текста напиши краткое резюме на 2-3 предложения, описывающее, о чем был сайт.\n5.  **Определи тематику:** Одним-двумя словами определи главную тематику сайта.\n\n# ФОРМАТ ВЫВОДА\nВерни ответ СТРОГО тематику и ничего более!\n# ВХОДНЫЕ ДАННЫЕ\nЯзык для резюме и тематики: \"{{ $json.Lang }}\"\nHTML-код(ы):\n{{ $json.sites.join('\\\\n---\\\\n') }}\n"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        2944,
+        32
+      ],
+      "id": "8679cb5c-8d09-49af-9331-a81874974541",
+      "name": "Очистка и Резюмирование",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "aDoJFjt0lh5UoG42",
+          "name": "alfasearch.seo@gmail.com"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "652632e0-bfe6-47b9-a88d-8070b6514d37",
+              "leftValue": "={{ $json.nextUrl }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2496,
+        -160
+      ],
+      "id": "dcea2911-d543-4211-ba3d-b163a6a0134f",
+      "name": "Нужен ли доп. запрос?"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.nextUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2720,
+        -160
+      ],
+      "id": "cde1f913-de0a-46ea-a147-0b973e011b65",
+      "name": "Скачать контент фрейма",
+      "retryOnFail": false,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.item;\nconst html = item.json.data;\n\n// Сначала ищем iframe\nconst iframeMatch = html.match(/<iframe id=\"playback\" src=\"([^\"]+)\"/);\nif (iframeMatch && iframeMatch[1]) {\n  item.json.nextUrl = iframeMatch[1];\n  // Мы нашли URL для следующего шага\n  return item;\n}\n\n// Если iframe не найден, ищем главный frameset\nconst frameMatch = html.match(/<frame name=\"main\" src=\"([^\"]+)\"/);\nif (frameMatch && frameMatch[1]) {\n  item.json.nextUrl = frameMatch[1];\n  // Мы нашли URL для следующего шага\n  return item;\n}\n\n// Если не найдено ни iframe, ни frame, значит, это уже контент\n// Просто перекладываем его в финальное поле\nitem.json.finalHtml = html;\nreturn item;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2272,
+        -160
+      ],
+      "id": "cb22f045-a663-42d2-b8a4-e3dc41bdc669",
+      "name": "Распаковщик фреймов",
+      "notesInFlow": false
+    },
+    {
+      "parameters": {
+        "url": "=https://web.archive.org/cdx/search/cdx?url={{ ($('BaseData').item.json.URL).extractDomain() }}&output=json&fl=timestamp,original,mimetype,statuscode,length&collapse=digest&filter=statuscode:200&filter=mimetype:text/html&limit=-5",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1376,
+        32
+      ],
+      "id": "4c216bf8-866b-4cd1-9dbb-22ec3a4ffcd5",
+      "name": "GetWebArchive",
+      "alwaysOutputData": false,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Получаем текущий элемент (это массив, например, [\"202504...\", \"https://...\", ...])\nconst snapshot = $input.item.json;\n\n// 1. Отсеиваем заголовок\nif (snapshot[0] === 'timestamp') {\n  return null;\n}\n\n// 2. Извлекаем данные из массива\nconst [timestamp, original, mimetype, statuscode, length] = snapshot;\n// Снижаем порог, чтобы включать небольшие, но валидные страницы\nconst minLength = 500; // <<< ИЗМЕНЕНИЕ ЗДЕСЬ\n\n// 3. Проверяем размер и возвращаем результат\nif (parseInt(length) > minLength) {\n  const waybackUrl = `http://web.archive.org/web/${timestamp}/${original}`;\n\n  // Возвращаем объект в нужном нам формате.\n  return { json: { downloadUrl: waybackUrl } };\n}\n\n// Если размер слишком маленький, отбрасываем этот снимок\nreturn null;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        32
+      ],
+      "id": "8e95b750-825a-4002-8fad-78c29dd864a3",
+      "name": "GetDownloadUrl",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "e4064017-e080-4b9c-8793-9e0b9a8ed47a",
+              "leftValue": "={{ $json.downloadUrl }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1824,
+        32
+      ],
+      "id": "27a22e52-ca76-4db2-b28b-d44a16ebf3dc",
+      "name": "HasDownloadUrl"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=# РОЛЬ\nТы — SEO-аналитик, эксперт по определению тематической ниши сайта по его доменному имени.\n\n# ЗАДАЧА\nПроанализируй доменное имя и предположи его наиболее вероятную тематику. Твоя цель — дать короткий и ясный ответ.\n\n# ИНСТРУКЦИИ\n1.  Разбей домен на составные слова (например, \"autotrader\" -> \"auto\", \"trader\").\n2.  Определи наиболее вероятную тематику на основе этих слов.\n3.  **ФОРМАТ ОТВЕТА:** Верни ответ, состоящий **только из одного-двух слов**. Никаких объяснений.\n\n# ПРИМЕРЫ\n- Если домен \"bestcarreviews.com\", ответ: \"Автомобили\"\n- Если домен \"legaladvice.se\", ответ: \"Юриспруденция\"\n\n# ВХОДНЫЕ ДАННЫЕ\nЯзык на котором нужно ответить: \"{{ $('BaseData').item.json.Lang }}\"\n\nДомен:\n{{ ($('BaseData').item.json.URL).extractDomain() }}\n"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        2944,
+        224
+      ],
+      "id": "4184ff01-b333-43fe-a20a-72615e4e9ed5",
+      "name": "GetDomainTopicWithGemini",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "aDoJFjt0lh5UoG42",
+          "name": "alfasearch.seo@gmail.com"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "value": "SQ5TrSNJIrhfiQLt",
+          "mode": "list",
+          "cachedResultName": "sites",
+          "cachedResultUrl": "/projects/XPcEXVmXWsmhYagn/datatables/SQ5TrSNJIrhfiQLt"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "url": "={{ $('ComputeSiteId').item.json.normalized_domain }}",
+            "sheet_row_number": "={{ $('ComputeSiteId').item.json.row_number }}",
+            "lang": "={{ $('BaseData').item.json.Lang }}",
+            "country": "={{ $('BaseData').item.json.Country }}",
+            "url_rating": "={{ $('BaseData').item.json['URL Rating'] }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "pages_id",
+              "displayName": "pages_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "url",
+              "displayName": "url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "site_topic",
+              "displayName": "site_topic",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "query",
+              "displayName": "query",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "sheet_row_number",
+              "displayName": "sheet_row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "lang",
+              "displayName": "lang",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "country",
+              "displayName": "country",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "url_rating",
+              "displayName": "url_rating",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "seo_analysis",
+              "displayName": "seo_analysis",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "site_config",
+              "displayName": "site_config",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "css_code",
+              "displayName": "css_code",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "js_code",
+              "displayName": "js_code",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "layout_html",
+              "displayName": "layout_html",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "robots_txt",
+              "displayName": "robots_txt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "htaccess",
+              "displayName": "htaccess",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "sitemap_xml",
+              "displayName": "sitemap_xml",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "site_id",
+              "displayName": "site_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "normalized_domain",
+              "displayName": "normalized_domain",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        480,
+        16
+      ],
+      "id": "5d184e68-d8d3-4718-adab-71b9abf876ba",
+      "name": "InsertRowDB"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "82152fa4-d81e-430e-8f36-c68605914bcb",
+              "leftValue": "={{ $json }}",
+              "rightValue": "",
+              "operator": {
+                "type": "object",
+                "operation": "empty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        256,
+        112
+      ],
+      "id": "ef535bc6-9fec-4bcb-8335-f5c5566a2108",
+      "name": "HasDomainInDB"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "SQ5TrSNJIrhfiQLt",
+          "mode": "list",
+          "cachedResultName": "sites",
+          "cachedResultUrl": "/projects/XPcEXVmXWsmhYagn/datatables/SQ5TrSNJIrhfiQLt"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "normalized_domain",
+              "keyValue": "={{ $json.normalized_domain }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        32,
+        112
+      ],
+      "id": "7cb88447-531d-4a33-93d4-c1a59c23ed22",
+      "name": "GetDomainInDB",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "value": "SQ5TrSNJIrhfiQLt",
+          "mode": "list",
+          "cachedResultName": "sites",
+          "cachedResultUrl": "/projects/XPcEXVmXWsmhYagn/datatables/SQ5TrSNJIrhfiQLt"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyValue": "={{ $json.id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "url": "={{ $('BaseData').item.json.URL.extractDomain() }}",
+            "sheet_row_number": "={{ $('BaseData').item.json.row_number }}",
+            "lang": "={{ $('BaseData').item.json.Lang }}",
+            "country": "={{ $('BaseData').item.json.Country }}",
+            "url_rating": "={{ $('BaseData').item.json[\"URL Rating\"] }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "pages_id",
+              "displayName": "pages_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "url",
+              "displayName": "url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "site_topic",
+              "displayName": "site_topic",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "query",
+              "displayName": "query",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "sheet_row_number",
+              "displayName": "sheet_row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "lang",
+              "displayName": "lang",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "country",
+              "displayName": "country",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "url_rating",
+              "displayName": "url_rating",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        480,
+        208
+      ],
+      "id": "3ec6ac18-75fe-4c0b-8533-35ab5ac02a4f",
+      "name": "UpdateRow"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Получаем все входящие элементы (5 страниц для одного сайта)\nconst items = $input.all();\n\nif (items.length === 0) {\n  return [];\n}\n\n// Берем метаданные (Host, row_number) из ПЕРВОГО элемента этой группы.\n// Важно: предполагается, что все 5 снимков принадлежат одному сайту.\n// Поскольку мы используем n8n (cloud), контекст выполнения обычно сохраняется корректно.\n// Но нам нужно убедиться, что мы берем row_number именно от текущего обрабатываемого элемента.\n\n// Мы можем взять originalJson из первого элемента items, так как 'Фильтр снимков'\n// должен был пробросить контекст, но он этого не сделал явно.\n// Однако, мы можем обратиться к родительскому узлу 'BaseData'\n// и найти там элемент, соответствующий нашему хосту.\n\n// Более простой и надежный вариант для текущей структуры:\n// Получаем все HTML данные в массив\nlet newArray = [];\nlet currentDownloadUrl = \"\";\n\nfor (const item of items) {\n  newArray.push(item.json.data);\n  if(item.json.downloadUrl) currentDownloadUrl = item.json.downloadUrl;\n}\n\n// Нам нужно найти исходные данные (row_number) для этого набора снимков.\n// Мы ищем в узле 'BaseData' элемент, чей домен совпадает с тем, что мы скачивали.\n// Это немного \"хак\", но он работает, если URL архива содержит домен.\n\nconst allHosts = $('BaseData').all();\nlet originalJson = {};\n\n// Пытаемся найти правильный row_number\nfor(const hostItem of allHosts) {\n    if(currentDownloadUrl.includes(hostItem.json.Host)) {\n        originalJson = hostItem.json;\n        break;\n    }\n}\n\n// Если не нашли (редкий случай), берем первый попавшийся как фоллбэк\nif(!originalJson.URL) {\n    originalJson = $('BaseData').first().json;\n}\n\nconst combinedData = { ...originalJson, sites: newArray };\n\nreturn [{ json: combinedData }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2720,
+        32
+      ],
+      "id": "364ffdc7-9be9-49e0-b86e-d95211c51012",
+      "name": "MergeURLS"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "value": "SQ5TrSNJIrhfiQLt",
+          "mode": "list",
+          "cachedResultName": "sites",
+          "cachedResultUrl": "/projects/XPcEXVmXWsmhYagn/datatables/SQ5TrSNJIrhfiQLt"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "url",
+              "keyValue": "={{ $('BaseData').item.json.URL.extractDomain() }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "site_topic": "={{ $json.content.parts[0].text }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "pages_id",
+              "displayName": "pages_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "url",
+              "displayName": "url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "site_topic",
+              "displayName": "site_topic",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "query",
+              "displayName": "query",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "sheet_row_number",
+              "displayName": "sheet_row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "lang",
+              "displayName": "lang",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "country",
+              "displayName": "country",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "url_rating",
+              "displayName": "url_rating",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        3296,
+        128
+      ],
+      "id": "83eb6c77-5b96-4e90-843d-78f54fd96851",
+      "name": "AddTopicInDB"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "d6483c6b-a503-4c1e-b370-df789bcda659",
+              "leftValue": "={{ $json.site_topic }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "empty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1152,
+        112
+      ],
+      "id": "29229724-196e-455e-a48f-b336770c9ccd",
+      "name": "HasTopic"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "4081e40b-2e97-420e-a984-e6124dcea348",
+              "leftValue": "={{ $('BaseData').item.json['URL Rating'] }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        6912,
+        208
+      ],
+      "id": "8b2992e6-d23b-40f2-823f-75620fff81c2",
+      "name": "SiteType"
+    },
+    {
+      "parameters": {
+        "content": "# Условие:\n## Если URL Rating > 0 → True (Ветка Тип 1: Многостраничные).\n## Если URL Rating == 0 (или пусто) → False (Ветка Тип 2: Улучшенные стандартные).",
+        "height": 528,
+        "width": 304,
+        "color": 3
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        6608,
+        -176
+      ],
+      "typeVersion": 1,
+      "id": "d4fcf7c3-117d-4912-8e2e-ebbd85706978",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=# РОЛЬ\nТы — SEO-стратег для региона: {{ $('BaseData').item.json.Country }} (Язык: {{ $('BaseData').item.json.Lang }}).\n\n# ЗАДАЧА\nНа основе темы сайта: \"{{ $json.site_topic }}\", сгенерируй 15 поисковых запросов (Keywords), которые могут стать основой для контентного сайта.\n\n# ТРЕБОВАНИЯ\n1.  **Тип запросов:** Информационные (How-to, Guides, Tips) или Коммерческие (Best X, Reviews).\n2.  **Специфика:** Запросы должны быть достаточно широкими, чтобы вокруг них можно было построить статью или структуру сайта.\n3.  **Язык:** Строго {{ $('BaseData').item.json.Lang }}.\n4.  **Формат:** JSON-массив строк.\n\n# ПРИМЕР\nТема: \"Садоводство\"\nОтвет: [\"hur man planerar en trädgård\", \"bästa robotgräsklippare test\", \"odla tomater hemma\", \"trädgårdstips för nybörjare\", ...]\n\n# ВЫВОД\nТолько JSON-массив."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        3968,
+        128
+      ],
+      "id": "d86652a1-a57f-4c5a-8a9f-e66664459e7d",
+      "name": "GenerateKeywords",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "aDoJFjt0lh5UoG42",
+          "name": "alfasearch.seo@gmail.com"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "# Генерируем Query\n",
+        "height": 272,
+        "width": 1296
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        3232,
+        96
+      ],
+      "typeVersion": 1,
+      "id": "c8e9f0b7-267a-40f8-a515-b173951f333c",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst rawText = item.json.content?.parts?.[0]?.text || item.json.text || \"[]\";\n\n// Очистка JSON\nconst cleanJson = rawText.replace(/^```json|```$/g, '').trim();\n\nlet selectedQuery = \"\";\n\ntry {\n  const keywords = JSON.parse(cleanJson);\n  if (Array.isArray(keywords) && keywords.length > 0) {\n    // Выбираем случайный ключ\n    selectedQuery = keywords[Math.floor(Math.random() * keywords.length)];\n  } else {\n    // Если массив пуст, используем тему как фолбэк\n    selectedQuery = item.json.site_topic;\n  }\n} catch (e) {\n  // Если ошибка парсинга, используем тему как фолбэк\n  selectedQuery = item.json.site_topic;\n}\n\n// Возвращаем данные, сохраняя весь контекст и добавляя Query\nreturn {\n  json: {\n    // ...item.json,\n    Query: selectedQuery\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4320,
+        128
+      ],
+      "id": "f1aee3a0-f8f4-40fd-beff-df1efe3f7e1d",
+      "name": "PickQuery"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "value": "SQ5TrSNJIrhfiQLt",
+          "mode": "list",
+          "cachedResultName": "sites",
+          "cachedResultUrl": "/projects/XPcEXVmXWsmhYagn/datatables/SQ5TrSNJIrhfiQLt"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "url",
+              "keyValue": "={{ $('BaseData').item.json.URL.extractDomain() }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "query": "={{ $json.Query }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "pages_id",
+              "displayName": "pages_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "url",
+              "displayName": "url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "site_topic",
+              "displayName": "site_topic",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "query",
+              "displayName": "query",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "sheet_row_number",
+              "displayName": "sheet_row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "lang",
+              "displayName": "lang",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "country",
+              "displayName": "country",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "url_rating",
+              "displayName": "url_rating",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        4544,
+        128
+      ],
+      "id": "ce6bd2d1-50b0-4139-803d-cd0e1f94b962",
+      "name": "UpdateQueryInDB"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "28d19f8f-53c6-448f-803b-feb8178198ac",
+              "leftValue": "={{ $('GetDomainForTopic').item.json.query }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "empty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3744,
+        208
+      ],
+      "id": "ea821f99-37cd-4322-a78a-aeeb1ecaf54d",
+      "name": "HasQuery"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "SQ5TrSNJIrhfiQLt",
+          "mode": "list",
+          "cachedResultName": "sites",
+          "cachedResultUrl": "/projects/XPcEXVmXWsmhYagn/datatables/SQ5TrSNJIrhfiQLt"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "url",
+              "keyValue": "={{ $('BaseData').item.json.URL.extractDomain() }}"
+            }
+          ]
+        },
+        "limit": 1
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        3520,
+        208
+      ],
+      "id": "1b69fc09-096d-4edd-8ad0-a2cedb1f2fec",
+      "name": "GetDomainForQuery"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "SQ5TrSNJIrhfiQLt",
+          "mode": "list",
+          "cachedResultName": "sites",
+          "cachedResultUrl": "/projects/XPcEXVmXWsmhYagn/datatables/SQ5TrSNJIrhfiQLt"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "sheet_row_number",
+              "keyValue": "={{ $json.row_number }}"
+            }
+          ]
+        },
+        "limit": 1
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        928,
+        112
+      ],
+      "id": "62d48d65-b26a-477a-8a6f-16b868837bc5",
+      "name": "GetDomainForTopic"
+    },
+    {
+      "parameters": {
+        "authentication": "privateKey",
+        "command": "=bash ./run.sh \"{{ $json.query }}\" \"{{ $json.lang }}\" \"{{ $json.country }}\" \"\"",
+        "cwd": "/home/n8n_deploy_user/scripts/seo-analyzer/"
+      },
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        5216,
+        128
+      ],
+      "id": "180b4fab-3ccc-465b-ac72-dcbb5e6156fc",
+      "name": "Run seo-analyzer",
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "bw62UoJN3oCRczed",
+          "name": "SSH media1"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "SQ5TrSNJIrhfiQLt",
+          "mode": "list",
+          "cachedResultName": "sites",
+          "cachedResultUrl": "/projects/XPcEXVmXWsmhYagn/datatables/SQ5TrSNJIrhfiQLt"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "url",
+              "keyValue": "={{ $('BaseData').item.json.URL.extractDomain() }}"
+            }
+          ]
+        },
+        "limit": 1
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        4768,
+        208
+      ],
+      "id": "1b6e3f85-3e28-450a-a23a-ea7f6a46adf6",
+      "name": "GetDomainForSeoAnalyzer"
+    },
+    {
+      "parameters": {
+        "content": "# Аналез выдачи\n",
+        "height": 544,
+        "width": 2048
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        4544,
+        -160
+      ],
+      "typeVersion": 1,
+      "id": "60eb3f48-c844-471a-9f2d-d42e41f8dd24",
+      "name": "Sticky Note4"
+    },
+    {
+      "parameters": {
+        "authentication": "privateKey",
+        "resource": "file",
+        "operation": "download",
+        "path": "/home/n8n_deploy_user/scripts/seo-analyzer/contents.txt",
+        "binaryPropertyName": "contents.txt",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        5440,
+        32
+      ],
+      "id": "224e7a5b-b670-4442-9833-7eae3ed5f47b",
+      "name": "Download contents.txt",
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "bw62UoJN3oCRczed",
+          "name": "SSH media1"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "privateKey",
+        "resource": "file",
+        "operation": "download",
+        "path": "/home/n8n_deploy_user/scripts/seo-analyzer/analysis.csv",
+        "binaryPropertyName": "analysis.csv",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        5440,
+        224
+      ],
+      "id": "2b058a60-d088-4cf1-9bf5-85937046288c",
+      "name": "Download analysis.csv",
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "bw62UoJN3oCRczed",
+          "name": "SSH media1"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "binaryPropertyName": "contents.txt",
+        "destinationKey": "contents_data",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        5664,
+        32
+      ],
+      "id": "69c6a3ef-8dcd-4612-b1cc-454bbf7f17f5",
+      "name": "Extract from content.txt"
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "binaryPropertyName": "analysis.csv",
+        "destinationKey": "analysis_data",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        5664,
+        224
+      ],
+      "id": "ad2b7fb5-c691-42d0-99bc-88e466598887",
+      "name": "Extract from analysis.csv"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        5888,
+        128
+      ],
+      "id": "ff3b3bcd-018f-47bd-90d5-5e4c893c25fd",
+      "name": "Merge analyzer files"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-pro",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-pro"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=# РОЛЬ\nТы — Senior SEO Data Scientist & UX Researcher. Твоя специализация — обратный инжиниринг (Reverse Engineering) поисковой выдачи для любой ниши (iGaming, Финансы, E-commerce, Хобби, Образование).\n\n# ЦЕЛЬ\nПроанализировать топ-20 сайтов по запросу: \"{{ $('GetDomainForSeoAnalyzer').item.json.query }}\".\nПодготовить JSON-спецификацию для генерации сайта, который будет идеально соответствовать ожиданиям пользователя в ЭТОЙ конкретной нише.\n\n# ВХОДНЫЕ ДАННЫЕ\n**Часть 1: Метрики (CSV):** Статистика по словам, заголовкам (игнорируй шум OCR и пустые строки).\n**Часть 2: Тексты (TXT):** HTML-контент сайтов.\n\n# АЛГОРИТМ АНАЛИЗА (СТРОГО СЛЕДУЙ ЛОГИКЕ)\n\n### 1. Определение типа ниши (Niche Type Identification)\nСначала пойми, о чем речь.\n*   Это YMYL (Your Money Your Life)? (Финансы, Право, Здоровье) -> Требуется строгий, экспертный стиль, фото реальных людей.\n*   Это Развлечения/iGaming? -> Требуется яркий стиль, кнопки CTA, динамика.\n*   Это Хобби/Инфо? -> Требуется дружелюбный тон, пошаговые инструкции.\n\n### 2. Визуальная Разведка (Visual Intelligence)\nНа основе типа ниши и контента определи стиль картинок:\n*   Если данные/наука -> Графики и диаграммы.\n*   Если услуги/бизнес -> Фото офисов, встреч, рукопожатий.\n*   Если игры/казино -> Яркие 3D элементы, фишки, абстракция, неон.\n*   *Цвета:* Предложи 1 основной и 1 акцентный цвет, подходящий по психологии цвета для ЭТОЙ темы.\n\n### 3. Стратегия Именования Файлов (Anti-Footprint)\nНам нужны имена файлов для картинок на английском (или транслите), чтобы избежать спамных имен.\n*   Найди 5-10 самых важных сущностей (LSI keywords) в тексте.\n*   Переведи их на английский для использования в `filename` (например: если тема \"казино\", то `online-slots-bonus`, `fast-payouts`).\n\n### 4. Структура Контента\n*   Выдели **общие паттерны** в заголовках H2/H3.\n*   Есть ли таблицы сравнения? Списки преимуществ? Блоки \"Вопрос-Ответ\"?\n\n# ФОРМАТ ВЫВОДА\nВерни ТОЛЬКО валидный JSON объект. Не используй комментарии внутри JSON.\n\n```json\n{\n  \"search_intent\": \"Опиши интент (Информационный / Коммерческий / Транзакционный)\",\n  \"metrics\": {\n    \"avg_word_count\": 0,\n    \"content_depth_level\": \"Beginner / Intermediate / Expert\"\n  },\n  \"visual_patterns\": {\n    \"dominant_style\": \"Minimalist / Corporate / Vivid / Grunge / Academic\",\n    \"image_subjects_prompt\": \"Опиши 3-4 идеи для картинок, которые уместны ИМЕННО ЗДЕСЬ (например: 'Smartphone displaying app', 'Green garden tools', 'Neon casino lights')\",\n    \"color_mood_hex\": \"#HEXCODE\", \n    \"color_mood_description\": \"Обоснование цвета (напр. 'Trustworthy Blue' или 'Exciting Red')\"\n  },\n  \"file_naming_strategy\": {\n    \"english_keywords_for_slugs\": [\"keyword-one-en\", \"keyword-two-en\", \"keyword-three-en\", \"keyword-four-en\"],\n    \"suggested_prefixes\": [\"guide\", \"review\", \"best\", \"top\", \"analysis\"]\n  },\n  \"semantics\": {\n    \"core_topics_for_categories\": [\"Категория 1\", \"Категория 2\", \"Категория 3\", \"Категория 4\", \"Категория 5\"],\n    \"specific_questions_for_articles\": [\"Вопрос 1?\", \"Вопрос 2?\", \"Вопрос 3?\", \"Вопрос 4?\", \"Вопрос 5?\"],\n    \"lsi_keywords_native\": [\"ключ 1\", \"ключ 2\", \"ключ 3\", \"ключ 4\", \"ключ 5\"]\n  },\n  \"content_structure\": {\n    \"must_have_sections\": [\"Список обязательных секций (напр. Введение, Таблица, Вывод, FAQ)\"],\n    \"tone_of_voice\": \"Опиши тон (напр. 'Professional and objective' или 'Casual and exciting')\"\n  },\n  \"technical_stack\": {\n    \"recommended_schema\": [\"Article\", \"FAQPage\", \"Organization\", \"Review (если есть обзоры)\"]\n  }\n}\n```\n\n## Данные для анализа:\n**METRICS:**\n{{ $json.analysis_data }}\n\n**CONTENT:**\n{{ $json.contents_data }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        6112,
+        128
+      ],
+      "id": "c9f3ccee-91b3-46b7-ab7e-d0b360f3896c",
+      "name": "SeoAnalysis",
+      "alwaysOutputData": false,
+      "retryOnFail": false,
+      "waitBetweenTries": 5000,
+      "executeOnce": false,
+      "credentials": {
+        "googlePalmApi": {
+          "id": "aDoJFjt0lh5UoG42",
+          "name": "alfasearch.seo@gmail.com"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst rawText = item.json.content?.parts?.[0]?.text || item.json.text || \"[]\";\n\n// Очистка JSON\nconst cleanJson = rawText.replace(/^```json|```$/g, '').trim();\n\nlet seoAnalysis = JSON.parse(cleanJson);\n\n\n// Возвращаем данные, сохраняя весь контекст и добавляя Query\nreturn {\n  json: {\n    // ...item.json,\n    SeoAnalysis: seoAnalysis\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6464,
+        128
+      ],
+      "id": "59cc0c4c-3863-4062-8a05-d9e9bfaea588",
+      "name": "ClearResultAnalysis"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "value": "SQ5TrSNJIrhfiQLt",
+          "mode": "list",
+          "cachedResultName": "sites",
+          "cachedResultUrl": "/projects/XPcEXVmXWsmhYagn/datatables/SQ5TrSNJIrhfiQLt"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "url",
+              "keyValue": "={{ $('BaseData').item.json.URL.extractDomain() }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "seo_analysis": "={{ $json.SeoAnalysis.toJsonString() }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "pages_id",
+              "displayName": "pages_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "url",
+              "displayName": "url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "site_topic",
+              "displayName": "site_topic",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "query",
+              "displayName": "query",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "sheet_row_number",
+              "displayName": "sheet_row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "lang",
+              "displayName": "lang",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "country",
+              "displayName": "country",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "url_rating",
+              "displayName": "url_rating",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "seo_analysis",
+              "displayName": "seo_analysis",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        6688,
+        128
+      ],
+      "id": "364582ef-6a0c-4b43-8da7-79131deb7c03",
+      "name": "UpdateSeoAnalysis"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "7fe7d5c1-8f47-4774-85a5-5313580d2125",
+              "leftValue": "={{ $json.seo_analysis }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "empty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4992,
+        208
+      ],
+      "id": "76bafbd0-6a75-4666-b04d-588d30f9f1ef",
+      "name": "HasSeoAnalysis"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-pro",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-pro"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=# РОЛЬ\nТы — Tech Lead, Арт-директор и SEO-специалист. Твоя задача — создать уникальную техническую спецификацию (Configuration) для сайта, избегая шаблонных решений.\n\n# ВХОДНЫЕ ДАННЫЕ\nТема: \"{{ $json.site_topic }}\"\nГлавный ключ: \"{{ $json.query }}\"\nЯзык: \"{{ $('BaseData').item.json.Lang }}\"\nSEO Данные: `{{ $json.seo_analysis }}`\nТекущий год: \"{{ $now.format('yyyy') }}\"\n\n# ОБЯЗАТЕЛЬНЫЕ СТРАНИЦЫ\nВключи в `pages_structure`:\n1. Om Oss, Kontakta Oss, Redaktionella riktlinjer, Karriär.\n2. Integritetspolicy.\n3. **Ansvarsfullt spelande**: Если сайт НЕ про азартные игры, адаптируй тему этой страницы под контекст (напр. \"Ekonomiskt Ansvar\" для финансов), но сохрани суть — ответственность и безопасность.\n\n# ИНСТРУКЦИИ ПО ГЕНЕРАЦИИ АССЕТОВ\n1. **Имена файлов:** Используй транслит/английский. Никаких `logo.webp`. Используй: `brand-name-logo.webp`, `keyword-hero.webp`.\n2. **Стили:** На основе SEO-анализа.\n\n# ЗАПРЕТ\n1. В блоке **assets_plan** id не меняй. оставляй строго как в указаной структуре \n\n# ЗАДАЧА\nСгенерируй JSON.\n\n# СТРУКТУРА JSON\n{\n  \"site_identity\": {\n    \"title\": \"Название сайта\",\n    \"meta_description_template\": \"Шаблон описания\",\n    \"theme_style\": \"cyberpunk / minimalist / corporate / cozy\",\n    \"color_palette\": {\n      \"primary\": \"HEX\", \"secondary\": \"HEX\", \"background\": \"HEX\", \"text\": \"HEX\"\n    }\n  },\n  \"technical_design_specs\": {\n    \"class_prefix\": \"Сгенерируй префикс (2-3 буквы) на основе названия\",\n    \"layout_strategy\": \"flexbox_classic ИЛИ css_grid_modern\",\n    \"container_width\": \"напр. 1140px\",\n    \"border_radius\": \"напр. 4px\",\n    \"font_stack\": \"Google Fonts pair\",\n    \"shadow_style\": \"soft-diffuse / none / sharp\"\n  },\n  \"visual_style\": {\n     \"global_prompt_modifier\": \"Стиль фотографий из SEO-анализа\"\n  },\n  \"assets_plan\": [\n    { \"id\": \"logo\", \"type\": \"logo\", \"filename\": \"unique-logo.webp\", \"description\": \"...\", \"width\": 500, \"height\": 150 },\n    { \"id\": \"favicon\", \"type\": \"icon\", \"filename\": \"favicon.png\", \"description\": \"...\", \"width\": 64, \"height\": 64 },\n    { \"id\": \"hero_bg\", \"type\": \"background\", \"filename\": \"unique-hero.webp\", \"description\": \"...\", \"width\": 1920, \"height\": 600 },\n    { \"id\": \"author\", \"type\": \"photo\", \"filename\": \"author-slug.webp\", \"description\": \"...\", \"width\": 800, \"height\": 800 },\n    { \"id\": \"og_image\", \"type\": \"social\", \"filename\": \"og-slug.webp\", \"description\": \"...\", \"width\": 1200, \"height\": 630 }\n  ],\n  \"author_persona\": {\n    \"name\": \"Имя\", \"slug\": \"slug\", \"role\": \"Роль\", \"short_bio\": \"Био\", \"full_bio_html\": \"HTML био\", \"image_prompt\": \"Промпт\"\n  },\n  \"pages_structure\": [\n    { \"type\": \"home\", \"title\": \"H1 Главной\", \"slug\": \"index\", \"seo_intent\": \"mixed\" },\n    { \"type\": \"author\", \"title\": \"Об авторе\", \"slug\": \"author-slug\", \"seo_intent\": \"trust\" },\n    { \"type\": \"eeat\", \"title\": \"Om Oss\", \"slug\": \"om-oss\", \"seo_intent\": \"trust\" },\n    { \"type\": \"eeat\", \"title\": \"Ansvarsfullt...\", \"slug\": \"slug...\", \"seo_intent\": \"trust\" },\n    { \"type\": \"eeat\", \"title\": \"Kontakta Oss\", \"slug\": \"kontakta-oss\", \"seo_intent\": \"trust\" },\n    { \"type\": \"eeat\", \"title\": \"Redaktionella riktlinjer\", \"slug\": \"redaktionella-riktlinjer\", \"seo_intent\": \"trust\" },\n    { \"type\": \"eeat\", \"title\": \"Karriär\", \"slug\": \"karriaer\", \"seo_intent\": \"trust\" },\n    { \"type\": \"eeat\", \"title\": \"Integritetspolicy\", \"slug\": \"integritetspolicy\", \"seo_intent\": \"legal\" },\n    { \"type\": \"system\", \"title\": \"Sidan hittades inte (404)\", \"slug\": \"404\", \"seo_intent\": \"navigation\" }\n  ],\n  \"layout_requirements\": {\n    \"menu_items\": [\n      { \"text\": \"Hem\", \"href\": \"/\" },\n      { \"text\": \"Om Oss\", \"href\": \"/om-oss/\" },\n      { \"text\": \"Kontakt\", \"href\": \"/kontakta-oss/\" }\n      // ИНСТРУКЦИЯ: Не добавляй сюда страницы, которых нет в pages_structure!\n    ],\n    \"footer_text\": \"© [Текущий год] [Название]. Все права защищены.\"\n  },\n  \"functionality\": {\n    \"has_mobile_menu\": true,\n    \"has_scroll_to_top\": true,\n    \"has_table_of_contents\": true,\n    \"has_cookie_consent\": true, \n    \"has_external_links_fix\": true, \n    \"interactive_elements_style\": \"smooth\"\n  }\n}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        7584,
+        272
+      ],
+      "id": "5e7cdead-f4aa-4567-9116-7839a458fb06",
+      "name": "GetSiteConfig",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "aDoJFjt0lh5UoG42",
+          "name": "alfasearch.seo@gmail.com"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "# Тип 2 \n## Генерация ТЗ\n",
+        "height": 368,
+        "width": 1184
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        6272,
+        -16
+      ],
+      "typeVersion": 1,
+      "id": "b0424a5f-be72-4edc-a7c6-232ceacb6ebd",
+      "name": "Sticky Note5"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\n\n// 1. Получаем грязный текст от Gemini\nconst rawText = item.json.content?.parts?.[0]?.text || \"\";\n\n// 2. Очищаем от Markdown разметки\nconst cleanJson = rawText.replace(/^```json\\s*/i, '').replace(/\\s*```$/i, '').trim();\n\ntry {\n  // 3. Превращаем в объект\n  const siteConfig = JSON.parse(cleanJson);\n\n  // 4. Возвращаем результат\n  // Мы сохраняем config в отдельное поле, чтобы он был доступен везде\n  return {\n    json: {\n      // ...item.json, // Оставляем старые данные (Query, URL и т.д.)\n      siteConfig: siteConfig\n    }\n  };\n} catch (error) {\n  throw new Error(`Ошибка парсинга JSON от Gemini: ${error.message}`);\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        7936,
+        272
+      ],
+      "id": "95d5bd67-bb89-4516-beac-af21a6d28525",
+      "name": "ParseSiteConfig"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-pro",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-pro"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=# РОЛЬ\nТы — Senior Frontend Developer. Твоя задача — написать профессиональный, адаптивный CSS-код, строго следуя технической спецификации и дизайн-токенам.\n\n# ВХОДНЫЕ ДАННЫЕ (ИЗ КОНФИГА)\n1. **Стиль:** \"{{ JSON.stringify(JSON.parse($json.site_config).site_identity.theme_style) }}\"\n2. **Палитра:** {{ JSON.stringify(JSON.parse($json.site_config).site_identity.color_palette) }}\n3. **Технические спеки:** {{ JSON.stringify(JSON.parse($json.site_config).technical_design_specs) }}\n4. **Есть ли Hero-баннер:** {{ JSON.parse($json.site_config).assets_plan.some(a => a.id === 'hero_bg') }}\n\n# ЗАДАЧА\nНапиши файл `style.css`.\n\n# ИНСТРУКЦИИ ПО ГЕНЕРАЦИИ (ANTI-FOOTPRINT)\n\n### 1. Именование Классов (КРИТИЧЕСКИ ВАЖНО)\n*   Используй префикс: **`{{ JSON.parse($json.site_config).technical_design_specs.class_prefix }}`** для ВСЕХ классов.\n*   *Пример:* Не `.container`, а `.{{ JSON.parse($json.site_config).technical_design_specs.class_prefix }}-container`.\n*   *Пример:* Не `.btn`, а `.{{ JSON.parse($json.site_config).technical_design_specs.class_prefix }}-btn`.\n*   *Исключение:* Стандартные HTML теги (`body`, `h1`, `p`, `a`, `header`, `footer`, `nav`, `ul`, `li`).\n\n### 2. Глобальные настройки\n*   **Шрифты:** Используй шрифты из: `{{ JSON.parse($json.site_config).technical_design_specs.font_stack }}`.\n*   **Переменные:** Объяви цвета в `:root` (--primary, --bg, и т.д.).\n*   **Container:** Ширина `max-width: {{ JSON.parse($json.site_config).technical_design_specs.container_width }}`.\n\n### 3. Header & Мобильное меню\n*   **Z-Index:** Header = 1000.\n*   **Mobile Nav (`.{{ JSON.parse($json.site_config).technical_design_specs.class_prefix }}-nav-menu`):**\n    *   `position: fixed`, `top: 0`, `right: 0`, `height: 100vh`.\n    *   `z-index: 1001`.\n    *   Скрыто по умолчанию (`transform: translateX(100%)`).\n    *   Класс `.active` открывает меню (`transform: translateX(0)`).\n*   **Burger Button (`.{{ JSON.parse($json.site_config).technical_design_specs.class_prefix }}-burger`):**\n    *   `z-index: 1002` (должна быть поверх открытого меню!).\n    *   Display: block на мобильных, none на десктопе.\n\n### 4. Hero Section (Если есть баннер)\n*   Класс: `.{{ JSON.parse($json.site_config).technical_design_specs.class_prefix }}-hero`.\n*   Стили: `background-size: cover`, `background-position: center`, `min-height: 400px`.\n*   Добавь `::before` overlay (затемнение), чтобы текст читался.\n\n### 5. Детали дизайна\n*   **Border Radius:** Используй значение: `{{ JSON.parse($json.site_config).technical_design_specs.border_radius }}`.\n*   **Shadows:** Реализуй стиль `{{ JSON.parse($json.site_config).technical_design_specs.shadow_style }}`.\n\n# ВЫВОД\nВерни ТОЛЬКО чистый CSS код. В коде не оставляй комментариев."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        8832,
+        128
+      ],
+      "id": "0ba6fc34-ba08-4435-be20-ca8c896efa96",
+      "name": "GenerateCSS",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "aDoJFjt0lh5UoG42",
+          "name": "alfasearch.seo@gmail.com"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-pro",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-pro"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=# РОЛЬ\nТы — Senior Full-Stack Developer и SEO Expert. Твоя задача — создать идеальный `layout.html`, технически безупречный и синхронизированный.\n\n# ВХОДНЫЕ ДАННЫЕ (КОНФИГ И КОД)\n1. **Конфиг:** {{ $json.site_config }}\n2. **CSS (Классы):** `{{ $json.css_code }}`\n3. **JS (ID):** `{{ $json.js_code }}`\n4. **Домен:** \"{{ $('BaseData').item.json.URL.extractDomain() }}\"\n\n# ВХОДНЫЕ ДАННЫЕ (ТОЧНЫЕ ИМЕНА ФАЙЛОВ)\nЯ уже подготовил файлы. Используй СТРОГО эти имена в HTML:\n*   **Logo File:** \"{{ $json.site_config.parseJson().assets_plan.find(a => a.id === 'logo').filename }}\"\n*   **Favicon File:** \"{{ $json.site_config.parseJson().assets_plan.find(a => a.id === 'favicon').filename }}\"\n*   **OG Image File:** \"{{ $json.site_config.parseJson().assets_plan.find(a => a.id === 'og_image').filename }}\"\n*   **Hero BG File:** \"{{ $json.site_config.parseJson().assets_plan.find(a => a.id === 'hero_bg') ? $json.site_config.parseJson().assets_plan.find(a => a.id === 'hero_bg').filename : 'NONE' }}\"\n\n# ЗАДАЧА 1: СИНХРОНИЗАЦИЯ КОДА\n1. Проанализируй CSS. Найди префикс классов (например, `ek-`, `kp-`). Используй **ТОЛЬКО** эти классы (например, `.<prefix>-nav-menu`, `.<prefix>-container`).\n2. Убедись, что кнопка бургера и меню имеют атрибуты/классы, которые ожидает JS.\n\n# ЗАДАЧА 2: SEO & HEAD\nВ секции `<head>` реализуй:\n1. **Meta:** Charset, Viewport, X-UA-Compatible.\n2. **SEO Placeholders:**\n   - `<title>{TITLE}</title>`\n   - `<meta name=\"description\" content=\"{DESCRIPTION}\">`\n   - `<link rel=\"canonical\" href=\"{CANONICAL}\">`\n3. **Open Graph & Twitter:**\n   - Используй **OG Image File** (см. выше). Путь должен быть абсолютным: `https://[Домен]/[OG Image File]`.\n   - Пропиши `og:title`, `og:description`, `og:url` (через плейсхолдеры).\n4. **Schema.org (Organization):**\n   - Вставь JSON-LD. Для логотипа используй абсолютный путь: `https://[Домен]/[Logo File]`.\n5. **Favicon:**\n   - Вставь `<link rel=\"icon\" href=\"[Favicon File]\" type=\"image/png\">`.\n6. **CSS:** `<link rel=\"stylesheet\" href=\"style.css\">`.\n\n# ЗАДАЧА 3: СТРУКТУРА (BODY)\n1. **Header:**\n   - Логотип: `<img src=\"[Logo File]\" alt=\"{{ $json.site_config.parseJson().site_identity.title }}\" class=\"[prefix]-logo\">`.\n   - Меню (из конфига).\n   - Кнопка бургера.\n2. **Hero Section:**\n   - Если **Hero BG File** НЕ равен \"NONE\":\n     Вставь блок: `<div class=\"[prefix]-hero\" style=\"background-image: url('[Hero BG File]');\"><div class=\"[prefix]-overlay\"></div></div>`.\n3. **Main:** `<main class=\"[prefix]-container\">{CONTENT}</main>`.\n4. **Footer:** Текст из конфига.\n5. **Scripts:** `<script src=\"script.js\" defer></script>`.\n\n# ВЫВОД\nТОЛЬКО чистый HTML код. В коде не оставляй комментариев."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        10880,
+        128
+      ],
+      "id": "70f897f4-cce5-45cf-9dca-9f20616ad1be",
+      "name": "GenerateLayout",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "aDoJFjt0lh5UoG42",
+          "name": "alfasearch.seo@gmail.com"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-pro",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-pro"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=# РОЛЬ\nТы — Senior JavaScript Developer. Твоя задача — написать чистый, производительный код без библиотек, который оживит интерфейс сайта.\n# ВХОДНЫЕ ДАННЫЕ\n1. **Функционал:** {{ $json.site_config.parseJson().functionality.toJsonString() }}\n\n2. **Технические спеки:** {{ $json.site_config.parseJson().technical_design_specs.toJsonString() }}\n\n# ГЛАВНОЕ ПРАВИЛО (КЛАССЫ)\nМы используем динамические префиксы классов для уникализации кода.\nТвой код должен искать элементы по префиксу: **\"{{ $json.site_config.parseJson().technical_design_specs.class_prefix }}\"**.\n\n*   Вместо `.burger-btn` ищи: `.<prefix>-burger`\n*   Вместо `.nav-menu` ищи: `.<prefix>-nav-menu`\n*   Вместо `.scroll-top` ищи: `.<prefix>-scroll-top`\n\n# ЗАДАЧА\nНапиши `script.js`. Весь код оберни в `document.addEventListener('DOMContentLoaded', ...)`.\n\n### 1. Мобильное Меню\n*   Найди кнопку `.<prefix>-burger` и меню `.<prefix>-nav-menu`.\n*   При клике на кнопку:\n    *   Переключи класс `.active` на меню (чтобы оно выехало).\n    *   Переключи класс `.active` на кнопке (для анимации крестика).\n    *   Переключи атрибут `aria-expanded` (true/false) для доступности.\n*   Реализуй закрытие меню при клике вне его области.\n\n### 2. Scroll to Top (если `has_scroll_to_top` = true)\n*   Создай кнопку динамически (document.createElement), дай ей класс `.<prefix>-scroll-top` и текст \"↑\".\n*   Показывай её, kогда прокрутка > 300px.\n*   Плавный скролл наверх при клике.\n\n### 3. External Links Fix (если `has_external_links_fix` = true)\n*   Найди все ссылки `a[href^=\"http\"]`.\n*   Если домен ссылки не совпадает с `window.location.hostname`, добавь `target=\"_blank\"` и `rel=\"noopener noreferrer\"`.\n\n### 4. Cookie Consent (если `has_cookie_consent` = true)\n*   Проверь `localStorage`. Если нет согласия — покажи простой баннер (создай div с классом `.<prefix>-cookie-banner`) внизу страницы.\n*   При клике на \"OK\" скрой баннер и запиши в `localStorage`.\n\n# ВЫВОД\nВерни ТОЛЬКО валидный JavaScript код. В коде не оставляй комментариев."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        9856,
+        128
+      ],
+      "id": "203944ed-65df-412e-8208-f771879c9462",
+      "name": "GenerateJS",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "aDoJFjt0lh5UoG42",
+          "name": "alfasearch.seo@gmail.com"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Получаем первый входной элемент (данные сайта из БД)\nconst item = $input.first();\nconst json = item.json;\n\n// 1. Парсим конфиг сайта\nlet config;\nif (typeof json.site_config === 'string') {\n    try {\n        config = JSON.parse(json.site_config);\n    } catch (e) {\n        throw new Error(\"Ошибка парсинга site_config: \" + e.message);\n    }\n} else {\n    config = json.site_config;\n}\n\nif (!config || !config.pages_structure) {\n    throw new Error(\"В site_config не найдена структура страниц (pages_structure).\");\n}\n\n// 2. Получаем и чистим код (удаляем ```html и прочее)\nconst cleanCode = (str, lang) => {\n    if (!str) return \"\";\n    const regex = new RegExp(`^\\`\\`\\`${lang}\\\\s*|\\\\s*\\`\\`\\`$`, 'gi');\n    return str.replace(regex, '').trim();\n};\n\nconst layout = cleanCode(json.layout_html, 'html');\nconst css = cleanCode(json.css_code, 'css');\nconst js = cleanCode(json.js_code, 'javascript');\n\n// 3. Формируем массив задач (Fan Out)\n// Мы берем массив страниц из конфига и превращаем каждую в отдельный item для n8n\nreturn config.pages_structure.map(page => ({\n    json: {\n        page_data: page,           // Данные конкретной страницы (title, slug, type)\n        global_config: config,     // Глобальный конфиг (нужен писателю для контекста)\n        layout: layout,            // Шаблон HTML\n        css: css,                  // CSS код\n        js: js                     // JS код\n    }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        12928,
+        208
+      ],
+      "id": "3443bd4c-c554-4769-b07e-0d9b364eb225",
+      "name": "SplitPagesLoop"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-pro",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-pro"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=# РОЛЬ\nТы — Профессиональный веб-копирайтер и HTML-верстальщик.\nТвоя задача — написать **содержимое тега <main>** для конкретной страницы сайта.\n\n# ТЕХНИЧЕСКИЕ ПАРАМЕТРЫ (КРИТИЧЕСКИ ВАЖНО)\n1. **Язык контента:** {{ $('BaseData').item.json.Lang }}\n2. **Префикс классов CSS:** `{{ $json.global_config.technical_design_specs.class_prefix }}` (Далее: `[P]`)\n   *(Примечание: Если префикс уже заканчивается на дефис, например \"ek-\", не добавляй второй дефис).*\n3. **Имя файла фото автора:** `{{ $json.global_config.assets_plan.find(a => a.id === 'author').filename }}`\n\n# ВАЖНОЕ ПРАВИЛО CSS КЛАССОВ\nВсе HTML-классы должны начинаться с префикса `[P]`.\n*   Пример: если [P]=\"ek-\", пиши `class=\"ek-btn\"`.\n*   Пример: если [P]=\"ek\", пиши `class=\"ek-btn\"`.\n\nИспользуй классы:\n*   `[P]btn` (кнопки)\n*   `[P]btn-primary` (основная кнопka)\n*   `[P]author-box` (блок автора)\n*   `[P]table` (таблицы)\n*   `[P]list` (списки)\n\n# КОНТЕКСТ САЙТА\nТема: \"{{ $json.global_config.site_identity.title }}\"\nАвтор: {{ JSON.stringify($json.global_config.author_persona) }}\nГлавный ключ: \"{{ $('GetDomainSplitPagesLoop').item.json.query }}\"\n\n# ЗАДАЧА ТЕКУЩЕЙ СТРАНИЦЫ\nТип: \"{{ $json.page_data.type }}\"\nЗаголовок: \"{{ $json.page_data.title }}\"\n\n# ИНСТРУКЦИИ ПО ТИПАМ СТРАНИЦ\n\n## 1. Если type == \"home\" (Главная)\n*   Напиши экспертную статью (1000+ слов) на тему: \"{{ $json.global_config.site_identity.title }}\".\n*   Используй главный ключ \"{{ $('GetDomainSplitPagesLoop').item.json.query }}\" в первом абзаце.\n*   **Структура:**\n    *   `<h1>{{ $json.page_data.title }}</h1>`\n    *   **Блок автора:** `<div class=\"[P]author-box\"><img src=\"[Имя файла фото автора]\" alt=\"{{ $json.global_config.author_persona.name }}\" class=\"[P]author-img\"> <p>Av <strong>{{ $json.global_config.author_persona.name }}</strong></p></div>`\n    *   Введение (Lead).\n    *   Основной контент: 3-4 раздела с `<h2>` och `<h3>`.\n    *   Обязательно добавь 1 список (`<ul>` или `<ol>` с классом `[P]list`) och 1 таблицу данных (HTML table с классом `[P]table`).\n\n## 2. Если type == \"author\" (Страница Автора)\n*   `<h1>{{ $json.page_data.title }}</h1>`\n*   `<div class=\"[P]profile-container\">`\n*   `<img src=\"[Имя файла фото автора]\" alt=\"{{ $json.global_config.author_persona.name }}\" class=\"[P]author-img-large\">`\n*   Вставь **полное био** (HTML) из конфига: `{{ $json.global_config.author_persona.full_bio_html }}`.\n*   Добавь блок \"Expertise\" (список навыков) и вымышленные ссылки na LinkedIn/Twitter (с классом `[P]social-link`).\n*   `</div>`\n\n## 3. Если type == \"eeat\" (Служебные)\n*   `<h1>{{ $json.page_data.title }}</h1>`\n*   Напиши текст, соответствующий заголовку.\n*   Для \"Kontakta Oss\": добавь вымышленный адрес, email (info@...) и форму (визуально, без функционала, input классы `[P]form-control`).\n*   För \"Om Oss\": напиши миссию сайта.\n*   För juridiska (Policy): officiell ton (800+ ord).\n\n## 4. Если type == \"system\" (404)\n*   `<h1>404 - Sidan hittades inte</h1>`\n*   Напиши короткое, вежливое сообщение, что страница исчезла.\n*   Добавь кнопку: `<a href=\"/\" class=\"[P]btn [P]btn-primary\">Tillbaka till startsidan</a>`.\n\nВерни СТРОГО валидный JSON объект (без markdown разметки ```json):\n{\n  \"meta_description\": \"Напиши уникальное SEO-описание для этой страницы (150-160 символов). Включи главный ключ или тему страницы. Призыв к действию.\",\n  \"content_html\": \"Весь HTML код содержимого (внутрь тега main). Начинай с <h1>.\"\n}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        13152,
+        208
+      ],
+      "id": "77bbd2b1-276b-489c-8f96-e4c65533d21a",
+      "name": "PageContentWriter",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "aDoJFjt0lh5UoG42",
+          "name": "alfasearch.seo@gmail.com"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Получаем ответ от Gemini (текущий ввод)\nconst geminiInput = $input.first();\n\n// --- 1. ВОССТАНОВЛЕНИЕ ДАННЫХ (FIX DATA LOSS) ---\n// Нам нужны данные, которые были ДО Gemini. Мы берем их из узла SplitPagesLoop.\n// Внутри цикла n8n автоматически сопоставляет текущий item.\nconst sourceItem = $('SplitPagesLoop').item; \n\nif (!sourceItem) {\n    throw new Error(\"Не удалось найти исходные данные в SplitPagesLoop\");\n}\n\nconst layout = sourceItem.json.layout;\nconst pageData = sourceItem.json.page_data;\nconst config = sourceItem.json.global_config;\n\n// --- 2. ПАРСИНГ ОТВЕТА GEMINI ---\nlet rawResponse = \n    geminiInput.json.content?.parts?.[0]?.text || \n    geminiInput.json.output || \n    (typeof geminiInput.json === 'string' ? geminiInput.json : JSON.stringify(geminiInput.json));\n\nlet pageContent = {};\ntry {\n    // Чистим JSON от markdown\n    const cleanJsonString = String(rawResponse).replace(/^```json\\s*|\\s*```$/gi, '').trim();\n    pageContent = JSON.parse(cleanJsonString);\n} catch (e) {\n    // Фоллбэк\n    pageContent = {\n        content_html: rawResponse,\n        meta_description: \"\" \n    };\n}\n\n// --- 3. ПОДГОТОВКА META ---\nlet metaDesc = pageContent.meta_description;\nif (!metaDesc) {\n    metaDesc = config.site_identity.meta_description_template.replace('[Page Title]', pageData.title);\n}\n\n// --- 4. СБОРКА HTML ---\n// Используем replace с функцией для защиты от спецсимволов в контенте ($& и т.д.)\nlet finalHtml = layout.replace('{CONTENT}', () => pageContent.content_html);\n\nfinalHtml = finalHtml\n    .replace(/{TITLE}/g, pageData.title)\n    .replace(/{DESCRIPTION}/g, metaDesc)\n    .replace('{CANONICAL}', `https://${config.site_identity.domain || 'site.com'}/${pageData.slug === 'index' ? '' : pageData.slug + '/'}`)\n    .replace(/{LANG}/g, $('BaseData').first() ? `${$('BaseData').first().json.Lang}_${$('BaseData').first().json.Country}` : 'sv_SE');\n\n// --- 5. ИМЯ ФАЙЛА ---\nlet fileName;\nif (pageData.type === 'system' && pageData.slug === '404') {\n    fileName = '404.html';\n} else if (pageData.slug === 'index') {\n    fileName = 'index.html';\n} else {\n    fileName = `${pageData.slug}/index.html`;\n}\n\nreturn {\n    json: {\n        fileName: fileName,\n        slug: pageData.slug,\n        title: pageData.title,\n        status: 'generated'\n    },\n    binary: {\n        data: {\n            data: Buffer.from(finalHtml).toString('base64'),\n            mimeType: 'text/html',\n            fileName: fileName\n        }\n    }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        14352,
+        208
+      ],
+      "id": "985925e5-25f8-449d-9e4b-3a3075fb697f",
+      "name": "AssembleHTML"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "value": "SQ5TrSNJIrhfiQLt",
+          "mode": "list",
+          "cachedResultName": "sites",
+          "cachedResultUrl": "/projects/XPcEXVmXWsmhYagn/datatables/SQ5TrSNJIrhfiQLt"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyValue": "={{ $('GetDomainForLayoutCode').item.json.id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "layout_html": "={{ $('GenerateLayout').item.json.content.parts[0].text }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "pages_id",
+              "displayName": "pages_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "url",
+              "displayName": "url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "site_topic",
+              "displayName": "site_topic",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "query",
+              "displayName": "query",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "sheet_row_number",
+              "displayName": "sheet_row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "lang",
+              "displayName": "lang",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "country",
+              "displayName": "country",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "url_rating",
+              "displayName": "url_rating",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "seo_analysis",
+              "displayName": "seo_analysis",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "site_config",
+              "displayName": "site_config",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "css_code",
+              "displayName": "css_code",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "js_code",
+              "displayName": "js_code",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "layout_html",
+              "displayName": "layout_html",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        11232,
+        128
+      ],
+      "id": "881a282c-6369-45b1-9e04-b4b0df1cd70d",
+      "name": "UpdateSiteAssets"
+    },
+    {
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "value": "YbVBIoErm6EPWxMe",
+          "mode": "list",
+          "cachedResultName": "pages",
+          "cachedResultUrl": "/projects/XPcEXVmXWsmhYagn/datatables/YbVBIoErm6EPWxMe"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "site_id": "={{ $('GetDomainSplitPagesLoop').first().json.id }}",
+            "slug": "={{ $('SplitPagesLoop').item.json.page_data.slug }}",
+            "title": "={{ $('SplitPagesLoop').item.json.page_data.title }}",
+            "page_type": "={{ $('SplitPagesLoop').item.json.page_data.type }}",
+            "content_html": "={{ JSON.parse($json.content.parts[0].text.replace(/^```json\\s*/i, '').replace(/\\s*```$/i, '').trim()).content_html }}",
+            "status": "generated",
+            "description": "={{ JSON.parse($json.content.parts[0].text.replace(/^```json\\s*/i, '').replace(/\\s*```$/i, '').trim()).meta_description }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "slug",
+              "displayName": "slug",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "site_id",
+              "displayName": "site_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "description",
+              "displayName": "description",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "page_type",
+              "displayName": "page_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "content_html",
+              "displayName": "content_html",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        14000,
+        128
+      ],
+      "id": "620ec94c-85ba-4c60-ab6e-5936d181a0dc",
+      "name": "SavePagetoDB"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst config = item.json.siteConfig || JSON.parse(item.json.site_config); // Берем из JSON или из базы\nconst domain = $('GetDomainForConfig').first().json.url; // Или ваш источник домена\n// 1. Достаем имена файлов программно (100% точность)\nconst getAsset = (id) => {\n  const asset = config.assets_plan.find(a => a.id === id);\n  return asset ? asset.filename : null;\n};\n\nconst logoFile = getAsset('logo');\nconst faviconFile = getAsset('favicon');\nconst heroFile = getAsset('hero_bg');\nconst ogFile = getAsset('og_image');\n\n// 2. Готовим список ссылок для Sitemap\n// (у нас есть структура страниц в конфиге)\nconst sitemapLinks = config.pages_structure.map(page => {\n  const slug = page.slug === 'index' ? '' : page.slug + '/';\n  // Исключаем 404 из сайтмэпа\n  if (page.type === 'system') return null;\n  \n  return {\n    loc: `https://${domain}/${slug}`,\n    lastmod: new Date().toISOString().split('T')[0],\n    changefreq: 'monthly',\n    priority: page.slug === 'index' ? '1.0' : '0.8'\n  };\n}).filter(Boolean); // Убираем null\n\nreturn {\n  json: {\n    // ...item.json,\n    domain: domain,\n    // Передаем имена файлов отдельно, чтобы LLM не ошибся\n    real_filenames: {\n        logo: logoFile,\n        favicon: faviconFile,\n        hero: heroFile,\n        og: ogFile\n    },\n    sitemap_data: sitemapLinks\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        11680,
+        208
+      ],
+      "id": "884a2538-b10a-450a-b580-cee81e547c38",
+      "name": "PrepareTechData"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "SQ5TrSNJIrhfiQLt",
+          "mode": "list",
+          "cachedResultName": "sites",
+          "cachedResultUrl": "/projects/XPcEXVmXWsmhYagn/datatables/SQ5TrSNJIrhfiQLt"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "url",
+              "keyValue": "={{ $('BaseData').item.json.URL.extractDomain() }}"
+            }
+          ]
+        },
+        "limit": 1
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        7136,
+        208
+      ],
+      "id": "c945ba46-6f66-4951-b17a-20a6b8a53094",
+      "name": "GetDomainForConfig"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "609ed701-874c-497b-b1e1-970b7a68aede",
+              "leftValue": "={{ $json.site_config }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "empty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        7360,
+        208
+      ],
+      "id": "a304204f-ee0a-4014-a593-659966411ec4",
+      "name": "SiteConfig"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "value": "SQ5TrSNJIrhfiQLt",
+          "mode": "list",
+          "cachedResultName": "sites",
+          "cachedResultUrl": "/projects/XPcEXVmXWsmhYagn/datatables/SQ5TrSNJIrhfiQLt"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyValue": "={{ $('GetDomainForConfig').item.json.id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "site_config": "={{ JSON.stringify($('ParseSiteConfig').item.json.siteConfig) }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "pages_id",
+              "displayName": "pages_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "url",
+              "displayName": "url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "site_topic",
+              "displayName": "site_topic",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "query",
+              "displayName": "query",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "sheet_row_number",
+              "displayName": "sheet_row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "lang",
+              "displayName": "lang",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "country",
+              "displayName": "country",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "url_rating",
+              "displayName": "url_rating",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "seo_analysis",
+              "displayName": "seo_analysis",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "site_config",
+              "displayName": "site_config",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "css_code",
+              "displayName": "css_code",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "js_code",
+              "displayName": "js_code",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "layout_html",
+              "displayName": "layout_html",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        8160,
+        272
+      ],
+      "id": "a7f6e311-8af6-4733-b26e-e68aaac7ff7f",
+      "name": "UpdateSiteConfig"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "SQ5TrSNJIrhfiQLt",
+          "mode": "list",
+          "cachedResultName": "sites",
+          "cachedResultUrl": "/projects/XPcEXVmXWsmhYagn/datatables/SQ5TrSNJIrhfiQLt"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "url",
+              "keyValue": "={{ $('BaseData').item.json.URL.extractDomain() }}"
+            }
+          ]
+        },
+        "limit": 1
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        8384,
+        208
+      ],
+      "id": "7753d7f1-3dfa-4811-93d0-232515692e33",
+      "name": "GetDomainForCSSCode"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "916d341e-9aba-430a-9519-ff38ed765b4d",
+              "leftValue": "={{ $json.css_code }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "empty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        8608,
+        208
+      ],
+      "id": "df5430f4-091a-439c-a0f2-f93361bfd983",
+      "name": "HasCSSCode"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "value": "SQ5TrSNJIrhfiQLt",
+          "mode": "list",
+          "cachedResultName": "sites",
+          "cachedResultUrl": "/projects/XPcEXVmXWsmhYagn/datatables/SQ5TrSNJIrhfiQLt"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyValue": "={{ $('GetDomainForCSSCode').item.json.id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "css_code": "={{ $('GenerateCSS').item.json.content.parts[0].text }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "pages_id",
+              "displayName": "pages_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "url",
+              "displayName": "url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "site_topic",
+              "displayName": "site_topic",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "query",
+              "displayName": "query",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "sheet_row_number",
+              "displayName": "sheet_row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "lang",
+              "displayName": "lang",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "country",
+              "displayName": "country",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "url_rating",
+              "displayName": "url_rating",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "seo_analysis",
+              "displayName": "seo_analysis",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "site_config",
+              "displayName": "site_config",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "css_code",
+              "displayName": "css_code",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "js_code",
+              "displayName": "js_code",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "layout_html",
+              "displayName": "layout_html",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        9184,
+        128
+      ],
+      "id": "fb84ac48-1b45-46ce-9627-7c0ce57adf01",
+      "name": "UpdateCCSCode"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "SQ5TrSNJIrhfiQLt",
+          "mode": "list",
+          "cachedResultName": "sites",
+          "cachedResultUrl": "/projects/XPcEXVmXWsmhYagn/datatables/SQ5TrSNJIrhfiQLt"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "url",
+              "keyValue": "={{ $('BaseData').item.json.URL.extractDomain() }}"
+            }
+          ]
+        },
+        "limit": 1
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        9408,
+        208
+      ],
+      "id": "afd7e4e5-9b34-42db-adca-82336551f31f",
+      "name": "GetDomainForJSCode"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "1c83d6d7-e326-4e7e-98e6-ec9f7e1c5613",
+              "leftValue": "={{ $json.js_code }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "empty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        9632,
+        208
+      ],
+      "id": "d92b6c71-25a5-4bbf-b774-42730ed5b8f6",
+      "name": "HasJSCode"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "value": "SQ5TrSNJIrhfiQLt",
+          "mode": "list",
+          "cachedResultName": "sites",
+          "cachedResultUrl": "/projects/XPcEXVmXWsmhYagn/datatables/SQ5TrSNJIrhfiQLt"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyValue": "={{ $('GetDomainForJSCode').item.json.id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "js_code": "={{ $('GenerateJS').item.json.content.parts[0].text }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "pages_id",
+              "displayName": "pages_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "url",
+              "displayName": "url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "site_topic",
+              "displayName": "site_topic",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "query",
+              "displayName": "query",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "sheet_row_number",
+              "displayName": "sheet_row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "lang",
+              "displayName": "lang",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "country",
+              "displayName": "country",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "url_rating",
+              "displayName": "url_rating",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "seo_analysis",
+              "displayName": "seo_analysis",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "site_config",
+              "displayName": "site_config",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "css_code",
+              "displayName": "css_code",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "js_code",
+              "displayName": "js_code",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "layout_html",
+              "displayName": "layout_html",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        10208,
+        128
+      ],
+      "id": "2e61644a-4ad4-401a-ab4e-1074e561bfdf",
+      "name": "UpdateJSCode"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "SQ5TrSNJIrhfiQLt",
+          "mode": "list",
+          "cachedResultName": "sites",
+          "cachedResultUrl": "/projects/XPcEXVmXWsmhYagn/datatables/SQ5TrSNJIrhfiQLt"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "url",
+              "keyValue": "={{ $('BaseData').item.json.URL.extractDomain() }}"
+            }
+          ]
+        },
+        "limit": 1
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        10432,
+        208
+      ],
+      "id": "b5177de3-b0b6-4d3a-84fb-13e640b6a600",
+      "name": "GetDomainForLayoutCode"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "23c4c8ee-0eb5-4188-a426-60166d3f2495",
+              "leftValue": "={{ $json.layout_html }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "empty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        10656,
+        208
+      ],
+      "id": "dc3822d2-a051-48b0-ae97-83b16e339179",
+      "name": "HasLayoutCode"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "SQ5TrSNJIrhfiQLt",
+          "mode": "list",
+          "cachedResultName": "sites",
+          "cachedResultUrl": "/projects/XPcEXVmXWsmhYagn/datatables/SQ5TrSNJIrhfiQLt"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "url",
+              "keyValue": "={{ $('BaseData').item.json.URL.extractDomain() }}"
+            }
+          ]
+        },
+        "limit": 1
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        11456,
+        208
+      ],
+      "id": "3dad27ca-f4bc-4797-8e82-35a7c1049ee2",
+      "name": "GetDomainForPrepareTechData"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "SQ5TrSNJIrhfiQLt",
+          "mode": "list",
+          "cachedResultName": "sites",
+          "cachedResultUrl": "/projects/XPcEXVmXWsmhYagn/datatables/SQ5TrSNJIrhfiQLt"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "url",
+              "keyValue": "={{ $('BaseData').item.json.URL.extractDomain() }}"
+            }
+          ]
+        },
+        "limit": 1
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        12704,
+        208
+      ],
+      "id": "78239973-e3e3-4654-bc57-375d291082d5",
+      "name": "GetDomainSplitPagesLoop"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=# РОЛЬ\nDevOps Engineer.\n\n# ВХОДНЫЕ ДАННЫЕ\nДомен: \"{{ $('GetDomainForPrepareTechData').item.json.url }}\"\n\n# ЗАДАЧА\nНапиши содержимое двух файлов.\n\n1. **robots.txt**:\n   - Разреши доступ всем ботам (*).\n   - Укажи путь к sitemap: https://{{ $('GetDomainForPrepareTechData').item.json.url }}/sitemap.xml\n\n2. **.htaccess** (Apache):\n   - Включи RewriteEngine.\n   - Force HTTPS.\n   - Redirect www -> non-www (или наоборот, выбери стандарт).\n   - Настрой ErrorDocument 404 /404.html\n   - Добавь заголовки кеширования (Cache-Control) для изображений, CSS и JS (на 1 месяц).\n\n# ФОРМАТ ВЫВОДА (JSON)\n{\n  \"robots_txt\": \"...\",\n  \"htaccess\": \"...\"\n}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        12128,
+        208
+      ],
+      "id": "5bdd1e01-b58e-458e-9b15-ce605257dbbc",
+      "name": "GenerateTechFiles",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "aDoJFjt0lh5UoG42",
+          "name": "alfasearch.seo@gmail.com"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst links = item.json.sitemap_data;\n\n// Начало XML\nlet xml = '<?xml version=\"1.0\" encoding=\"UTF-8\"?>\\n';\nxml += '<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\\n';\n\n// Цикл по ссылкам\nlinks.forEach(link => {\n    xml += '  <url>\\n';\n    xml += `    <loc>${link.loc}</loc>\\n`;\n    xml += `    <lastmod>${link.lastmod}</lastmod>\\n`;\n    xml += `    <priority>${link.priority}</priority>\\n`;\n    xml += '  </url>\\n';\n});\n\n// Конец XML\nxml += '</urlset>';\n\nreturn {\n    json: {\n        // ...item.json,\n        // Добавляем результаты предыдущего шага (Gemini) и этот XML\n        tech_files: {\n            ...item.json.tech_files, // Если Gemini вернул объект в поле tech_files (нужно распарсить)\n            sitemap_xml: xml\n        }\n    }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        11904,
+        208
+      ],
+      "id": "6f67e8be-7e67-438b-b55f-70a450ee80bc",
+      "name": "GenerateSitemapXML"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "value": "SQ5TrSNJIrhfiQLt",
+          "mode": "list",
+          "cachedResultName": "sites",
+          "cachedResultUrl": "/projects/XPcEXVmXWsmhYagn/datatables/SQ5TrSNJIrhfiQLt"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "url",
+              "keyValue": "={{ $('GetDomainForPrepareTechData').item.json.url }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "robots_txt": "={{ ($json.content.parts[0].text).replace(/^```json\\s*/i, '').replace(/\\s*```$/i, '').trim().parseJson().robots_txt }}",
+            "htaccess": "={{ ($json.content.parts[0].text).replace(/^```json\\s*/i, '').replace(/\\s*```$/i, '').trim().parseJson().htaccess }}",
+            "sitemap_xml": "={{ $('GenerateSitemapXML').item.json.tech_files.sitemap_xml }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "pages_id",
+              "displayName": "pages_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "url",
+              "displayName": "url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "site_topic",
+              "displayName": "site_topic",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "query",
+              "displayName": "query",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "sheet_row_number",
+              "displayName": "sheet_row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "lang",
+              "displayName": "lang",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "country",
+              "displayName": "country",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "url_rating",
+              "displayName": "url_rating",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "seo_analysis",
+              "displayName": "seo_analysis",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "site_config",
+              "displayName": "site_config",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "css_code",
+              "displayName": "css_code",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "js_code",
+              "displayName": "js_code",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "layout_html",
+              "displayName": "layout_html",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "robots_txt",
+              "displayName": "robots_txt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "htaccess",
+              "displayName": "htaccess",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "sitemap_xml",
+              "displayName": "sitemap_xml",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        12480,
+        208
+      ],
+      "id": "41f3b463-697e-4d57-b67a-37b7e71e789e",
+      "name": "SaveTechtoDBRobotsHtaccessSitemap"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "YbVBIoErm6EPWxMe",
+          "mode": "list",
+          "cachedResultName": "pages",
+          "cachedResultUrl": "/projects/XPcEXVmXWsmhYagn/datatables/YbVBIoErm6EPWxMe"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "site_id",
+              "keyValue": "={{ $('GetDomainSplitPagesLoop').first().json.id }}"
+            },
+            {
+              "keyName": "slug",
+              "keyValue": "={{ $('SplitPagesLoop').item.json.page_data.slug }}"
+            }
+          ]
+        },
+        "limit": 1
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        13504,
+        208
+      ],
+      "id": "8c07c773-518c-4d55-85a8-8f52cfee481c",
+      "name": "CheckExistingPage",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "485d8a0b-67bf-4544-8ff6-ed548d99aa01",
+              "leftValue": "={{ $json }}",
+              "rightValue": "",
+              "operator": {
+                "type": "object",
+                "operation": "empty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        13712,
+        208
+      ],
+      "id": "a443927e-286a-4c97-9bc3-f999fd9c02d8",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "value": "YbVBIoErm6EPWxMe",
+          "mode": "list",
+          "cachedResultName": "pages",
+          "cachedResultUrl": "/projects/XPcEXVmXWsmhYagn/datatables/YbVBIoErm6EPWxMe"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyValue": "={{ $json.id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "site_id": "={{ $('GetDomainSplitPagesLoop').first().json.id }}",
+            "slug": "={{ $('SplitPagesLoop').item.json.page_data.slug }}",
+            "title": "={{ $('SplitPagesLoop').item.json.page_data.title }}",
+            "page_type": "={{ $('SplitPagesLoop').item.json.page_data.type }}",
+            "content_html": "={{ JSON.parse($('PageContentWriter').item.json.content.parts[0].text.replace(/^```json\\s*/i, '').replace(/\\s*```$/i, '').trim()).content_html }}",
+            "status": "generated",
+            "description": "={{ JSON.parse($('PageContentWriter').item.json.content.parts[0].text.replace(/^```json\\s*/i, '').replace(/\\s*```$/i, '').trim()).meta_description }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "slug",
+              "displayName": "slug",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "site_id",
+              "displayName": "site_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "description",
+              "displayName": "description",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "page_type",
+              "displayName": "page_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "content_html",
+              "displayName": "content_html",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        13984,
+        288
+      ],
+      "id": "48c75907-229a-4a63-bd0a-8dadd46f6b3e",
+      "name": "UpdatePagetoDB"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\nfunction normalizeDomain(rawUrl) {\n  if (!rawUrl) return '';\n  let u = String(rawUrl).trim().toLowerCase();\n\n  // чтобы URL() не падал, если протокола нет\n  if (!/^https?:\\/\\//.test(u)) u = 'https://' + u;\n\n  try {\n    const parsed = new URL(u);\n    return parsed.hostname.replace(/^www\\./, '').toLowerCase();\n  } catch (e) {\n    // fallback\n    return u\n      .replace(/^https?:\\/\\//, '')\n      .replace(/^www\\./, '')\n      .split('/')[0]\n      .trim()\n      .toLowerCase();\n  }\n}\n\nreturn $input.all().map(item => {\n  const raw = item.json.URL ?? item.json.url ?? '';\n  const normalized_domain = normalizeDomain(raw);\n  const site_id = crypto.createHash('sha1').update(normalized_domain).digest('hex');\n\n  return {\n    json: {\n      ...item.json,\n      normalized_domain,\n      site_id,\n    },\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -192,
+        112
+      ],
+      "id": "1f6ea169-0908-426a-879c-3fbeb214677e",
+      "name": "ComputeSiteId"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "BaseData",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "BaseData": {
+      "main": [
+        [
+          {
+            "node": "ComputeSiteId",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "updateGenerationStatus": {
+      "main": [
+        [
+          {
+            "node": "GetDomainForTopic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request для скачивания HTML": {
+      "main": [
+        [
+          {
+            "node": "Распаковщик фреймов",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Нужен ли доп. запрос?": {
+      "main": [
+        [
+          {
+            "node": "Скачать контент фрейма",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "MergeURLS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Скачать контент фрейма": {
+      "main": [
+        [
+          {
+            "node": "Распаковщик фреймов",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Распаковщик фреймов": {
+      "main": [
+        [
+          {
+            "node": "Нужен ли доп. запрос?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GetWebArchive": {
+      "main": [
+        [
+          {
+            "node": "GetDownloadUrl",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GetDownloadUrl": {
+      "main": [
+        [
+          {
+            "node": "HasDownloadUrl",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HasDownloadUrl": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request для скачивания HTML",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "GetDomainTopicWithGemini",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsertRowDB": {
+      "main": [
+        [
+          {
+            "node": "updateGenerationStatus",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HasDomainInDB": {
+      "main": [
+        [
+          {
+            "node": "InsertRowDB",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "UpdateRow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GetDomainInDB": {
+      "main": [
+        [
+          {
+            "node": "HasDomainInDB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "UpdateRow": {
+      "main": [
+        [
+          {
+            "node": "updateGenerationStatus",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MergeURLS": {
+      "main": [
+        [
+          {
+            "node": "Очистка и Резюмирование",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Очистка и Резюмирование": {
+      "main": [
+        [
+          {
+            "node": "AddTopicInDB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HasTopic": {
+      "main": [
+        [
+          {
+            "node": "GetWebArchive",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "GetDomainForQuery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GetDomainTopicWithGemini": {
+      "main": [
+        [
+          {
+            "node": "AddTopicInDB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AddTopicInDB": {
+      "main": [
+        [
+          {
+            "node": "GetDomainForQuery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GenerateKeywords": {
+      "main": [
+        [
+          {
+            "node": "PickQuery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PickQuery": {
+      "main": [
+        [
+          {
+            "node": "UpdateQueryInDB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "UpdateQueryInDB": {
+      "main": [
+        [
+          {
+            "node": "GetDomainForSeoAnalyzer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HasQuery": {
+      "main": [
+        [
+          {
+            "node": "GenerateKeywords",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "GetDomainForSeoAnalyzer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GetDomainForQuery": {
+      "main": [
+        [
+          {
+            "node": "HasQuery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GetDomainForTopic": {
+      "main": [
+        [
+          {
+            "node": "HasTopic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run seo-analyzer": {
+      "main": [
+        [
+          {
+            "node": "Download contents.txt",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Download analysis.csv",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GetDomainForSeoAnalyzer": {
+      "main": [
+        [
+          {
+            "node": "HasSeoAnalysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download contents.txt": {
+      "main": [
+        [
+          {
+            "node": "Extract from content.txt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download analysis.csv": {
+      "main": [
+        [
+          {
+            "node": "Extract from analysis.csv",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract from content.txt": {
+      "main": [
+        [
+          {
+            "node": "Merge analyzer files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract from analysis.csv": {
+      "main": [
+        [
+          {
+            "node": "Merge analyzer files",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge analyzer files": {
+      "main": [
+        [
+          {
+            "node": "SeoAnalysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SeoAnalysis": {
+      "main": [
+        [
+          {
+            "node": "ClearResultAnalysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ClearResultAnalysis": {
+      "main": [
+        [
+          {
+            "node": "UpdateSeoAnalysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "UpdateSeoAnalysis": {
+      "main": [
+        [
+          {
+            "node": "SiteType",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HasSeoAnalysis": {
+      "main": [
+        [
+          {
+            "node": "Run seo-analyzer",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "SiteType",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SiteType": {
+      "main": [
+        [],
+        [
+          {
+            "node": "GetDomainForConfig",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GetSiteConfig": {
+      "main": [
+        [
+          {
+            "node": "ParseSiteConfig",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ParseSiteConfig": {
+      "main": [
+        [
+          {
+            "node": "UpdateSiteConfig",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GenerateCSS": {
+      "main": [
+        [
+          {
+            "node": "UpdateCCSCode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GenerateJS": {
+      "main": [
+        [
+          {
+            "node": "UpdateJSCode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GenerateLayout": {
+      "main": [
+        [
+          {
+            "node": "UpdateSiteAssets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SplitPagesLoop": {
+      "main": [
+        [
+          {
+            "node": "PageContentWriter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PageContentWriter": {
+      "main": [
+        [
+          {
+            "node": "CheckExistingPage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "UpdateSiteAssets": {
+      "main": [
+        [
+          {
+            "node": "GetDomainForPrepareTechData",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SavePagetoDB": {
+      "main": [
+        [
+          {
+            "node": "AssembleHTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PrepareTechData": {
+      "main": [
+        [
+          {
+            "node": "GenerateSitemapXML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GetDomainForConfig": {
+      "main": [
+        [
+          {
+            "node": "SiteConfig",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SiteConfig": {
+      "main": [
+        [
+          {
+            "node": "GetSiteConfig",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "GetDomainForCSSCode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "UpdateSiteConfig": {
+      "main": [
+        [
+          {
+            "node": "GetDomainForCSSCode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GetDomainForCSSCode": {
+      "main": [
+        [
+          {
+            "node": "HasCSSCode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HasCSSCode": {
+      "main": [
+        [
+          {
+            "node": "GenerateCSS",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "GetDomainForJSCode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "UpdateCCSCode": {
+      "main": [
+        [
+          {
+            "node": "GetDomainForJSCode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GetDomainForJSCode": {
+      "main": [
+        [
+          {
+            "node": "HasJSCode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HasJSCode": {
+      "main": [
+        [
+          {
+            "node": "GenerateJS",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "GetDomainForLayoutCode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "UpdateJSCode": {
+      "main": [
+        [
+          {
+            "node": "GetDomainForLayoutCode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GetDomainForLayoutCode": {
+      "main": [
+        [
+          {
+            "node": "HasLayoutCode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HasLayoutCode": {
+      "main": [
+        [
+          {
+            "node": "GenerateLayout",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "GetDomainForPrepareTechData",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GetDomainForPrepareTechData": {
+      "main": [
+        [
+          {
+            "node": "PrepareTechData",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GetDomainSplitPagesLoop": {
+      "main": [
+        [
+          {
+            "node": "SplitPagesLoop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GenerateSitemapXML": {
+      "main": [
+        [
+          {
+            "node": "GenerateTechFiles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GenerateTechFiles": {
+      "main": [
+        [
+          {
+            "node": "SaveTechtoDBRobotsHtaccessSitemap",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SaveTechtoDBRobotsHtaccessSitemap": {
+      "main": [
+        [
+          {
+            "node": "GetDomainSplitPagesLoop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CheckExistingPage": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "SavePagetoDB",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "UpdatePagetoDB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "UpdatePagetoDB": {
+      "main": [
+        [
+          {
+            "node": "AssembleHTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ComputeSiteId": {
+      "main": [
+        [
+          {
+            "node": "GetDomainInDB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "ff84230f-0caa-4b5b-b96e-a5ce6be50094",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "b788f0a7bea0385d656cd002d3c865ca67dfd5c7fec4b64420122723568be5ab"
+  },
+  "id": "wl1SUaOxeaL2A3JS",
+  "tags": []
+}
