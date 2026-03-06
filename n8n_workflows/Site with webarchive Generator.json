@@ -1,0 +1,3565 @@
+{
+  "name": "Site with webarchive Generator",
+  "nodes": [
+    {
+      "parameters": {
+        "url": "=https://web.archive.org/cdx/search/cdx?url={{ $('extract host').item.json.Host }}&output=json&fl=timestamp,original,mimetype,statuscode,length&collapse=digest&filter=statuscode:200&filter=mimetype:text/html&limit=-5",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -2864,
+        912
+      ],
+      "id": "659ca34f-0e90-4532-ac63-47b603e66954",
+      "name": "Запрос к Wayback Machine API",
+      "alwaysOutputData": false,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "user",
+        "user": {
+          "__rl": true,
+          "value": "U03N6EY0N4F",
+          "mode": "id"
+        },
+        "text": "={{ $json.archived_snapshots.closest.url }}",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        -4880,
+        336
+      ],
+      "id": "cbae6034-cb4e-4ce8-bff0-73db41b70686",
+      "name": "Send a message",
+      "webhookId": "05a09ae7-7482-450d-b49f-14a6ec43282f",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "qfgbQ0iw7D11q4l1",
+          "name": "Alfaleads Sukhrobjon"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.downloadUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -2192,
+        784
+      ],
+      "id": "b62e2c68-c632-41ea-ab1d-cee015687184",
+      "name": "HTTP Request для скачивания HTML",
+      "retryOnFail": false,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-pro",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-pro"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=# РОЛЬ\nТы — SEO-аналитик, эксперт по определению тематической ниши сайта по его контенту.\n\n# ЗАДАЧА\nПроанализируй предоставленный HTML-код и определи основную тематику сайта. Твоя цель — дать короткий и ясный ответ.\n\n# ИНСТРУКЦИИ\n1.  **ИГНОРИРУЙ ШУМ:** Полностью игнорируй содержимое тегов `<script>`, `<style>`, `<nav>`, `<footer>`. Также игнорируй весь код и текст, который относится к \"Internet Archive\" или \"Wayback Machine\".\n2.  **СКОНЦЕНТРИРУЙСЯ НА СУТИ:** Наибольшее внимание удели содержимому тегов `<title>`, `<meta name=\"description\">`, `<h1>`, `<h2>` и основным параграфам `<p>`.\n3.  **ОПРЕДЕЛИ ТЕМАТИКУ:** На основе анализа ключевых слов и общего смысла текста, сделай вывод об основной деятельности сайта.\n4.  **ФОРМАТ ОТВЕТА:** Верни ответ, состоящий **только из одного-двух слов** на языке оригинала. Никаких объяснений.\n\n# ПРИМЕРЫ\n- Если сайт о продаже машин, ответ: \"Автомобили\"\n- Если сайт о политической кампании, ответ: \"Политика\"\n- Если это блог о кулинарии, ответ: \"Рецепты\"\n\n# ВХОДНЫЕ ДАННЫЕ\nЯзык на котором нужно ответить: \"{{ $('Get Table Data').item.json.Lang }}\"\nHTML-код:\n{{ $json.data }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        -4880,
+        -112
+      ],
+      "id": "80697ff7-1e86-461b-9186-d50c91109726",
+      "name": "Анализ HTML",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "aDoJFjt0lh5UoG42",
+          "name": "alfasearch.seo@gmail.com"
+        }
+      },
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=# РОЛЬ\nТы — SEO-аналитик, эксперт по определению тематической ниши сайта по его доменному имени.\n\n# ЗАДАЧА\nПроанализируй доменное имя и предположи его наиболее вероятную тематику. Твоя цель — дать короткий и ясный ответ.\n\n# ИНСТРУКЦИИ\n1.  Разбей домен на составные слова (например, \"autotrader\" -> \"auto\", \"trader\").\n2.  Определи наиболее вероятную тематику на основе этих слов.\n3.  **ФОРМАТ ОТВЕТА:** Верни ответ, состоящий **только из одного-двух слов**. Никаких объяснений.\n\n# ПРИМЕРЫ\n- Если домен \"bestcarreviews.com\", ответ: \"Автомобили\"\n- Если домен \"legaladvice.se\", ответ: \"Юриспруденция\"\n\n# ВХОДНЫЕ ДАННЫЕ\nЯзык на котором нужно ответить: \"{{ $('Get Table Data').item.json.Lang }}\"\n\nДомен:\n{{ $('проверки наличия снимка').item.json.url }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        -944,
+        1168
+      ],
+      "id": "71d38c77-37d0-42dd-9d9b-561bf3b55d37",
+      "name": "Анализ Домена",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "aDoJFjt0lh5UoG42",
+          "name": "alfasearch.seo@gmail.com"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "e4064017-e080-4b9c-8793-9e0b9a8ed47a",
+              "leftValue": "={{ $json.downloadUrl }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -2416,
+        912
+      ],
+      "id": "8b22874b-2204-495a-bae1-32ef82e90336",
+      "name": "проверки наличия снимка"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -592,
+        1008
+      ],
+      "id": "9b1e2056-0556-4005-85d6-3a04a9e1b253",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Получаем входящие данные\nconst item = $input.first();\n\n// Извлекаем чистый текст из ответа Gemini\nconst topic = item.json.content.parts[0].text.trim();\n\n// Записываем чистую тему в новый ключ\nitem.json.cleanTopic = topic;\n\n// Возвращаем обновленный объект\nreturn item;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4880,
+        112
+      ],
+      "id": "0f983e36-0d7d-4f11-a5c6-6323e935f238",
+      "name": "Очистка ответа ИИ",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=# РОЛЬ\nТы — SEO-специалист, эксперт по сбору семантического ядра (Keyword Research) для шведского рынка.\n\n# ЗАДАЧА\nНа основе предоставленной тематики домена, сгенерируй 15 популярных **поисковых запросов** (Keywords), которые имеют потенциал для органического трафика.\n\n# КРИТИЧЕСКИ ВАЖНЫЕ ИНСТРУКЦИИ\n1.  **НЕ пиши заголовки статей.** (Например, НЕ пиши: \"Din personliga guide till hälsa...\").\n2.  **ПИШИ поисковые фразы.** (Например, пиши: \"hälsokost online\" или \"bästa naturprodukter\").\n3.  **Длина:** Фразы должны быть лаконичными (2-5 слов).\n4.  **Интент:** Фокусируйся на темах, по которым люди ищут информацию или товары (информационные и коммерческие запросы).\n5.  **Язык:** Шведский.\n\n# ПРИМЕРЫ (Bad vs Good)\n- ❌ BAD (Слишком длинно/Сложно): \"Hur du kan spara pengar genom att köpa begagnade bilar\"\n- ✅ GOOD (Поисковый запрос): \"köpa begagnad bil tips\"\n\n- ❌ BAD: \"Den ultimata guiden till att inreda ditt vardagsrum\"\n- ✅ GOOD: \"inredning vardagsrum inspiration\"\n\n# ФОРМАТ ВЫВОДА\nВерни результат в виде **JSON-массива из 15 строк**. Не добавляй ничего, кроме самого массива.\nПример:\n{\n  \"topics\": [\n    \"sökord ett\",\n    \"sökord två\",\n    ...\n  ]\n}\n\n# ВХОДНЫЕ ДАННЫЕ\nЯзык на котором нужно ответить: \"{{ $('Get Table Data').item.json.Lang }}\"\nТематика: {{ $json.topic }}"
+            }
+          ]
+        },
+        "options": {
+          "codeExecution": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        -368,
+        1008
+      ],
+      "id": "30195c7e-113a-411d-aeb9-7860502b2c55",
+      "name": "Генератор тем статей",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "aDoJFjt0lh5UoG42",
+          "name": "alfasearch.seo@gmail.com"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Получаем входящие данные от Gemini\nconst item = $input.first();\n\n// 1. Извлекаем \"грязный\" текст из сложной структуры ответа\n// Мы используем '?' для безопасного доступа, чтобы избежать ошибок, если структура изменится\nconst rawText = item?.json?.content?.parts[0]?.text\n\nif (!rawText) {\n  throw new Error(\"Не удалось найти текстовую часть в ответе от Gemini.\");\n}\n\n// 2. Очищаем строку от Markdown-блоков и лишних пробелов\n// Эта команда удаляет ```json в начале и ``` в конце\nconst cleanedJsonString = rawText.replace(/^```json\\s*|\\s*```$/g, '').trim();\n\ntry {\n  // 3. Парсим (превращаем) очищенную строку в настоящий JSON-объект\n  const parsedData = JSON.parse(cleanedJsonString);\n  const topicList = parsedData.topics;\n\n  // 4. Проверяем, что у нас есть список тем\n  if (!topicList || topicList.length === 0) {\n    throw new Error(\"Не удалось сгенерировать или найти список тем в JSON.\");\n  }\n\n  // 5. Выбираем случайную тему (эта логика остается прежней)\n  const randomIndex = Math.floor(Math.random() * topicList.length);\n  const randomTopic = topicList[randomIndex];\n\n  // Записываем финальный результат в основной объект\n  item.json.selectedQuery = randomTopic;\n\n  // Возвращаем объект для следующего узла\n  return item;\n\n} catch (error) {\n  // Если Gemini вернет некорректный JSON, мы увидим понятную ошибку\n  throw new Error(`Ошибка парсинга JSON: ${error.message}`);\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -16,
+        1008
+      ],
+      "id": "cdc8c528-b304-4838-8ef5-b53c05f5b323",
+      "name": "Выбор случайной темы"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1ajG-RNCzGIYfe0Lw7sW8NWj21wS-AOJW2_LjNtn2igA",
+          "mode": "list",
+          "cachedResultName": "Гипотезы | Швеция",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1ajG-RNCzGIYfe0Lw7sW8NWj21wS-AOJW2_LjNtn2igA/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1755631355,
+          "mode": "list",
+          "cachedResultName": "Webarchive 8n8 PBN",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1ajG-RNCzGIYfe0Lw7sW8NWj21wS-AOJW2_LjNtn2igA/edit#gid=1755631355"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "={{ $json.row_number }}",
+            "Status generator": "generated",
+            "Host": "={{ $json.Host }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "URL",
+              "displayName": "URL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Anchor",
+              "displayName": "Anchor",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Acceptor",
+              "displayName": "Acceptor",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Тематика",
+              "displayName": "Тематика",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Query",
+              "displayName": "Query",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Site is published",
+              "displayName": "Site is published",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Дата запуска",
+              "displayName": "Дата запуска",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Проставлена",
+              "displayName": "Проставлена",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Дата простановки",
+              "displayName": "Дата простановки",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Картинки",
+              "displayName": "Картинки",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "LLM",
+              "displayName": "LLM",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "В индексе? (10.10.25)",
+              "displayName": "В индексе? (10.10.25)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "В индексе? (17.10.25)",
+              "displayName": "В индексе? (17.10.25)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Сайт в индексе",
+              "displayName": "Сайт в индексе",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Цитата в индексе",
+              "displayName": "Цитата в индексе",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Blacklist",
+              "displayName": "Blacklist",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Error Log",
+              "displayName": "Error Log",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Host",
+              "displayName": "Host",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Server",
+              "displayName": "Server",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Country",
+              "displayName": "Country",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Lang",
+              "displayName": "Lang",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Status generator",
+              "displayName": "Status generator",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "WebArchive url",
+              "displayName": "WebArchive url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "WebArchive summary",
+              "displayName": "WebArchive summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "WebArchive clean_text",
+              "displayName": "WebArchive clean_text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -3312,
+        992
+      ],
+      "id": "c8ae5dbb-70a5-45ea-b7bb-aa58788687bd",
+      "name": "Update row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "8y3nvLcGKE7rEm4i",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1ajG-RNCzGIYfe0Lw7sW8NWj21wS-AOJW2_LjNtn2igA",
+          "mode": "list",
+          "cachedResultName": "Гипотезы | Швеция",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1ajG-RNCzGIYfe0Lw7sW8NWj21wS-AOJW2_LjNtn2igA/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1755631355,
+          "mode": "list",
+          "cachedResultName": "Webarchive 8n8 PBN",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1ajG-RNCzGIYfe0Lw7sW8NWj21wS-AOJW2_LjNtn2igA/edit#gid=1755631355"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "Status generator",
+              "lookupValue": "waiting"
+            },
+            {
+              "lookupColumn": "Server",
+              "lookupValue": "seotech-web-media1"
+            },
+            {
+              "lookupColumn": "Site is published",
+              "lookupValue": "false"
+            }
+          ]
+        },
+        "options": {
+          "returnFirstMatch": true
+        }
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -3984,
+        1088
+      ],
+      "id": "6ca9faa6-8c01-4ab3-b0b3-253ea43aed41",
+      "name": "Get Table Data",
+      "alwaysOutputData": false,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "8y3nvLcGKE7rEm4i",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "for (const item of $('Get Table Data').all()) {\n  const url = item.json.URL ? String(item.json.URL).trim() : \"\";\n  if (url) {\n    let hostname = url.replace(/^[a-zA-Z]+:\\/\\//, \"\").split(\"/\")[0];\n    if (hostname.startsWith(\"www.\")) {\n      hostname = hostname.slice(4);\n    }\n    item.json.Host = hostname;\n  }\n}\nreturn $('Get Table Data').all();"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3536,
+        992
+      ],
+      "id": "fa9d8bdd-2b29-40c7-85af-9edc4c87fe67",
+      "name": "extract host"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1ajG-RNCzGIYfe0Lw7sW8NWj21wS-AOJW2_LjNtn2igA",
+          "mode": "list",
+          "cachedResultName": "Гипотезы | Швеция",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1ajG-RNCzGIYfe0Lw7sW8NWj21wS-AOJW2_LjNtn2igA/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1755631355,
+          "mode": "list",
+          "cachedResultName": "Webarchive 8n8 PBN",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1ajG-RNCzGIYfe0Lw7sW8NWj21wS-AOJW2_LjNtn2igA/edit#gid=1755631355"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "={{ $('Get Table Data').item.json.row_number }}",
+            "Тематика": "={{ $('Convert to json').item.json.topic }}",
+            "Query": "={{ $json.selectedQuery }}",
+            "Status generator": "complited",
+            "WebArchive summary": "={{ $('Convert to json').item.json.summary }}",
+            "WebArchive clean_text": "={{ $('Convert to json').item.json.clean_text }}",
+            "WebArchive url": "={{ ($('проверки наличия снимка').item.json.downloadUrl) }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "URL",
+              "displayName": "URL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Тематика",
+              "displayName": "Тематика",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Query",
+              "displayName": "Query",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Site is published",
+              "displayName": "Site is published",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Дата запуска",
+              "displayName": "Дата запуска",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Anchor",
+              "displayName": "Anchor",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Acceptor",
+              "displayName": "Acceptor",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Проставлена",
+              "displayName": "Проставлена",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Дата простановки",
+              "displayName": "Дата простановки",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Картинки",
+              "displayName": "Картинки",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "LLM",
+              "displayName": "LLM",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "В индексе? (10.10.25)",
+              "displayName": "В индексе? (10.10.25)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "В индексе? (17.10.25)",
+              "displayName": "В индексе? (17.10.25)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Сайт в индексе",
+              "displayName": "Сайт в индексе",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Цитата в индексе",
+              "displayName": "Цитата в индексе",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Blacklist",
+              "displayName": "Blacklist",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Error Log",
+              "displayName": "Error Log",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Host",
+              "displayName": "Host",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Server",
+              "displayName": "Server",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Country",
+              "displayName": "Country",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Lang",
+              "displayName": "Lang",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Status generator",
+              "displayName": "Status generator",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "WebArchive url",
+              "displayName": "WebArchive url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "WebArchive summary",
+              "displayName": "WebArchive summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "WebArchive clean_text",
+              "displayName": "WebArchive clean_text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -4880,
+        560
+      ],
+      "id": "c372fad6-02b8-431c-85db-ad6dcbc8b467",
+      "name": "Update row in sheet1",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "8y3nvLcGKE7rEm4i",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Получаем текущий элемент (это массив, например, [\"202504...\", \"https://...\", ...])\nconst snapshot = $input.item.json;\n\n// 1. Отсеиваем заголовок\nif (snapshot[0] === 'timestamp') {\n  return null;\n}\n\n// 2. Извлекаем данные из массива\nconst [timestamp, original, mimetype, statuscode, length] = snapshot;\n// Снижаем порог, чтобы включать небольшие, но валидные страницы\nconst minLength = 500; // <<< ИЗМЕНЕНИЕ ЗДЕСЬ\n\n// 3. Проверяем размер и возвращаем результат\nif (parseInt(length) > minLength) {\n  const waybackUrl = `http://web.archive.org/web/${timestamp}/${original}`;\n\n  // Возвращаем объект в нужном нам формате.\n  return { json: { downloadUrl: waybackUrl } };\n}\n\n// Если размер слишком маленький, отбрасываем этот снимок\nreturn null;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2640,
+        912
+      ],
+      "id": "a40800c3-30db-440b-b970-15a8fbea8a1a",
+      "name": "Фильтр снимков",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-pro",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-pro"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=# РОЛЬ\nТы — AI-ассистент, специализирующийся на извлечении и структурировании информации из \"грязного\" HTML-кода.\n\n# ЗАДАЧА\nИз предоставленных фрагментов HTML-кода (их может быть несколько) извлеки весь значимый текстовый контент, очисти его и на его основе напиши краткое резюме и определи основную тематику.\n\n# ИНСТРУКЦИИ\n1.  **Объедини контент:** Мысленно объедини все предоставленные HTML в один большой документ.\n2.  **Игнорируй шум:** Полностью игнорируй теги `<script>`, `<style>`, `<nav>`, `<footer>`, а также любой код, относящийся к \"Wayback Machine\" или \"Internet Archive\".\n3.  **Извлеки чистый текст:** Собери весь видимый пользователю текст из тегов `<title>`, `<h1>`, `<h2>`, `<p>`, `<li>`, `<a>` и т.д. Удали все HTML-теги, оставив только текст.\n4.  **Сделай резюме:** На основе очищенного текста напиши краткое резюме на 2-3 предложения, описывающее, о чем был сайт.\n5.  **Определи тематику:** Одним-двумя словами определи главную тематику сайта.\n\n# ФОРМАТ ВЫВОДА\nВерни ответ СТРОГО в формате JSON:\n{\n  \"summary\": \"Краткое резюме сайта на 2-3 предложения.\",\n  \"clean_text\": \"Весь извлеченный и очищенный текст страницы...\",\n  \"topic\": \"Тематика\"\n}\n# ВХОДНЫЕ ДАННЫЕ\nЯзык для резюме и тематики: \"{{ $json.Lang }}\"\nHTML-код(ы):\n{{ $json.sites.join('\\\\n---\\\\n') }}\n"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        -1296,
+        976
+      ],
+      "id": "4e3fe0e7-6fc4-4811-b3a6-278445f02731",
+      "name": "Очистка и Резюмирование",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "aDoJFjt0lh5UoG42",
+          "name": "alfasearch.seo@gmail.com"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Получаем все входящие элементы (5 страниц для одного сайта)\nconst items = $input.all();\n\nif (items.length === 0) {\n  return [];\n}\n\n// Берем метаданные (Host, row_number) из ПЕРВОГО элемента этой группы.\n// Важно: предполагается, что все 5 снимков принадлежат одному сайту.\n// Поскольку мы используем n8n (cloud), контекст выполнения обычно сохраняется корректно.\n// Но нам нужно убедиться, что мы берем row_number именно от текущего обрабатываемого элемента.\n\n// Мы можем взять originalJson из первого элемента items, так как 'Фильтр снимков'\n// должен был пробросить контекст, но он этого не сделал явно.\n// Однако, мы можем обратиться к родительскому узлу 'extract host'\n// и найти там элемент, соответствующий нашему хосту.\n\n// Более простой и надежный вариант для текущей структуры:\n// Получаем все HTML данные в массив\nlet newArray = [];\nlet currentDownloadUrl = \"\";\n\nfor (const item of items) {\n  newArray.push(item.json.data);\n  if(item.json.downloadUrl) currentDownloadUrl = item.json.downloadUrl;\n}\n\n// Нам нужно найти исходные данные (row_number) для этого набора снимков.\n// Мы ищем в узле 'extract host' элемент, чей домен совпадает с тем, что мы скачивали.\n// Это немного \"хак\", но он работает, если URL архива содержит домен.\n\nconst allHosts = $('extract host').all();\nlet originalJson = {};\n\n// Пытаемся найти правильный row_number\nfor(const hostItem of allHosts) {\n    if(currentDownloadUrl.includes(hostItem.json.Host)) {\n        originalJson = hostItem.json;\n        break;\n    }\n}\n\n// Если не нашли (редкий случай), берем первый попавшийся как фоллбэк\nif(!originalJson.Host) {\n    originalJson = $('extract host').first().json;\n}\n\nconst combinedData = { ...originalJson, sites: newArray };\n\nreturn [{ json: combinedData }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1520,
+        976
+      ],
+      "id": "20a02d2c-501d-4a19-b9ee-299f115150f4",
+      "name": "Merge1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\n// Проходим по всем элементам\nconst result = items.map((item) => {\n  let text = item?.json?.content?.parts[0]?.text;\n  \n  // Очистка JSON от markdown\n  if (typeof text === 'string') {\n    text = text.replace(/^```(?:json)?\\s*/i, '').replace(/```$/, '').trim();\n  }\n  \n  let validJson = {};\n  try {\n    validJson = JSON.parse(text);\n  } catch (e) {\n    // Если не распарсилось, оставляем пустым или логируем\n    validJson = { error: \"Failed to parse JSON\" };\n  }\n  \n  // Очистка текста от переносов строк\n  if (validJson.clean_text && typeof validJson.clean_text === 'string') {\n    validJson.clean_text = validJson.clean_text.replace(/\\n/g, \" \");\n  }\n  \n  // --- ГЛАВНОЕ ИСПРАВЛЕНИЕ ---\n  // Мы возвращаем объект, который содержит И старые данные (item.json), И новые (validJson)\n  return {\n    json: {\n      ...item.json,   // Сохраняем row_number, Host и всё остальное\n      ...validJson    // Добавляем topic, summary, clean_text\n    }\n  };\n});\n\nreturn result;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -880,
+        976
+      ],
+      "id": "7c157bff-2c52-4b35-bf48-de3f3be5d36a",
+      "name": "Convert to json"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "652632e0-bfe6-47b9-a88d-8070b6514d37",
+              "leftValue": "={{ $json.nextUrl }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -1744,
+        784
+      ],
+      "id": "908167c8-62fc-4c3f-bf7b-c822f509279f",
+      "name": "Нужен ли доп. запрос?"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.nextUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -1520,
+        784
+      ],
+      "id": "0f985363-0ca7-4332-8bfc-8ec08a1a8580",
+      "name": "Скачать контент фрейма",
+      "retryOnFail": false,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.item;\nconst html = item.json.data;\n\n// Сначала ищем iframe\nconst iframeMatch = html.match(/<iframe id=\"playback\" src=\"([^\"]+)\"/);\nif (iframeMatch && iframeMatch[1]) {\n  item.json.nextUrl = iframeMatch[1];\n  // Мы нашли URL для следующего шага\n  return item;\n}\n\n// Если iframe не найден, ищем главный frameset\nconst frameMatch = html.match(/<frame name=\"main\" src=\"([^\"]+)\"/);\nif (frameMatch && frameMatch[1]) {\n  item.json.nextUrl = frameMatch[1];\n  // Мы нашли URL для следующего шага\n  return item;\n}\n\n// Если не найдено ни iframe, ни frame, значит, это уже контент\n// Просто перекладываем его в финальное поле\nitem.json.finalHtml = html;\nreturn item;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1968,
+        784
+      ],
+      "id": "94651b24-158e-4db3-aa39-0c004496cfe9",
+      "name": "Распаковщик фреймов",
+      "notesInFlow": false
+    },
+    {
+      "parameters": {
+        "errorMessage": "No data"
+      },
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        -3536,
+        1184
+      ],
+      "id": "cba77dac-89e1-41db-88cc-4d9e95b3ceb8",
+      "name": "Stop and Error"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "5d0cca77-75a1-4bd8-9925-1354b51a8231",
+              "leftValue": "={{ $json.row_number }}",
+              "rightValue": "",
+              "operator": {
+                "type": "number",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -3760,
+        1088
+      ],
+      "id": "4b54cd35-944f-4f7e-a82f-262adf464b4c",
+      "name": "Has Data"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "7b91470b-19be-4680-97e5-9c50079bb968",
+              "leftValue": "={{ $('Get Table Data').item.json['Тематика'] }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "empty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -3088,
+        992
+      ],
+      "id": "fe67e0d6-64d8-4dc1-acff-2a6292a877a3",
+      "name": "Has theme"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "17h2hmvsqi5-Tg6gCArWIGoBogq5b-_GMkNrDGT7foU0",
+          "mode": "list",
+          "cachedResultName": "8n8 pbn db",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/17h2hmvsqi5-Tg6gCArWIGoBogq5b-_GMkNrDGT7foU0/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1777814691,
+          "mode": "list",
+          "cachedResultName": "SiteWebArchiveGeneratorLog",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/17h2hmvsqi5-Tg6gCArWIGoBogq5b-_GMkNrDGT7foU0/edit#gid=1777814691"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -4656,
+        1088
+      ],
+      "id": "f487e3a0-e8c1-42c8-b020-441ab4780087",
+      "name": "Get Weekly Log1",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "8y3nvLcGKE7rEm4i",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\n// Определяем начало текущей недели (понедельник)\nconst now = new Date();\nconst dayOfWeek = now.getDay(); // 0=Воскресенье, 1=Понедельник, ..., 6=Суббота\nconst diff = now.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1); // формула для получения понедельника\nconst startOfWeek = new Date(now.setDate(diff));\nstartOfWeek.setHours(0, 0, 0, 0); // Устанавливаем время на начало дня\n\nlet weeklyCount = 0;\n\nfor (const item of items) {\n  if (item.json.Timestamp) {\n    const executionDate = new Date(item.json.Timestamp);\n    // Проверяем, что дата выполнения больше или равна началу этой недели\n    if (executionDate >= startOfWeek) {\n      weeklyCount++;\n    }\n  }\n}\n\nreturn [{\n  json: {\n    weeklyCount: weeklyCount\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4432,
+        1088
+      ],
+      "id": "8f18d6ec-6c35-4b3d-92b2-2db210403790",
+      "name": "Count Weekly Sites1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "18aa5014-5b8a-456e-853f-7c3acb178ce4",
+              "leftValue": "={{ $json.weeklyCount }}",
+              "rightValue": 35,
+              "operator": {
+                "type": "number",
+                "operation": "lt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -4208,
+        1088
+      ],
+      "id": "ef9eb97c-db0e-45c5-b768-cb2fcd86fba1",
+      "name": "If Weekly Limit Not Reached?1"
+    },
+    {
+      "parameters": {
+        "authentication": "privateKey",
+        "command": "=bash ./run.sh \"{{ $('Add sitepath/username').item.json.Query }}\" \"{{ $('Add sitepath/username').item.json.Lang }}\" \"{{ $('Add sitepath/username').item.json.Country }}\" \"{{ $('Add sitepath/username').item.json.Blacklist }}\"",
+        "cwd": "/home/n8n_deploy_user/scripts/seo-analyzer/"
+      },
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        880,
+        1616
+      ],
+      "id": "128471f7-6db2-42ad-b4ee-efdd048345c6",
+      "name": "Run seo-analyzer1",
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "bw62UoJN3oCRczed",
+          "name": "SSH media1"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "privateKey",
+        "resource": "file",
+        "operation": "download",
+        "path": "/home/n8n_deploy_user/scripts/seo-analyzer/contents.txt",
+        "binaryPropertyName": "contents.txt",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        1104,
+        1344
+      ],
+      "id": "908de66f-4c74-4120-b352-4782cb386452",
+      "name": "Download contents.txt1",
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "bw62UoJN3oCRczed",
+          "name": "SSH media1"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "privateKey",
+        "resource": "file",
+        "operation": "download",
+        "path": "/home/n8n_deploy_user/scripts/seo-analyzer/analysis.csv",
+        "binaryPropertyName": "analysis.csv",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        1104,
+        1696
+      ],
+      "id": "8a16ede7-fb6f-497f-8a79-a84c48e2a6b0",
+      "name": "Download analysis.csv1",
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "bw62UoJN3oCRczed",
+          "name": "SSH media1"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "binaryPropertyName": "analysis.csv",
+        "destinationKey": "analysis_data",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        1328,
+        1696
+      ],
+      "id": "c7d9f24d-234a-48ae-a9e0-ae8d6199855d",
+      "name": "Extract from File2"
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "binaryPropertyName": "contents.txt",
+        "destinationKey": "contents_data",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        1328,
+        1344
+      ],
+      "id": "97106b18-70a9-4db4-85e5-f99d1960c1c4",
+      "name": "Extract from File3"
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code node — robust Gemini → [{ id, slug, prompt, width, height }]\n// FINAL VERSION: Formats output specifically for the Gemini node's batch image generation.\n\nfunction readGeminiText(j) {\n  // Try the common shapes in order\n  return (\n    j?.content?.parts?.[0]?.text ??\n    j?.candidates?.[0]?.content?.parts?.[0]?.text ??\n    j?.text ??\n    j?.message?.content ??\n    null\n  );\n}\n\nfunction tryParseArray(raw) {\n  if (raw == null) return null;\n  const str = String(raw).trim();\n  // 1) direct JSON\n  try { \n    const parsed = JSON.parse(str);\n    return Array.isArray(parsed) ? parsed : null;\n  } catch (_) {}\n  // 2) find first JSON array in text\n  const m = str.match(/\\[[\\s\\S]*\\]/);\n  if (!m) return null;\n  try {\n    const parsed = JSON.parse(m[0]);\n    return Array.isArray(parsed) ? parsed : null;\n  } catch (_) {\n    return null;\n  }\n}\n\nfunction sanitizeSlug(s) {\n  return String(s || '')\n    .toLowerCase()\n    .replace(/[^\\p{Letter}\\p{Number}\\-]+/gu, '-')\n    .replace(/-+/g, '-')\n    .replace(/^-|-$/g, '');\n}\n\nfunction arToSize(ar) {\n  const map = {\n    '16:9': [1280, 720], '9:16': [720, 1280], '4:3':  [1200, 900],\n    '3:2':  [1200, 800], '1:1':  [1024, 1024],\n  };\n  return map[ar] || [1024, 1024];\n}\n\nfunction deriveSizeFromPrompt(prompt, fallbackW, fallbackH) {\n  const m = String(prompt).match(/--ar\\s+(\\d+:\\d+)/i);\n  if (m) return arToSize(m[1]);\n  return [fallbackW ?? 1024, fallbackH ?? 1024];\n}\n\n// This function now creates the EXACT structure the Gemini node expects.\nfunction normalizeOne(x, idx) {\n  const id = x.img_id ?? x.id ?? String(idx + 1);\n  const slug = sanitizeSlug(x.slug ?? x.title ?? x.name ?? `item-${id}`);\n  let promptText = String(x.prompt ?? x.text ?? x.description ?? '').trim();\n\n  let width = Number(x.width) || null;\n  let height = Number(x.height) || null;\n  const arMatch = promptText.match(/--ar\\s+(\\S+)/i);\n  if (arMatch) promptText = promptText.replace(/--ar\\s+\\S+/i, '').trim();\n  [width, height] = deriveSizeFromPrompt(promptText, width, height);\n\n  if (!promptText) throw new Error(`Элемент без prompt (slug=\"${slug}\")`);\n  \n  // *** ГЛАВНОЕ ИЗМЕНЕНИЕ ***\n  // Создаем объект json, содержащий метаданные (id, slug) И\n  // обязательную структуру 'content.parts' для промпта.\n  return { \n    json: { \n      id, \n      slug, \n      width, \n      height, \n      content: { \n        parts: [{ text: promptText }] \n      } \n    } \n  };\n}\n\n// ---- MAIN ----\nconst items = $input.all();\nconst out = [];\n\nfor (const it of items) {\n  const j = it.json || {};\n  \n  // Case A: Pass-through for items that already have a prompt.\n  // We'll normalize them to the required structure.\n  if (j.prompt && (j.slug || j.id)) {\n    out.push(normalizeOne(j, out.length));\n    continue;\n  }\n\n  // Case B: Extract from a raw Gemini text response.\n  const raw = readGeminiText(j);\n\n  // B1: If raw is a single prompt string\n  if (raw && !raw.trim().startsWith('[')) {\n    out.push(normalizeOne({ ...j, prompt: raw }, out.length));\n    continue;\n  }\n\n  // B2: If raw contains a JSON array\n  const arr = tryParseArray(raw);\n  if (arr) {\n    const list = (arr[0] && Array.isArray(arr[0].images)) ? arr[0].images : arr;\n    for (const itemData of list) {\n      out.push(normalizeOne(itemData, out.length));\n    }\n    continue;\n  }\n}\n\nif (out.length === 0) {\n  throw new Error('Парсер не нашёл ни одного валидного элемента для генерации.');\n}\n\nreturn out;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5200,
+        1376
+      ],
+      "id": "077adf4b-bffc-4557-8c81-a9b70e79f44c",
+      "name": "Парсер Gemini1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Получаем все компоненты из предыдущих узлов\nconst htmlItem = $('HTML-Верстальщик').first();\nconst cssItem = $('Generate CSS').first();\nconst jsItem = $('Generate JS').first();\nconst currentYear = new Date().getFullYear();\n\n// 2. Проверяем, что все данные пришли, чтобы избежать ошибок\nif (!htmlItem || !cssItem || !jsItem) {\n  throw new Error(\"Один из компонентов для сборки (HTML, CSS, JS) отсутствует.\");\n}\nlet allHtml = htmlItem.json.content.parts.map(part => part.text ).join('\\n')\n\n// Извлекаем чистый текст из ответов LLM gemini\nlet finalHtml = allHtml.replace(/^```html\\s*|```\\s*$/g, '').trim().replace(/\\b(20[2-9]\\d)\\b/g, currentYear.toString());\nconst finalJs = jsItem.json.content.parts[0].text.replace(/^```javascript\\s*|```\\s*$/g, '').trim();\nconst finalCss = cssItem.json.content.parts[0].text.replace(/^```css\\s*|```\\s*$/g, '').trim();\n\n// --- НАЧАЛО НОВОЙ ЛОГИКИ ---\n// Ищем \"casinoN utan svensk licens\" без учета регистра и заменяем, сохраняя исходный регистр слова \"casino\"\nfinalHtml = finalHtml.replace(/\\b(casino)N(\\sutan\\ssvensk\\slicens)\\b/gi, (match, p1, p2) => {\n    // p1 будет \"casino\" (или \"Casino\", \"CASINO\" и т.д. в зависимости от найденного)\n    // p2 будет \" utan svensk licens\"\n    return p1 + p2; // Просто соединяем две части, удаляя \"N\"\n});\n// --- КОНЕЦ НОВОЙ ЛОГИКИ ---\n\n// 3. Собираем финальный HTML-файл\nlet assembledHtml = finalHtml;\n\n// Вставляем CSS прямо перед закрывающим тегом </head>\nassembledHtml = assembledHtml.replace(/(<\\/head>)/i, `<style>${finalCss}</style>$1`);\n\n// Вставляем JS прямо перед закрывающим тегом </body>\nassembledHtml = assembledHtml.replace(/(<\\/body>)/i, `<script type=\"module\" defer>${finalJs}</script>$1`);\n\n// 4. Возвращаем результат в формате, который ожидает ваш следующий узел 'Merge1'\n// Мы создаем binary-объект, готовый для архивации\nreturn [{\n  json: {\n    // Передаем дальше исходные данные, если они нужны\n    ...$input.first().json,\n    fileName: 'index.html' // Явно указываем имя файла\n  },\n  binary: {\n    index_html: { // <--- Уникальное имя!\n      data: Buffer.from(assembledHtml, 'utf8').toString('base64'),\n      fileName: 'index.html',\n      mimeType: 'text/html'\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6064,
+        1808
+      ],
+      "id": "098a9201-f370-4cf4-b84f-484ff6e39ec6",
+      "name": "parse index.html1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Преобразуем вход (могут прийти: несколько айтемов или один айтем с массивом)\nconst inputItems = [$input.first()]\nlet payloads = inputItems.map(i => i.json);\nif (inputItems.length === 1 && Array.isArray(inputItems[0].json)) {\n  payloads = inputItems[0].json;\n}\n\nfunction extractText(payload) {\n  if (typeof payload === 'string') return payload;\n  if (payload?.content?.parts?.[0]?.text) return payload.content.parts[0].text;\n  if (payload?.text) return payload.text;\n  // на всякий случай\n  return JSON.stringify(payload);\n}\n\nfunction stripCodeFence(s) {\n  // срезаем начальный ```html/``` и конечные ```\n  return String(s)\n    .replace(/^\\s*```(?:html)?\\s*\\n?/, '')\n    .replace(/\\n?\\s*```\\s*$/, '')\n    .trim();\n}\n\nfunction slugify(s) {\n  return String(s)\n    .toLowerCase()\n    .replace(/&/g, ' och ')                 // & → «och» (швед.)\n    .replace(/[^a-z0-9\\u00c0-\\u024f\\s-]+/gi, '') // латиница + диакритики\n    .replace(/\\s+/g, '-')\n    .replace(/-+/g, '-')\n    .replace(/^-|-$/g, '') || 'gemini-page';\n}\n\nconst out = [];\n\nfor (let i = 0; i < payloads.length; i++) {\n  const textRaw = extractText(payloads[i]);\n  let html = stripCodeFence(textRaw);\n\n  // если пришёл не полный HTML — обернём\n  if (!/<!doctype html>/i.test(html) && !/<html[\\s>]/i.test(html)) {\n    html = `<!doctype html><html><head><meta charset=\"utf-8\"><title>Gemini Page</title></head><body>${html}</body></html>`;\n  }\n\n  const titleMatch = html.match(/<title>([\\s\\S]*?)<\\/title>/i);\n  const title = (titleMatch && titleMatch[1].trim()) || 'Gemini Page';\n  const fileName = `404.html`;\n\n  out.push({\n    json: { fileName, title },\n    binary: {\n      file_404: { // <--- Уникальное имя!\n        data: Buffer.from(html, 'utf8').toString('base64'),\n        fileName: fileName,\n        mimeType: 'text/html'\n      }\n    }\n  });\n}\n\nreturn out;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6064,
+        1568
+      ],
+      "id": "d12d8d8f-e485-40b6-8084-c224d06300a6",
+      "name": "parse 404.html1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Явно берем данные из узла \"Code in JavaScript1\", где они были подготовлены.\n// Это делает код независимым от промежуточных узлов (например, SSH).\nconst sourceItem = $('Extract the domain from the table').first();\n\n// Проверяем, что данные из исходного узла существуют\nif (!sourceItem || !sourceItem.json || !sourceItem.json.domain) {\n  // Если данных нет, возвращаем пустой результат, чтобы не останавливать workflow.\n  // Можно также выбросить ошибку: throw new Error(\"Не найден домен в узле 'Code in JavaScript1'\");\n  return []; \n}\n\n// Теперь мы можем безопасно использовать данные.\nconst jsonData = sourceItem.json;\nconst BASE_URL = 'https://' + jsonData.domain;\n\nconst robotsContent = `User-agent: *\nAllow: /\nSitemap: ${BASE_URL.replace(/\\/$/,'')}/sitemap.xml\n`.trim() + '\\n';\n\n// Собираем и возвращаем итоговый item.\nreturn [{\n  json: { \n    // Передаем дальше все исходные данные на всякий случай.\n    ...jsonData,\n    fileName: 'robots.txt', \n    kind: 'robots' \n  },\n  binary: {\n    // Используем уникальный ключ 'robots_txt' во избежание конфликтов при слиянии.\n    robots_txt: {\n      data: Buffer.from(robotsContent, 'utf8').toString('base64'),\n      fileName: 'robots.txt',\n      mimeType: 'text/plain'\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6064,
+        800
+      ],
+      "id": "31168ef0-485e-4865-975d-ad0790d1100e",
+      "name": "Make robots.txt1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Явно берем данные из узла \"Code in JavaScript1\", где они были подготовлены.\nconst sourceItem = $('Extract the domain from the table').first();\n\n// Проверяем, что данные из исходного узла существуют\nif (!sourceItem || !sourceItem.json || !sourceItem.json.domain) {\n  // Если данных нет, возвращаем пустой результат.\n  return []; \n}\n\n// Теперь мы можем безопасно использовать данные.\nconst jsonData = sourceItem.json;\nconst BASE_URL = 'https://' + jsonData.domain;\nconst now = new Date().toISOString().slice(0, 10); // Текущая дата в формате YYYY-MM-DD\n\nconst sitemapContent = `<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n  <url><loc>${BASE_URL.replace(/\\/$/,'')}/</loc><lastmod>${now}</lastmod><priority>1.0</priority></url>\n</urlset>\n`;\n\n// Собираем и возвращаем итоговый item.\nreturn [{\n  json: { \n    // Передаем дальше все исходные данные\n    ...jsonData,\n    fileName: 'sitemap.xml', \n    kind: 'sitemap' \n  },\n  binary: {\n    // Используем уникальный ключ 'sitemap_xml'\n    sitemap_xml: {\n      data: Buffer.from(sitemapContent, 'utf8').toString('base64'),\n      fileName: 'sitemap.xml',\n      mimeType: 'application/xml'\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6064,
+        992
+      ],
+      "id": "ec960550-10d3-419e-965a-3f4ffb415566",
+      "name": "Make sitemap.xml1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Получаем исходные данные из самого надежного источника - узла \"Code in JavaScript1\".\nconst sourceItem = $('Extract the domain from the table').first();\n\n// 2. Если по какой-то причине данных нет, прекращаем выполнение, чтобы избежать ошибок.\nif (!sourceItem || !sourceItem.json) {\n  return []; \n}\nconst jsonData = sourceItem.json;\nconst rawUrl = jsonData.URL || '';\n\n// 3. Создаем базовую часть .htaccess, которая нужна всегда.\nlet htaccessContent = `\nErrorDocument 404 /404.html\n\nRewriteEngine on\nRewriteBase /\n\nRewriteCond %{REQUEST_URI} !/$\nRewriteCond %{REQUEST_URI} !\\\\.[a-zA-Z0-9]{2,5}$\nRewriteCond %{REQUEST_URI} !^$\nRewriteRule .* https://%{HTTP_HOST}%{REQUEST_URI}/ [R=301,L]\n\nRewriteCond %{QUERY_STRING} .\nRewriteRule .* https://%{HTTP_HOST}/$0? [R=301,L]\n`.trim();\n\n// 4. Проверяем условие: если в исходном URL есть \"www\", добавляем блок для редиректа.\nif (rawUrl.includes('www.')) {\n  const wwwRedirectBlock = `\n# Force WWW (redirect non-www to www)\nRewriteCond %{HTTP_HOST} !^www\\\\.\nRewriteRule ^(.*)$ https://www.%{HTTP_HOST}/$1 [R=301,L]\n`.trim();\n\n  // Вставляем блок после RewriteBase /\n  htaccessContent = htaccessContent.replace(\n    'RewriteBase /', \n    'RewriteBase /\\n\\n' + wwwRedirectBlock\n  );\n}\n\n// 5. Готовим и возвращаем итоговый item, сохраняя все исходные данные.\nconst binaryData = {\n  data: Buffer.from(htaccessContent, 'utf8').toString('base64'),\n  fileName: '.htaccess',\n  mimeType: 'text/plain'\n};\n\nreturn [{\n  json: {\n    ...jsonData, // Сохраняем все данные, которые были до этого\n    fileName: '.htaccess',\n    kind: 'htaccess'\n  },\nbinary: {\n  htaccess: { // <--- Уникальное имя!\n    data: Buffer.from(htaccessContent, 'utf8').toString('base64'),\n    fileName: '.htaccess',\n    mimeType: 'text/plain'\n  }\n}\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6064,
+        1184
+      ],
+      "id": "c577aa41-9a8a-43da-a41a-1c45b09beaf1",
+      "name": "Make Htaccess1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Получаем все пакеты данных (items), которые пришли от узла \"Edit Image\"\nconst imageItems = $input.all();\n// Получаем ВСЕ пакеты данных из исходного узла \"Парсер Gemini\" для получения слагов\nconst slugItems = $items('Парсер Gemini1');\n\nif (imageItems.length !== slugItems.length) {\n  throw new Error(`Несоответствие количества элементов: получено ${imageItems.length} изображений, но ожидалось ${slugItems.length} слагов.`);\n}\n\nfor (let i = 0; i < imageItems.length; i++) {\n  const currentImageItem = imageItems[i];\n  \n  // Берем slug из соответствующего по порядку пакета данных из \"Парсер Gemini\"\n  const slug = slugItems[i].json.slug;\n\n  if (!slug) {\n    currentImageItem.json.error = `Не удалось найти slug для элемента с индексом ${i}`;\n    continue;\n  }\n\n  // Проверяем, что в текущем пакете есть бинарные данные (уже оптимизированные)\n  if (currentImageItem.binary && currentImageItem.binary.data) {\n    // Просто переименовываем файл. \n    // Узел \"Edit Image\" уже изменил формат на WebP, так что мы просто ставим правильное расширение.\n    currentImageItem.binary.data.fileName = `${slug}.webp`;\n  } else {\n    currentImageItem.json.error = `Бинарные данные не найдены для элемента со слагом: ${slug}`;\n  }\n}\n\n// Возвращаем измененные пакеты данных\nreturn imageItems;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6064,
+        1376
+      ],
+      "id": "8084f23e-316b-4a37-8da0-6ee158028a63",
+      "name": "Parse images1"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=# РОЛЬ\nТы — AI Арт-директор и Промпт-инженер. Твоя специализация — создание визуального контента, который идеально соответствует текстовому наполнению и имеет единый, последовательный стиль.\n\n# КОНТЕКСТ\nУ тебя есть три источника информации:\n1.  **Дизайн-план (JSON):** Это главный документ. Он содержит ОБЯЗАТЕЛЬНЫЙ глобальный стиль для всех изображений в ключе `image_style_prompt`. Это твоя основная директива.\n2.  **Готовый текст статьи:** Полный текст, который будет опубликован. Ты используешь его для понимания контекста каждого изображения.\n3.  **Задания на изображения из ТЗ:** Раздел из технического задания, где описано, какие изображения и в каких разделах нужны. Это твое базовое задание.\n\n# ЗАДАЧА И ШАГИ\nТвоя задача — проанализировать все три источника и для КАЖДОГО изображения из ТЗ сгенерировать один мощный, детализированный промпт для нейросети-художника.\n\nДействуй строго по шагам для каждого изображения:\n\n### Шаг 1: Извлечение Глобального Стиля\n*   Найди в \"Дизайн-плане\" ключ `image_style_prompt`. Запомни его значение. Эта строка должна быть началом КАЖДОГО промпта, который ты создашь.\n\n### Шаг 2: Анализ Контекста и Обогащение\n*   Возьми одно изображение из таблицы в \"Заданиях на изображения из ТЗ\".\n*   Найди в \"Готовом тексте статьи\" раздел, указанный в колонке \"Раздел для вставки\".\n*   Внимательно прочитай 2-3 абзаца в этом разделе. Определи ключевые сущности, настроение и тезисы, которые должен усилить визуал.\n*   Обогати базовое \"Описание для художника\" из ТЗ деталями из статьи. (Например, если описание \"иконка безопасности\", а в тексте речь о защите данных, обогащенное описание будет \"иконка, символизирующая цифровую защиту данных от хакеров\").\n\n### Шаг 3: Формирование Финального Промпта (КРИТИЧЕСКИ ВАЖНО)\n*   Собери все детали в единый, структурированный промпт на английском языке по СТРОГОЙ формуле:\n    `[Значение из image_style_prompt] + \", \" + [Обогащенное описание из Шага 2] + \", \" + [Технические детали]`\n\n*   **Пример:**\n    *   `image_style_prompt` из JSON: `Classic oil painting, in the style of Rembrandt, chiaroscuro lighting`\n    *   Задание из ТЗ: Изобразить \"Надежный кошелек\".\n    *   Контекст из статьи: Речь о долгосрочном и безопасном хранении активов.\n    *   **Финальный промпт:** `Classic oil painting, in the style of Rembrandt, chiaroscuro lighting, a sturdy leather-bound wallet resting on a dark oak table, a single beam of light illuminates its detailed stitching, symbolizing security and longevity, hyper-detailed, masterpiece, --ar 16:9`\n\n# ФОРМАТ ВЫВОДА\nПредоставь ответ в виде чистого JSON-массива. Никаких объяснений, комментариев или ```json.\n`[{\"slug\":\"\", \"id\":\"\", \"prompt\":\"\"}]`\n\n---\n\n### Дизайн-план (JSON):\n{{ $json.content.parts[0].text }}\n\n### Готовый текст статьи:\n{{ $('Написание контента').item.json.content.parts.map(part => part.text ) }}\n\n### Задания на изображения из ТЗ:\n{{ $('Разработка ТЗ').item.json.message?.content ?? $('Разработка ТЗ').item.json.content?.parts?.[0]?.text }}\n"
+            }
+          ]
+        },
+        "jsonOutput": true,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        4784,
+        1376
+      ],
+      "id": "1b649e78-0aa8-4873-a792-45a8ab978a6a",
+      "name": "Генерация промптов на изображения1",
+      "alwaysOutputData": false,
+      "retryOnFail": false,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "googlePalmApi": {
+          "id": "aDoJFjt0lh5UoG42",
+          "name": "alfasearch.seo@gmail.com"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=# РОЛЬ\nТы — AI-система, эксперт по теории цвета и веб-дизайну. Твоя единственная задача — преобразовать текстовое описание палитры в конкретный JSON-объект с цветами.\n\n# ЗАДАЧА\nНа основе текстового описания из `color_palette.description`, сгенерируй JSON-объект с 7 конкретными, готовыми для CSS цветами в формате OKLCH.\n\n# СТРОГИЕ ПРАВИЛА\n1.  **Формат:** Все цвета должны быть в формате `oklch(L C H)`.\n2.  **Контраст:** Обеспечь высокий контраст (минимум AA) между `bg` и `fg`, а также между `bg2` и `fg2`.\n3.  **Ключи:** Используй ТОЛЬКО следующие 7 ключей:\n    - `bg`: Основной, самый темный или светлый фон.\n    - `fg`: Основной цвет текста, контрастный к `bg`.\n    - `bg2`: Второстепенный фон, чуть отличающийся от `bg`.\n    - `fg2`: Второстепенный цвет текста, для менее важных элементов.\n    - `accent1`: Главный, самый яркий акцентный цвет (кнопки, ссылки).\n    - `accent2`: Вторичный, менее насыщенный акцент.\n    - `muted`: Приглушенный цвет для рамок, границ или фонов выносок.\n\n# ФОРМАТ ВЫВОДА\nВерни ТОЛЬКО валидный JSON-объект, содержащий 7 ключей с цветами. Ничего больше. Без ```json и комментариев.\n\n### Входной JSON с описанием палитры:\n{{ $json.content.parts[0].text }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        3632,
+        1616
+      ],
+      "id": "cd699750-23b7-423a-ad2f-7ba1487b31cc",
+      "name": "Генератор Цветовой Палитры1",
+      "alwaysOutputData": false,
+      "retryOnFail": false,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "googlePalmApi": {
+          "id": "aDoJFjt0lh5UoG42",
+          "name": "alfasearch.seo@gmail.com"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "numberInputs": 3
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        5488,
+        1696
+      ],
+      "id": "65aaa6a4-0be4-4459-8af8-9c1ab0ecc191",
+      "name": "Merge5",
+      "alwaysOutputData": true,
+      "retryOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "resize",
+        "width": "={{ $('Парсер Gemini1').item.json.width }}",
+        "height": "={{ $('Парсер Gemini1').item.json.height }}",
+        "options": {
+          "fileName": "={{ $('Парсер Gemini1').item.json.slug }}",
+          "format": "webp"
+        }
+      },
+      "type": "n8n-nodes-base.editImage",
+      "typeVersion": 1,
+      "position": [
+        5776,
+        1376
+      ],
+      "id": "12a129ae-8a0b-4f72-931a-6158b9d621ff",
+      "name": "Edit Image1",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "authentication": "privateKey",
+        "command": "=rm {{ $('Compression').item.json.zipName }}",
+        "cwd": "=/var/www/{{ $(\"Add sitepath/username\").all()[0].json.username }}/data/www/"
+      },
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        8752,
+        1248
+      ],
+      "id": "df590b28-6d62-4d05-a4bf-c90a6072ab5d",
+      "name": "Remove zip1",
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "bw62UoJN3oCRczed",
+          "name": "SSH media1"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "privateKey",
+        "command": "=unzip -o {{ $('Compression').item.json.zipName }} -d {{ $(\"Add sitepath/username\").all()[0].json.Host  }}",
+        "cwd": "=/var/www/{{ $(\"Add sitepath/username\").all()[0].json.username }}/data/www/"
+      },
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        8528,
+        1248
+      ],
+      "id": "63479dd9-2f91-40a8-9fab-c2c4c3364597",
+      "name": "unpacked zip1",
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "bw62UoJN3oCRczed",
+          "name": "SSH media1"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "privateKey",
+        "command": "=sudo chown -R {{ $(\"Add sitepath/username\").all()[0].json.username }}:{{ $(\"Add sitepath/username\").all()[0].json.username }} /var/www/{{ $(\"Add sitepath/username\").all()[0].json.username }}/data/www/ \n",
+        "cwd": "=/var/www/{{ $(\"Add sitepath/username\").all()[0].json.username }}/data/www/"
+      },
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        8976,
+        1248
+      ],
+      "id": "0e593fa5-ca0d-46c2-9925-c9fcd919de6c",
+      "name": "Back old user1",
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "bw62UoJN3oCRczed",
+          "name": "SSH media1"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "17h2hmvsqi5-Tg6gCArWIGoBogq5b-_GMkNrDGT7foU0",
+          "mode": "list",
+          "cachedResultName": "8n8 pbn db",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/17h2hmvsqi5-Tg6gCArWIGoBogq5b-_GMkNrDGT7foU0/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1777814691,
+          "mode": "list",
+          "cachedResultName": "SiteWebArchiveGeneratorLog",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/17h2hmvsqi5-Tg6gCArWIGoBogq5b-_GMkNrDGT7foU0/edit#gid=1777814691"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Timestamp": "={{ $now }}"
+          },
+          "matchingColumns": [
+            "Timestamp"
+          ],
+          "schema": [
+            {
+              "id": "Timestamp",
+              "displayName": "Timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        9424,
+        1248
+      ],
+      "id": "84b7b7d2-b8a6-4711-9c7b-0d631bfead83",
+      "name": "Append to Weekly Log1",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "8y3nvLcGKE7rEm4i",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash-image",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash-image (Nano Banana)"
+        },
+        "prompt": "=={{ $json.content.parts[0].text }}",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        5488,
+        1376
+      ],
+      "id": "2c5c2c46-c941-4f65-840e-268adef53522",
+      "name": "Generate an image1",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "googlePalmApi": {
+          "id": "aDoJFjt0lh5UoG42",
+          "name": "alfasearch.seo@gmail.com"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1552,
+        1616
+      ],
+      "id": "5952591d-78e9-45b2-a3c9-f7a9af46ec81",
+      "name": "Merge6"
+    },
+    {
+      "parameters": {
+        "numberInputs": 6
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        6288,
+        1184
+      ],
+      "id": "1c5b66a2-25c6-45c4-ae38-db6ab31e181d",
+      "name": "Merge7",
+      "alwaysOutputData": true,
+      "retryOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Получаем все исходные строки из таблицы\nconst tableRows = $('Get Table Data').all();\n\n// 2. Получаем данные от ИИ (Query, Topic и т.д.)\nconst generatedItems = $input.all();\n\n// 3. Создаем карту (Map) для поиска по row_number\nconst updatesMap = {};\n\nfor (const item of generatedItems) {\n  const rowNum = item.json.row_number;\n  if (rowNum) {\n    updatesMap[rowNum] = {\n      query: item.json.selectedQuery,\n      topic: item.json.cleanTopic || item.json.topic\n    };\n  }\n}\n\n// Дополнительно: данные из \"Convert to json\"\nconst summaryItems = $('Convert to json').all();\nconst summaryMap = {};\nfor (const item of summaryItems) {\n    if (item.json.row_number) {\n        summaryMap[item.json.row_number] = item.json;\n    }\n}\n\n// 4. Обновляем строки\nfor (let i = 0; i < tableRows.length; i++) {\n  const row = tableRows[i];\n  const rowNum = row.json.row_number;\n  \n  // --- Извлечение домена ---\n  const url = row.json.URL ? String(row.json.URL).trim() : \"\";\n  if (url) {\n    let hostname = url.replace(/^[a-zA-Z]+:\\/\\//, \"\").split(\"/\")[0];\n    if (hostname.startsWith(\"www.\")) hostname = hostname.slice(4);\n    row.json.domain = hostname;\n  }\n  // --------------------------\n\n  // Попытка 1: Найти данные по row_number\n  let aiData = updatesMap[rowNum];\n  \n  // Попытка 2 (Фоллбэк): Если по номеру не нашли, берем по индексу (порядку)\n  // Это работает, если количество входящих и исходящих элементов совпадает\n  if (!aiData && generatedItems.length === tableRows.length) {\n      const item = generatedItems[i];\n      if (item) {\n          aiData = {\n              query: item.json.selectedQuery,\n              topic: item.json.cleanTopic || item.json.topic\n          };\n      }\n  }\n\n  // Применяем данные AI (Query и Тематика)\n  if (aiData) {\n    // Записываем, если в таблице пусто ИЛИ если хотим перезаписать (сейчас настроено на заполнение пустых)\n    if (!row.json['Query'] && aiData.query) {\n        row.json['Query'] = aiData.query;\n    }\n    if (!row.json['Тематика'] && aiData.topic) {\n        row.json['Тематика'] = aiData.topic;\n    }\n  }\n  \n  // Применяем данные WebArchive\n  let sumData = summaryMap[rowNum];\n  // Фоллбэк для summary по индексу\n  if (!sumData && summaryItems.length === tableRows.length) {\n      sumData = summaryItems[i] ? summaryItems[i].json : null;\n  }\n\n  if (sumData) {\n      if (!row.json['WebArchive summary']) row.json['WebArchive summary'] = sumData.summary;\n      if (!row.json['WebArchive clean_text']) row.json['WebArchive clean_text'] = sumData.clean_text;\n      // Если тематика все еще пуста, берем из summary\n      if (!row.json['Тематика'] && sumData.topic) row.json['Тематика'] = sumData.topic;\n  }\n}\n\nreturn tableRows;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        1088
+      ],
+      "id": "29b0af5c-bd95-46ac-ab6b-90575d6056b6",
+      "name": "Extract the domain from the table"
+    },
+    {
+      "parameters": {
+        "authentication": "privateKey",
+        "command": "=sudo bash /home/n8n_deploy_user/scripts/find_site_info.sh \"{{ $json.domain }}\"",
+        "cwd": "/home/n8n_deploy_user/scripts/"
+      },
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        432,
+        1088
+      ],
+      "id": "2e30e22d-edcf-4599-9ec6-4581c7ec7764",
+      "name": "Find username/sitepath",
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "bw62UoJN3oCRczed",
+          "name": "SSH media1"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Получаем результаты от SSH (предыдущий узел)\nconst sshItems = $input.all();\n\n// 2. Получаем исходные данные с Тематикой и Query (из узла перед SSH)\n// Важно: убедитесь, что имя узла в кавычках точное\nconst sourceItems = $items('Extract the domain from the table');\n\nconst result = [];\n\nfor (let i = 0; i < sshItems.length; i++) {\n  // Берем результат SSH для текущей строки\n  const sshItem = sshItems[i];\n  \n  // Берем исходные данные для ТОЙ ЖЕ строки (по индексу)\n  // Если вдруг индексы не совпадут (редко), берем пустой объект\n  const sourceData = sourceItems[i] ? sourceItems[i].json : {};\n\n  // Парсим ответ сервера\n  let serverInfo = {};\n  const stdout = sshItem.json.stdout;\n\n  if (stdout) {\n    try {\n      serverInfo = JSON.parse(stdout);\n      if (serverInfo.error) {\n        // Если сервер вернул JSON с ошибкой, сохраняем её\n        serverInfo = { ...serverInfo, ssh_error: serverInfo.error };\n      }\n    } catch (e) {\n      serverInfo = { ssh_error: `Failed to parse server response: ${e.message}` };\n    }\n  } else {\n    serverInfo = { ssh_error: \"SSH command returned no output.\" };\n  }\n\n  // 3. ОБЪЕДИНЕНИЕ\n  // Мы создаем новый объект, который содержит:\n  // - Все исходные поля (URL, Тематика, Query, row_number...)\n  // - Поля, полученные от сервера (username, sitepath...)\n  result.push({\n    json: {\n      ...sourceData,  // <-- Вот это возвращает ваши потерянные поля\n      ...serverInfo\n    }\n  });\n}\n\nreturn result;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        656,
+        1088
+      ],
+      "id": "f793abe0-9d48-46c2-8ac9-6140753ae90b",
+      "name": "Add sitepath/username"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-pro",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-pro"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=# РОЛЬ\nТы — ведущий SEO-аналитик. Твоя специализация — data-driven анализ поисковой выдачи (SERP) для выявления закономерностей и выигрышных стратегий. Ты работаешь с количественными метриками и качественным анализом текста.\n# ЦЕЛЬ\nПровести исчерпывающий анализ контента топ-10 сайтов по поисковому запросу \"{{ $('Add sitepath/username').item.json.Query }}\", синтезировав данные из двух источников: таблицы с метриками и текстового содержимого страниц. Твоя задача — сформулировать структурированные и четкие выводы, которые лягут в основу для создания технического задания на следующем этапе.\n\n# ВХОДНЫЕ ДАННЫЕ\nЯ предоставлю тебе данные в двух частях:\n\n**Часть 1: Таблица с метриками.** Это будут данные в формате, похожем на CSV или просто текстовое описание таблицы, содержащие колонки, такие как `url`, `word_count`, `h2_count`, `h3_count`, `tables_count`, `lists_count`, `images_count`, `faq_schema` и другие. *Примечание: данные могут быть результатом OCR и содержать неточности, интерпретируй их логически.*\n\n**Часть 2: Текстовое содержимое.** Это будет единый текстовый блок, где контент каждого сайта разделен маркерами `--- САЙТ 1 ---`, `--- САЙТ 2 ---`, и так далее.\n\n# ЗАДАЧА И ШАГИ АНАЛИЗА\n**КРИТИЧЕСКОЕ ПРАВИЛО ОБРАБОТКИ ДАТ:** При анализе заголовков (`title`) и текстов, если ты встречаешь конкретный год или месяц (например, \"2025\", \"september\"), ты **ОБЯЗАН ИГНОРИРОВАТЬ** его. В своих выводах не предлагай использовать конкретные даты из исходных данных. Отмечай лишь, что тема является \"чувствительной ко времени\". Это строгий запрет для предотвращения распространения устаревшей информации.\n\nДействуй строго по шагам, объединяя данные из таблицы и текста на каждом этапе. Твой результат должен быть отчетом по этим шагам.\n\n### Шаг 1: Сводный анализ и определение интента\n*   **Поисковый интент:** Проанализировав заголовки (`title` из таблицы) и бегло просмотрев текстовое содержимое, определи основной интент пользователя (информационный, коммерческий, транзакционный, навигационный).\n*   **Тип контента:** Какой тип контента преобладает в топе? (статья-руководство, список/рейтинг, обзор, лендинг, категория товаров). Используй `og_type` из таблицы, если он есть, и содержимое текстов.\n*   **Стиль и тон (Tone of Voice):** Проанализировав тексты, опиши общий стиль (экспертный, разговорный, формальный, научный) и определи целевую аудиторию (новички, профессионалы, широкая аудитория).\n\n### Шаг 2: Глубокий data-driven анализ контента\n*   **Объем контента:** Используя данные из колонки `word_count`, определи минимальный, максимальный и средний объем текста. Выдели лидеров и аутсайдеров по объему.\n*   **Структура и глубина:**\n    1.  Используя колонки `h2_count`, `h3_count`, `h4_count`, определи среднее количество и глубину вложенности заголовков (например, \"в среднем 8 H2 и 15 H3\").\n    2.  Проанализировав тексты, выпиши наиболее часто встречающиеся темы и вопросы, которые раскрываются в заголовках (H2, H3). Это поможет понять стандартную структуру для топа.\n*   **Обязательные темы (Must-have):** На основе анализа текстового содержимого, выдели семантические блоки и темы, которые присутствуют на 8-9 из 10 сайтов. Это ядро контента, без которого статья будет неполной.\n*   **Точки роста (Opportunities):** Найди уникальные разделы, темы или ответы на вопросы, которые есть только у 1-2 конкурентов. Это то, что позволит сделать контент полнее и лучше.\n\n### Шаг 3: Анализ форматирования и элементов вовлечения\nИспользуя данные из таблицы и подтверждая их текстом, проведи анализ:\n*   **Таблицы и Списки:** Используй `tables_count` и `lists_count`. Оцени, насколько активно конкуренты используют эти элементы. В текстовом контенте посмотри, *какую именно информацию* они структурируют в таблицах (сравнения, характеристики, цены, параметры) и списках (преимущества, шаги, компоненты).\n*   **Мультимедиа**: Используй images_count и videos_count.\n1. Оцени, насколько контент визуализирован, и укажи среднее, минимальное и максимальное количество изображений.\n2. Проанализировав тексты и описания вокруг изображений (если они есть), определи основные типы используемых изображений (например: скриншоты интерфейса, инфографика, стилизованные иконки, фотографии продукта, стоковые фото людей).\n\n*   **Микроразметка:** Проверь колонки `faq_schema`, `howto_schema`, `breadcrumbs`. Укажи, кто из конкурентов и какую разметку использует для получения расширенных сниппетов.\n\n# ФОРМАТ ВЫВОДА\nПредоставь ответ в виде единого, структурированного отчета в формате Markdown под заголовком **\"Ключевые выводы по анализу конкурентов\"**, без комментариве. Отчет должен содержать только выводы твоего анализа по всем шагам, без формирования самого ТЗ. Отчет должен быть на том языке, на котором данные предоставленые из Таблица с метриками, Текстовое содержимое.\n\n### Часть 1: Таблица с метриками:\n\n{{ $json.analysis_data }}\n\n### Часть 2: Текстовое содержимое:\n\n{{ $json.contents_data }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        1776,
+        1616
+      ],
+      "id": "49079132-c520-468f-9349-c7993ab4ebf0",
+      "name": "Анализ конкурентов",
+      "alwaysOutputData": false,
+      "retryOnFail": false,
+      "waitBetweenTries": 5000,
+      "executeOnce": false,
+      "credentials": {
+        "googlePalmApi": {
+          "id": "aDoJFjt0lh5UoG42",
+          "name": "alfasearch.seo@gmail.com"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const NUM_STYLES = 10;\nconst NUM_COLOR_VARIATIONS = 10;\nconst NUM_FONT_VARIATIONS = 10;\nconst NUM_LAYOUT_VARIATIONS = 10;\nconst NUM_IMAGE_STYLES = 4;\nconst NUM_HEADER_ELEMENTS = 4;\nconst NUM_ARCHETYPES = 4;\nconst NUM_FOOTER_VARIANTS = 4; \n\nconst randomId = (max) => Math.floor(Math.random() * max) + 1;\n\nreturn [{\n  json: {\n    style_id: randomId(NUM_STYLES),\n    color_id: randomId(NUM_COLOR_VARIATIONS),\n    font_id: randomId(NUM_FONT_VARIATIONS),\n    layout_id: randomId(NUM_LAYOUT_VARIATIONS),\n    image_style_id: randomId(NUM_IMAGE_STYLES),\n    header_element_id: randomId(NUM_HEADER_ELEMENTS),\n    archetype_id: randomId(NUM_ARCHETYPES),\n    footer_variant_id: randomId(NUM_FOOTER_VARIANTS) \n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2128,
+        1616
+      ],
+      "id": "ed47e779-4fe6-4bd1-8f4f-0e9a0a50c5e6",
+      "name": "Generate Random IDs"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-pro",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-pro"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=# РОЛЬ\nТы — ведущий контент-стратег и SEO-специалист. Твоя задача — трансформировать аналитические данные о конкурентах в четкое, выполнимое и исчерпывающее техническое задание (ТЗ) для копирайтера, строго следуя предопределенным идентификаторам для выбора вариантов.\n\n# КОНТЕКСТ\nНа предыдущем этапе был проведен детальный анализ конкурентов. Теперь твоя задача — использовать эти выводы для создания идеального ТЗ, где все вариативные элементы выбираются на основе предоставленных ID.\n\n# ВХОДНЫЕ ДАННЫЕ\n1.  **\"Ключевые выводы по анализу конкурентов\"**: Структурированный отчет.\n2.  **Идентификаторы выбора (IDs)**: Набор числовых ID для выбора конкретных вариантов дизайна и структуры.\n\n# ЗАДАЧА\n\n**Шаг 0: Выбор и объявление архетипа контента (по ID). ЭТО ОБЯЗАТЕЛЬНЫЙ ПЕРВЫЙ ШАГ.**\nПрочитай `archetype_id` из `<inputs>`. Выбери и объяви **ОДИН** из следующих архетипов, который **ТОЧНО соответствует этому ID**.\n\n-   **ID 1: \"Полное руководство (Ultimate Guide)\"**\n    -   **Цель:** Максимально глубоко и подробно раскрыть тему для новичков и экспертов.\n    -   **Структура:** Классическая, от общего к частному (Что это → Как работает → Преимущества/Недостатки → Продвинутые аспекты → FAQ).\n\n-   **ID 2: \"Сравнительный анализ (Comparison)\"**\n    -   **Цель:** Помочь пользователю выбрать между 2-3 ключевыми альтернативами.\n    -   **Структура:** Основные разделы H2 посвящены сравниваемым объектам. Внутри каждого раздела — одинаковый набор H3 для прямого сравнения. Завершается сводной таблицей и рекомендацией.\n\n-   **ID 3: \"Проблема и Решение (Problem/Solution)\"**\n    -   **Цель:** Сфокусироваться на конкретной \"боли\" пользователя и предложить лучшее решение.\n    -   **Структура:** Начинается с четкого описания проблемы (H2). Далее H2-разделы представляют собой шаги или аспекты решения.\n\n-   **ID 4: \"Мифы и Факты (Mythbusting)\"**\n    -   **Цель:** Развенчать популярные заблуждения и предоставить достоверную информацию.\n    -   **Структура:** План строится вокруг популярных мифов. Каждый H2 — это миф, а контент под ним разоблачает его.\n\n**Шаг 1: Формирование технического задания.**\nНа основе **выбранного по ID архетипа** и предоставленных выводов, сформируй ТЗ. **Структура ТЗ должна СТРОГО соответствовать логике выбранного архетипа и ID из `<inputs>`.**\n\n# СТРУКТУРА ТЗ, КОТОРУЮ НУЖНО СФОРМИРОВАТЬ\n\n**1. Основные параметры:**\n    - **Выбранный архетип:** Укажи здесь название архетипа, который ты выбрал в Шаге 0.\n    - **Концепция логотипа:** Опиши здесь простую, символичную идею для SVG-логотипа, состоящую из 2-3 слов. Идея должна быть напрямую связана с основной темой статьи. (Примеры: \"Щит и звезда\", \"Мозг и нейросеть\", \"Книга и росток\").\n    - **Рекомендуемый объем:** Укажи конкретный диапазон слов, основываясь на среднем значении и объеме лидера из анализа (например, \"от X до Y слов, стремимся к Y\").\n    - **Целевая аудитория и стиль:** Кратко опиши, для кого и как писать, основываясь на выводах об аудитории и Tone of Voice.\n\n**2. Идеальная структура статьи (согласно архетипу):**\n    - **H1:** Предложи 2-3 варианта заголовка, отвечающих основному интенту. Если в заголовке нужен год или месяц для актуальности, **ИСПОЛЬЗУЙ ПЛЕЙСХОЛДЕРЫ** `[текущий год]` и `[текущий месяц]`. **ЗАПРЕЩЕНО** вставлять конкретные цифры из анализа.\n    - **План навигации (меню):** Создай здесь план для 3-5 ключевых пунктов меню. Каждый пункт должен соответствовать одному из H2-заголовков в плане статьи. Формат: \"Текст ссылки\" -> \"#якорь-заголовка\".\n    - **План (H2-H3):** Создай детальный план статьи с иерархией заголовков, который **полностью соответствует логике выбранного архетипа**. План должен включать все \"обязательные\" темы из анализа и интегрировать 1-2 раздела на основе найденных \"точек роста\".\n    - **Краткое содержание для каждого пункта:** Под каждым заголовком H2/H3 напиши 1-2 предложения о том, что именно нужно раскрыть в этом блоке.\n\n**3. Требования к контенту и форматированию:**\n    - **Общий визуальный стиль изображений (Выбор по ID):** Прочитай `image_style_id` из `<inputs>`. Выбери и укажи здесь стиль из списка ниже, который ТОЧНО соответствует этому ID.\n        - **ID 1:** \"3D-рендер в стиле Claymorphism\"\n        - **ID 2:** \"Минималистичная инфографика с изометрической проекцией\"\n        - **ID 3:** \"Фотореализм с кинематографическим освещением\"\n        - **ID 4:** \"Иллюстрация в стиле flat design с яркими градиентами\"\n    -  **Ключевые сущности (LSI):** Перечисли 10-15 основных терминов, синонимов и понятий из анализа, которые обязательно должны быть использованы в тексте для полноты раскрытия темы.\n    -  **Таблицы:** Укажи, сколько таблиц нужно создать и с какими данными, основываясь на анализе (например: \"Создать 1 сравнительную таблицу 'Тип А vs Тип Б' с колонками: Параметр, Плюсы, Минусы\").\n    -  **Списки:** Дай рекомендации, где лучше использовать списки (например: \"Преимущества оформить маркированным списком, а пошаговую инструкцию — нумерованным\").\n    -  **Мультимедиа:** На основе анализа среднего количества и типов изображений у конкурентов, сформируй Markdown-таблицу с планом по созданию изображений. Эта таблица является строгой инструкцией для копирайтера по вставке плейсхолдеров в текст. Таблица должна содержать следующие колонки: ID, Раздел для вставки (заголовок H2), Тип изображения, Подробное описание для художника (которое должно отражать общий визуальный стиль), Alt текст для SEO, Slug картинки для SEO. Количество строк в таблице должно соответствовать рекомендованному количеству изображений.\n\n**4. Технические SEO-требования:**\n    - **Микроразметка:** Укажи, какую микроразметку необходимо внедрить, основываясь на анализе конкурентов (например: \"Обязательно внедрить разметку FAQPage для блока 'Часто задаваемые вопросы'\").\n    - **Внутренняя перелинковка:** Предложи 2-3 темы для внутренних ссылок, релевантные теме статьи (например: \"Добавить ссылки на статьи [смежная тема 1] и [смежная тема 2]\").\n    - **Элемент взаимодействия в шапке (Выбор по ID):** Прочитай `header_element_id` из `<inputs>`. Выбери и опиши **ОДИН** из следующих вариантов, который ТОЧНО соответствует этому ID.\n        - **ID 1: \"Нет\"** - В шапке будет только логотип и навигационное меню.\n        - **ID 2: \"Строка поиска\"** - Добавить в шапку строку для поиска по контенту страницы.\n        - **ID 3: \"Кнопка действия (CTA)\"** - Добавить заметную кнопку. **Придумай для нее короткий, релевантный текст** (2-3 слова).\n        - **ID 4: \"Контактная информация\"** - Добавить иконку почты и телефона с **реалистичными, но вымышленными данными**.\n\n**5. Структура подвала (Footer) (Выбор по ID):**\n    - Прочитай `footer_variant_id` из `<inputs>`. Выбери и опиши **ОДИН** из следующих вариантов, который ТОЧНО соответствует этому ID. Это описание является инструкцией для следующего шага по сборке YAML.\n        - **ID 1: \"Минималистичный\"**\n            - **Состав:** Короткая навигация (2-3 ключевых пункта), Копирайт, Текст 18+.\n        - **ID 2: \"Корпоративный\"**\n            - **Состав:** Логотип, Контактная информация (email/телефон), Иконки соц. сетей (выбери 3-4 из: Facebook, X, Instagram, YouTube), Копирайт, Текст 18+.\n        - **ID 3: \"Навигационный\"**\n            - **Состав:** Логотип, Полная навигация по странице (все пункты из `navigation`), Поисковая строка, Копирайт, Текст 18+.\n        - **ID 4: \"Комплексный\"**\n            - **Состав:** Логотип, Короткая навигация, Иконки соц. сетей (выбери 2-3), Контактная информация, Копирайт, Текст 18+.\n\n**6. Уникальность и добавленная ценность:**\n    -  Предложи 1-2 конкретные идеи из анализа \"точек роста\" или новые идеи, как наш контент может стать лучшим (например: \"Добавить уникальный комментарий эксперта\", \"Создать интерактивный калькулятор\", так как этого нет ни у кого из конкурентов).\n\n**7. Нативная интеграция (обязательно):**\n    - В самом конце статьи, перед подвалом, необходимо создать отдельный, визуально выделенный блок.\n    - **Задача:** Написать 3-4 предложения, которые креативно и логично связывают основную тему статьи (например, \"как сэкономить на этом хобби\" или \"альтернативные развлечения\") с темой ссылки.\n    - **Строгое требование:** Внутри этого блока **обязательно** должна быть размещена ссылка.\n    - **Текст ссылки (Анкор):** Используй строго фразу: `{{ $('Add sitepath/username').item.json.Anchor }}`\n    - **URL ссылки:** Ссылка должна вести на: `{{ $('Add sitepath/username').item.json.Acceptor }}`\n    - **Контекст:** Смысл предложения должен плавно подводить к клику по этому анкору.\n    - **Стиль:** Блок должен восприниматься как полезный совет или интересное замечание (\"Кстати, если вы интересуетесь...\").\n\n\n# ФОРМАТ ВЫВОДА\nПредоставь ответ в виде готового технического задания в формате Markdown. Твой ответ должен быть полным и не содержать никакой лишней информации, комментариев или вступлений. Твой ответ должен начинаться с объявления выбранного архетипа, а затем сразу с пункта \"1. Основные параметры:\".\nТекст ТЗ должен быть на языке носителей целевой аудитории.\n\n<inputs>\nЯзык: \"{{ $('Extract the domain from the table').item.json.Lang }}\".\narchetype_id: {{ $('Generate Random IDs').item.json.archetype_id }}\nimage_style_id: {{ $('Generate Random IDs').item.json.image_style_id }}\nheader_element_id: {{ $('Generate Random IDs').item.json.header_element_id }}\nfooter_variant_id: {{ $('Generate Random IDs').item.json.footer_variant_id }}\nTarget_Anchor: \"{{ $('Add sitepath/username').item.json.Anchor }}\"\nTarget_URL: \"{{ $('Add sitepath/username').item.json.Acceptor }}\"\n</inputs>\n\n{{ $('Анализ конкурентов').item.json.content.parts[0].text }}\n\n"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        2352,
+        1616
+      ],
+      "id": "cf4bcb37-1eaf-4d63-95a7-9cb9d2905af8",
+      "name": "Разработка ТЗ",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "aDoJFjt0lh5UoG42",
+          "name": "alfasearch.seo@gmail.com"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-pro",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-pro"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=<system>\n# РОЛЬ\nТы — старший SEO-редактор и факт-чекер. Твоя основная задача - точное и структурное исполнение предоставленного технического задания (ТЗ).\n\n# ПРАВИЛА И ОГРАНИЧЕНИЯ\n1.  **Язык:** Ты пишешь на безупречном языке целевой аудитории.\n2.  **Формат:** Ты создаешь ОДИН Markdown-файл с YAML-фронтматтером. HTML-теги в основном тексте запрещены.\n3.  **Проект:** Это ОДНОСТРАНИЧНЫЙ сайт (`single_page=true`). Это означает, что все внутренние ссылки должны быть якорными и вести на разделы внутри этого же документа.\n4.  **Точность:** Ты не придумываешь факты, статистику, цитаты или данные, а берешь их из интернета из соответствующих сайтов.\n5.  **Стиль:** Простой, ясный, структурированный. Как для умного коллеги. Избегай сложных конструкций и \"воды\".\n6.  **Принципы E-E-A-T:** Текст должен демонстрировать экспертность, авторитетность и надежность. Это достигается за счет точности, структурированности и ссылок на лицензии/правила, если это указано в ТЗ.\n7.  **Комплаенс:** Ты строго следуешь всем юридическим требованиям из ТЗ (возрастные ограничения 18+, принципы ответственной игры / Responsible Gambling, упоминание лицензий, корректное использование товарных знаков). Все необходимые дисклеймеры должны быть включены в текст.\n</system>\n\n<instructions>\n# Пошаговый план действий\n\n### Шаг 1: Определение актуальной даты и создание YAML Frontmatter\n1.  **Определи сегодняшнюю дату.** Эту дату ты будешь использовать для `lastmod` и для замены всех плейсхолдеров в тексте.\n2.  Сформируй блок YAML в начале файла со следующими полями:\n    - `title`: Используй один из H1-вариантов из ТЗ.\n    - `description`: Напиши meta-description длиной 150-160 символов, основываясь на содержании статьи.\n    - `lang`: Возьми из блока `<inputs>`.\n    - `canonical`: Сформируй на основе `domain` из `<inputs>`.\n    - `lastmod`: Укажи сегодняшнюю дату в формате YYYY-MM-DD.\n    - `logo_concept`: Возьми из ТЗ.\n    - `navigation`: **На основе \"Плана навигации\" из ТЗ, создай массив `navigation`.** Каждый элемент должен иметь ключи `text` и `anchor`.\n    - `header_element`: **Это критически важно!** Проанализируй раздел \"Элемент взаимодействия в шапке\" в ТЗ и создай соответствующий YAML-объект:\n        - Если в ТЗ указано **\"Нет\"**: `header_element: { type: 'none' }`\n        - Если в ТЗ указано **\"Строка поиска\"**: `header_element: { type: 'search' }`\n        - Если в ТЗ указано **\"Кнопка действия (CTA)\"**: `header_element: { type: 'cta', text: 'Текст кнопки из ТЗ', link: '#якорь-из-тз' }` (ссылку возьми из плана навигации, если она релевантна).\n        - Если в ТЗ указано **\"Контактная информация\"**: `header_element: { type: 'contact', email: 'email@из.тз', phone: '+46...' }`\n    - `footer_variant`: **Это критически важно!** Проанализируй раздел \"Структура подвала (Footer)\" в ТЗ и создай соответствующий YAML-объект.\n        - **Пример:** Если в ТЗ указан \"ID 1: Минималистичный\" с определенным составом, YAML должен выглядеть так:\n          `footer_variant: { type: 'minimalistic', elements: ['navigation_short', 'copyright', 'age_gate'] }`\n        - Если указан \"ID 2: Корпоративный\":\n          `footer_variant: { type: 'corporate', elements: ['logo', 'contact', 'socials', 'copyright', 'age_gate'] }`\n        - Если указан \"ID 3: Навигационный\":\n          `footer_variant: { type: 'navigation', elements: ['logo', 'navigation_full', 'search', 'copyright', 'age_gate'] }`\n        - Если указан \"ID 4: Комплексный\":\n          `footer_variant: { type: 'comprehensive', elements: ['logo', 'navigation_short', 'socials', 'contact', 'copyright', 'age_gate'] }`\n\n### Шаг 2: Написание основного текста статьи\n1.  **Замена плейсхолдеров:** Внимательно просмотри **весь текст из ТЗ** и найди все вхождения `[текущий год]` и `[текущий месяц]`. Замени их на актуальные значения.\n2.  **Структура:** Строго следуй плану (H1, H2, H3...) из ТЗ.\n3.  **Содержание:** Раскрой каждый пункт плана, опираясь на краткое содержание из ТЗ. Используй свои знания и данные из интернета для написания экспертного текста.\n4.  **Ключевые сущности (LSI):** Естественно интегрируй в текст ключевые сущности, перечисленные в ТЗ.\n5.  **Форматирование:** Используй Markdown для таблиц и списков, как указано в ТЗ.\n6.  **Вставка плейсхолдеров для изображений:** Найди в ТЗ таблицу с планом изображений и вставь плейсхолдеры в формате `![Alt текст](placeholder \"figure:ID;slug:slug\")` в соответствующие разделы текста.\n7.  **Внутренние ссылки:** Все внутренние ссылки должны быть якорными, вида `[текст ссылки](#anchor-id)`. `anchor-id` формируется из текста заголовка (латиница, нижний регистр, пробелы заменены на дефис).\n8.  **Обработка плейсхолдеров в контенте:** Если в таблицах или тексте \nТЗ ты встречаешь плейсхолдеры (например, \"Alternativ/Casino\"), замени их на реальные, релевантные данные, найденные в интернете.\n9.  **Нативная интеграция:**\n    - Найди в ТЗ пункт \"Нативная интеграция\".\n    - Напиши уникальный, осмысленный текст, связывающий тему статьи с анкором.\n    - **ВАЖНО:** Вставь ссылку в формате Markdown: `[{{ $('Add sitepath/username').item.json.Anchor }}]({{ $('Add sitepath/username').item.json.Acceptor }})`.\n    - Анкор должен быть вписан в предложение грамматически корректно и естественно. Не меняй текст анкора, если это не требуется правилами грамматики (падежи), но старайся оставить его максимально близким к заданному.\n\n### Шаг 3: Обеспечение комплаенса и E-E-A-T\n1.  Размести все обязательные юридические оговорки (18+, Responsible Gambling) в конце статьи, перед разделителем `---`.\n2.  Убедись, что упоминания брендов и лицензий соответствуют требованиям ТЗ.\n</instructions>\n\n<self_check>\n# Самопроверка перед выводом результата\n1.  **YAML Frontmatter:** Все поля заполнены? Объекты `header_element` и `footer_variant` точно соответствуют инструкциям из ТЗ?\n2.  **Актуальность дат:** В тексте **не осталось** плейсхолдеров `[текущий год]` или `[текущий месяц]`?\n3.  **Внутренние ссылки:** Все внутренние ссылки имеют формат `[текст](#anchor-id)`?\n4.  **Комплаенс:** Все требуемые дисклеймеры присутствуют?\n\nЕсли найдено нарушение — **исправь ВЕСЬ документ ОДИН раз** и выведи финальную, полностью корректную версию.\n</self_check>\n\n<output_format>\n# Формат вывода\nВерни один Markdown-файл. Твой ответ должен начинаться строго с `---` (начало YAML frontmatter) и не содержать никаких служебных комментариев, предисловий или объяснений.\n</output_format>\n\n<inputs>\ndomain: \"{{ $('Extract the domain from the table').item.json.URL }}\",\nlang: \"{{ $('Extract the domain from the table').item.json.Lang }}\",\nTarget_Anchor: \"{{ $('Add sitepath/username').item.json.Anchor }}\",\nTarget_URL: \"{{ $('Add sitepath/username').item.json.Acceptor }}\"\n</inputs>\n\n<context>\n# Техническое задание (ТЗ)\nЭто твой единственный источник правды. Следуй ему во всем.\n\n{{ $json.message?.content ?? $json.content?.parts?.[0]?.text }}\n\n</context>\n"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        2704,
+        1616
+      ],
+      "id": "032da604-6b17-4b95-8e9f-5c66f100fac9",
+      "name": "Написание контента",
+      "alwaysOutputData": false,
+      "retryOnFail": false,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "googlePalmApi": {
+          "id": "aDoJFjt0lh5UoG42",
+          "name": "alfasearch.seo@gmail.com"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-pro",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-pro"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=# РОЛЬ\nТы — AI Арт-директор и Архитектор Дизайн-систем. Твоя задача — создать уникальную, тематически релевантную дизайн-систему (JSON) для веб-сайта, основываясь на его ТЕМАТИКЕ и заданных параметрах стиля.\n\n# ВХОДНЫЕ ДАННЫЕ\n1.  **Тематика сайта (Topic):** \"{{ $('Add sitepath/username').item.json['Тематика'] }}\" (например: \"Фотография\", \"Недвижимость\", \"Садоводство\").\n2.  **Markdown с контентом:** Для получения `logo_concept`, `title`, `canonical`.\n3.  **Набор числовых ID:** `style_id` (общий вайб), `color_id` (настроение цвета), `font_id` (типографика), `layout_id` (сетка).\n\n# ЗАДАЧА\nСгенерировать ОДИН валидный JSON-объект дизайн-системы.\n\n# АЛГОРИТМ ГЕНЕРАЦИИ (СТРОГО СЛЕДУЙ ШАГАМ)\n\n### Шаг 1: Определение \"Вайба\" (Style Archetype)\nИспользуй `style_id` (от 1 до 10) для выбора базовой эстетики форм и теней (`element_style`):\n*   **1-2 (Minimalist):** `border_radius: 4px`, `shadow: none`, clean & airy.\n*   **3-4 (Soft & Friendly):** `border_radius: 12px`, `shadow: soft_diffuse`, rounded UI.\n*   **5-6 (Corporate / Pro):** `border_radius: 2px`, `shadow: sharp_low`, serious & structured.\n*   **7-8 (Bold / Brutalist):** `border_radius: 0px`, `shadow: hard_offset`, thick borders.\n*   **9-10 (Elegant / Luxury):** `border_radius: 0px`, `shadow: glow`, thin lines, serif headers.\n\n### Шаг 2: Генерация Цветовой Палитры (АДАПТАЦИЯ ПОД ТЕМАТИКУ)\nИгнорируй старые названия палитр. Создай **НОВУЮ** палитру, которая идеально подходит под **Тематику сайта**, используя `color_id` как подсказку для \"настроения\":\n*   **color_id 1-2 (Dark Mode):** Темный фон, контрастные акценты, подходящие тематике.\n*   **color_id 3-4 (Light & Fresh):** Белый/Светлый фон, свежие акценты.\n*   **color_id 5-6 (Muted / Pastel):** Приглушенные, спокойные тона.\n*   **color_id 7-8 (Vibrant / High Contrast):** Яркие, насыщенные цвета.\n*   **color_id 9-10 (Monochrome / Elegant):** Ч/Б или один строгий оттенок.\n*   *Пример:* Если Тематика=\"Садоводство\" и color_id=1 (Dark), создай палитру \"Dark Forest\" (темно-зеленый фон, лаймовые акценты).\n\n### Шаг 3: Выбор Шрифтов и Лейаута\n*   **Шрифты:** Выбери пару из списка ниже, соответствующую `font_id`.\n*   **Layout:** Выбери название лейаута из списка ниже, соответствующее `layout_id`.\n\n### Шаг 4: Генерация Image Prompt (КРИТИЧЕСКИ ВАЖНО)\nНапиши `image_style_prompt`, который описывает визуальный стиль изображений.\n*   Он должен сочетать **\"Вайб\"** (из Шага 1) и **Тематику сайта**.\n*   *Пример для \"Фотографии\" + \"Minimalist\":* \"High-end gallery photography, minimalist composition, plenty of negative space, sharp focus, Hasselblad quality.\"\n\n---\n\n### СПРАВОЧНИК КОМПОНЕНТОВ (Используй ID для выбора)\n\n**Layouts (выбери по `layout_id`):**\n1. `card_based_grid`\n2. `full_width_hero`\n3. `classic_header_top_sticky`\n4. `focused_center`\n5. `minimalist_single_column`\n6. `sidebar_left`\n7. `split_screen`\n8. `image_grid_header`\n9. `asymmetric_grid`\n10. `sidebar_right`\n\n**Font Palettes (выбери по `font_id`):**\n1. `{ \"family\": \"'Inter', sans-serif\", \"base_size\": \"16px\" }`\n2. `{ \"family\": \"'Manrope', sans-serif\", \"base_size\": \"16px\" }`\n3. `{ \"family\": \"'Playfair Display', serif\", \"base_size\": \"17px\" }` (Headers) + Sans (Body)\n4. `{ \"family\": \"'Merriweather', serif\", \"base_size\": \"16px\" }`\n5. `{ \"family\": \"'Roboto Mono', monospace\", \"base_size\": \"15px\" }`\n6. `{ \"family\": \"'Oswald', sans-serif\", \"base_size\": \"16px\" }` (Bold Headers)\n7. `{ \"family\": \"'Lora', serif\", \"base_size\": \"17px\" }`\n8. `{ \"family\": \"'Work Sans', sans-serif\", \"base_size\": \"16px\" }`\n9. `{ \"family\": \"'Space Grotesk', sans-serif\", \"base_size\": \"16px\" }`\n10. `{ \"family\": \"'Syne', sans-serif\", \"base_size\": \"16px\" }`\n\n---\n\n# ФОРМАТ ВЫВОДА (JSON)\nВерни **ТОЛЬКО** валидный JSON. Структура должна быть такой:\n\n```json\n{\n  \"style_name\": \"Сгенерируй название стиля (Например: 'Modern [Тематика] Theme')\",\n  \"pfx\": \"Сгенерируй случайный префикс из 3 букв (например: 'a8z')\",\n  \"design_seed\": \"canonical + style_name\",\n  \"logo_concept\": \"Возьми из Markdown\",\n  \"title\": \"Возьми из Markdown\",\n  \"canonical\": \"Возьми из Markdown\",\n  \"layout\": \"строка_названия_лейаута\",\n  \"color_palette\": {\n    \"name\": \"Название палитры\",\n    \"description\": \"Описание цветов для генератора CSS (например: 'Dark background #121212 with vibrant orange accents...')\"\n  },\n  \"font_palette\": { ...объект шрифта... },\n  \"element_style\": {\n     \"border_radius\": \"...\",\n     \"shadow_style\": \"...\",\n     \"special_effects\": \"Опиши эффекты CSS, подходящие под Вайб и Тематику\",\n     \"background_details\": \"Опиши фон (цвет или паттерн)\",\n     \"component_styles\": {\n        \"header\": \"Опиши стиль хедера\",\n        \"buttons\": \"Опиши стиль кнопок (цвет, форма)\",\n        \"cards_and_sections\": \"Опиши стиль карточек\",\n        \"tables\": \"Опиши стиль таблиц\"\n     }\n  },\n  \"image_style_prompt\": \"Твой сгенерированный промпт для картинок\"\n}\n```\n\n### Входные данные:\n**Тематика:** \"{{ $('Add sitepath/username').item.json['Тематика'] }}\"\n**Markdown:** {{ $('Написание контента').item.json.content.parts.map(part => part.text ) }}\n**IDs:**\nStyle ID: {{ $('Generate Random IDs').item.json.style_id }}\nColor ID: {{ $('Generate Random IDs').item.json.color_id }}\nFont ID: {{ $('Generate Random IDs').item.json.font_id }}\nLayout ID: {{ $('Generate Random IDs').item.json.layout_id }}\n"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        3056,
+        1616
+      ],
+      "id": "066138f4-af4e-490c-b0c5-b558c2bee982",
+      "name": "Архитектор-Исполнитель",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "aDoJFjt0lh5UoG42",
+          "name": "alfasearch.seo@gmail.com"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Получаем исходный полный JSON от \"Архитектора\".\nconst designPlan = JSON.parse($('Генератор PFX').first().json.content.parts[0].text);\n\n// 2. Получаем сырой текст от \"Генератора Цветовой Палитры\".\nlet rawPaletteJson = $input.first().json.content.parts[0].text;\n\n// 3. ✨ НАДЕЖНАЯ ОЧИСТКА ОТ MARKDOWN ✨\n// Эта строка удаляет ```json в начале и ``` в конце, а также лишние пробелы.\nconst cleanedPaletteJson = rawPaletteJson.replace(/```json\\s*|\\s*```/g, '').trim();\n\n// 4. Парсим ОЧИЩЕННЫЙ JSON.\nconst colorPalette = JSON.parse(cleanedPaletteJson);\n\n// 5. Заменяем старое описание палитры на новый объект с цветами.\ndesignPlan.color_palette = colorPalette;\n\n// 6. Возвращаем обновленный и полный JSON для всех последующих узлов.\nreturn [{\n  json: {\n    // Оборачиваем обратно в структуру, которую ожидают другие LLM-узлы\n    content: {\n      parts: [{\n        text: JSON.stringify(designPlan, null, 2) \n      }]\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3984,
+        1616
+      ],
+      "id": "8a4e7964-125d-4047-b788-4f5bb9f50af6",
+      "name": "Склей данных"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-pro",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-pro"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=# РОЛЬ\nТы — профессиональный дизайнер векторной графики с глубоким пониманием различных визуальных стилей, от классики до киберпанка. Твоя задача — создавать чистые, минималистичные и семантически верные SVG-логотипы.\n\n# ЗАДАЧА\nНа основе предоставленной КОНЦЕПЦИИ и ВИЗУАЛЬНОГО СТИЛЯ, сгенерировать SVG-код для логотипа сайта.\n\n# КЛЮЧЕВЫЕ ПРАВИЛА\n1.  **Синтез Стиля и Концепции (Самое главное):** Ты должен не просто нарисовать концепцию, а **визуально интерпретировать** ее через призму заданного стиля.\n    *   Если стиль \"Киберпанк\", используй резкие углы, геометрические, \"цифровые\" формы, возможно, с разрывами или глитч-элементами.\n    *   Если стиль \"Картина маслом\", используй более плавные, органичные линии.\n    *   Если стиль \"Пиксель-арт\", логотип должен быть составлен из четких квадратных блоков.\n2.  **Только Символы, Без Текста:** Логотип должен быть исключительно символическим. Категорически запрещено вставлять любой текст (`<text>`) в SVG.\n3.  **Техническая чистота:**\n    *   Ответ должен содержать ТОЛЬКО код `<svg>...</svg>`.\n    *   Без XML-пролога `<?xml ...?>`.\n    *   Обязателен атрибут `viewBox` для масштабируемости (например, `viewBox=\"0 0 100 100\"`).\n    *   Используй `fill=\"currentColor\"` или `stroke=\"currentColor\"` для всех видимых фигур, чтобы логотип можно было перекрашивать через CSS. Не используй встроенные стили или жестко заданные цвета.\n4.  **Читаемость:** Логотип должен оставаться узнаваемым даже в очень маленьком размере (как фавикон).\n\n# ВХОДНЫЕ ДАННЫЕ\nТы получишь JSON с полной дизайн-системой. Извлеки из него следующие ключевые данные:\n\n1.  **Концепция (`logo_concept`):** Основная идея логотипа.\n2.  **Визуальный Стиль (`style_name`):** Эстетика, в которой нужно выполнить логотип.\n\n### JSON с дизайн-системой:\n{{ $json.content.parts[0].text }}\n\n# ФОРМАТ ВЫВОДА\nВерни только чистый SVG-код. Без ```svg, комментариев или каких-либо объяснений."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        4208,
+        1712
+      ],
+      "id": "c98322f4-1ad9-4cd9-b4a4-5d774bd8a6ab",
+      "name": "Генератор SVG Логотипа",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "aDoJFjt0lh5UoG42",
+          "name": "alfasearch.seo@gmail.com"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1) Берём сырой SVG\nlet svgRaw = $input.first().json.message?.content ||  $input.first().json.content?.parts?.[0]?.text;\n\n// 2) Чистим: убираем ```svg/``` и BOM, схлопываем пробелы\nlet svgClean = svgRaw\n  .replace(/```[\\w-]*\\n?|\\r|\\n|```/g, \"\")     // убираем ```svg ... ```\n  .replace(/^\\uFEFF/, \"\")                     // BOM\n  .trim()\n  .replace(/\\s{2,}/g, \" \");                   // косметика\n\n// 3) Гарантируем xmlns и фиксируем currentColor (часто «пропадает» в favicon)\nif (!/xmlns=/.test(svgClean)) {\n  svgClean = svgClean.replace(\"<svg\", '<svg xmlns=\"http://www.w3.org/2000/svg\"');\n}\nsvgClean = svgClean.replace(/\\bcurrentColor\\b/g, \"#000\"); // при желании — свой брендовый цвет\n\n// 4) Base64 (строго UTF-8) и валидация\nconst b64 = Buffer.from(svgClean, \"utf8\").toString(\"base64\");\nif (/[^A-Za-z0-9+/=]/.test(b64)) {\n  throw new Error(\"Base64 содержит недопустимые символы — проверь кодировку пайплайна.\");\n}\nconst linkBase64 =\n  `<link rel=\"icon\" type=\"image/svg+xml\" sizes=\"any\" href=\"data:image/svg+xml;base64,${b64}\">`;\n\n// 5) URL-энкод без base64 — часто устойчивее к «перекодировкам»\nconst encoded = encodeURIComponent(svgClean)\n  .replace(/%20/g, \" \")\n  .replace(/%0A/g, \"\")\n  .replace(/%22/g, \"'\")\n  .replace(/%3D/g, \"=\")\n  .replace(/%3A/g, \":\")\n  .replace(/%2F/g, \"/\")\n  .replace(/%3B/g, \";\")\n  .replace(/%2C/g, \",\")\n  .replace(/%23/g, \"%23\"); // # обязан быть экранирован\nconst linkUri =\n  `<link rel=\"icon\" type=\"image/svg+xml\" sizes=\"any\" href=\"data:image/svg+xml,${encoded}\">`;\n\n// 6) Отдаём обе версии — выбери под окружение (или оставь обе)\nreturn [{\n  json: {\n    favicon_link_tag_base64: linkBase64,\n    favicon_link_tag_uri: linkUri\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4560,
+        1712
+      ],
+      "id": "84aab736-2ef9-4aca-b158-a4082b329dde",
+      "name": "Генератора SVG Фавикона"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-3-pro-preview",
+          "mode": "list",
+          "cachedResultName": "models/gemini-3-pro-preview"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=# РОЛЬ\nТы — элитный **семантический** HTML-верстальщик. Твоя задача — не просто преобразовать Markdown, а **интерпретировать его структуру**, чтобы создавать богатые, доступные (A11y) и стилизуемые HTML-блоки.\n\n# ЗАДАЧА\nСгенерировать ТОЛЬКО HTML-структуру, точно следуя предоставленным данным и правилам семантического обогащения. Не добавляй CSS или JavaScript.\n\n# ПОШАГОВЫЙ ПЛАН ДЕЙСТВИЙ\n\n### Шаг 1: Базовая структура\nСоздай скелет документа: `<!doctype html>`, `<html lang=\"...\">`, `<head>`, `<body>`. `lang` возьми из YAML.\n\n### Шаг 2: Сборка `<head>`\n1.  Добавь базовые мета-теги: `<meta charset=\"utf-8\">`, `<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">`.\n2.  Вставь `<title>` и `<meta name=\"description\">` из YAML-фронтматтера.\n3.  Вставь SEO мета-теги: `<link rel=\"canonical\">` и `<meta name=\"robots\" content=\"index, follow\" />`.\n4.  **Вставь мета-теги для соцсетей (Open Graph/Twitter):** `og:title`, `og:description`, `og:url`, `og:type=\"website\"`, `og:robots`.\n5.  **Вставь готовый `HTML-тег фавикона`** из входных данных.\n6.  Найди и вставь в `<head>` любые скрипты `application/ld+json` из \"Контента (Markdown)\".\n\n### Шаг 3: Структура `<body>`\n*   Если в YAML есть массив `navigation`, создай структуру для off-canvas меню: `<body><nav id=\"{pfx}-mobile-nav\" ...></nav><div class=\"{pfx}-page-wrapper\">...</div></body>`.\n*   Если `navigation` отсутствует, создай простую структуру: `<body><div class=\"{pfx}-page-wrapper\">...</div></body>`.\n*   Все последующие элементы (`<header>`, `<main>`, `<footer>`) должны находиться внутри `<div class=\"{pfx}-page-wrapper\">`.\n\n### Шаг 4: Сборка `<header>` (Строгая логика)\n1.  Создай тег `<header class=\"{pfx}-page-header\">`.\n2.  **Вставь логотип:** Вставь `SVG-код логотипа` в ссылку `<a href=\"/\" class=\"{pfx}-logo-link\" title=\"Till startsidan\">`.\n3.  **Собери навигацию:** Если в YAML есть `navigation`, создай `<nav class=\"{pfx}-primary-nav\">` со списком `<ul>` и ссылками.\n4.  **Собери дополнительный элемент:** Проанализируй объект `header_element` **из YAML** и сгенерируй соответствующий HTML (`<a class=\"{pfx}-cta\">`, `<input type=\"search\">` и т.д.).\n5.  **Собери бургер-кнопку:** Если в YAML есть `navigation`, добавь `<button class=\"{pfx}-burger-btn\">`.\n\n### Шаг 5: Наполнение `<main>` и Семантическое Обогащение\n(Правила из предыдущей итерации остаются здесь без изменений)\n1.  **Стандартные секции:** Каждый `##` (H2) -> `<section id=\"...\">`.\n2.  **Блок \"Плюсы и Минусы\":** Оберни в `<div class=\"{pfx}-pros-cons-block\">`. Структура `<li>`: `<li><span class=\"{pfx}-icon\"></span><div>...</div></li>`.\n3.  **Блок \"Шаги / Процесс\":** Оберни `<ol>` в `<div class=\"{pfx}-steps-block\">`. Структура `<li>`: `<li><div class=\"{pfx}-step-visual\"></div><div class=\"{pfx}-step-content\">...</div></li>`.\n4.  **Блок \"Карточки\":** Преобразуй `<ul>` в `<div class=\"{pfx}-cards-grid\">`, `<li>` в `<div class=\"{pfx}-card\">`, и добавь `data-icon` к `<span class=\"{pfx}-icon\"></span>` в `<h3>`.\n5.  **Блок \"Аккордеон\" (FAQ):** Преобразуй список в `<div class=\"{pfx}-accordion\">` с элементами `<details>`.\n6.  **Блок \"Выноска\" (Callout):** Оберни `<p>`, начинающийся с курсива, в `<div class=\"{pfx}-callout-block\">`.\n7.  **Блок \"Нативная интеграция\":**\n    - Найди в тексте абзац (`<p>`), который содержит ссылку (`<a>`) с анкором, содержащим текст: `{{ $('Add sitepath/username').item.json.Anchor }}` (или очень похожий).\n    - Оберни **ВЕСЬ этот абзац** (тег `<p>`) в специальный контейнер-обертку: `<div class=\"{pfx}-native-block\">...</div>`.\n\n### Шаг 6: Сборка `<footer>` (Строгая логика)\n1.  **Проанализируй YAML:** Найди в YAML-фронтматтере объект `footer_variant`.\n2.  Создай тег `<footer class=\"{pfx}-page-footer {pfx}-footer--{footer_variant.type}\">`.\n3.  **Собери элементы:** Наполни футер HTML-элементами, которые перечислены в массиве `footer_variant.elements`, используя соответствующие классы:\n    *   `logo`: `<a href=\"/\" class=\"{pfx}-logo-link\">...SVG...</a>`\n    *   `socials`: `<div class=\"{pfx}-socials\">` (добавь 3-4 ссылки с иконками)\n    *   `navigation_short` / `navigation_full`: `<nav class=\"{pfx}-footer-nav\"><ul>...</ul></nav>`\n    *   `copyright`: `<p class=\"{pfx}-copyright\">© [Год] [Домен]</p>`\n    *   `age_gate`: `<p class=\"{pfx}-age-gate\">18+ | Spela ansvarsfullt</p>`\n    *   `contact`: `<div class=\"{pfx}-contact-info\">`\n    *   `search`: `<div class=\"{pfx}-search-wrapper\">`\n\n### Шаг 7: CSS-классы и прочее\n*   Ко всем элементам добавь классы с префиксом `pfx` из \"Дизайн-плана\".\n*   Плейсхолдеры изображений `![...](placeholder ...)` преобразуй в теги `<figure...`.\n*   Текст-дисклеймер после `---` в Markdown игнорируй, так как он теперь будет частью футера (`age_gate`, `copyright`).\n\n<media_rules>\n1) Плейсхолдеры `![ALT: …](placeholder \"figure:{id};slug:{slug}\")` → <figure id=\"{id}\"><img src=\"./{slug}.webp\" alt=\"ALT:…\"></figure>.\n2) Реальные <img> — lazy loading=\"lazy\" decoding=\"async\"; width/height или aspect-ratio для нулевого CLS.\n</media_rules>\n\n<tables_policy>\n- Преобразуй GFM-таблицы: thead/tbody, th scope=\"col/row\", caption (из подписи под таблицей; иначе \"Table\") с aria-describedby.\n- Обёртка: <div class=\"{pfx}-tblwrap\" role=\"region\" aria-label=\"Scrollable table\" tabindex=\"0\" data-scroll-hint=\"true\">…</div>.\n</tables_policy>\n\n# ФОРМАТ ВЫВОДА\nВерни только чистый HTML-код. Без ```html, комментариев или каких-либо объяснений.\n\n---\n### Дизайн-план (JSON):\n{{ $('Склей данных').item.json.content.parts[0].text }}\n\n### Контент (Markdown с YAML-фронтматтером):\n{{ $('Написание контента').item.json.content.parts.map(part => part.text ).join('\\n') }}\n\n### SVG-код логотипа:\n{{ $('Генератор SVG Логотипа').item.json.message.content }}\n\n### HTML-тег фавикона:\n{{ $json.favicon_link_tag_uri }}\n"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        4784,
+        1712
+      ],
+      "id": "469f05f4-8e96-43fb-a1dd-8302619589e1",
+      "name": "HTML-Верстальщик",
+      "alwaysOutputData": false,
+      "retryOnFail": false,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "googlePalmApi": {
+          "id": "aDoJFjt0lh5UoG42",
+          "name": "alfasearch.seo@gmail.com"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-pro",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-pro"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=# РОЛЬ\nТы — JavaScript-разработчик, который пишет чистый, эффективный и отказоустойчивый код без внешних зависимостей, уделяя особое внимание доступности (A11y) и UX.\n\n# ВХОДНЫЕ ДАННЫЕ\n1.  **Дизайн-план (JSON):** JSON-объект, содержащий **реальное значение `pfx`**.\n2.  **Готовый HTML-каркас:** Финальная HTML-структура сайта.\n\n# ЗАДАЧА\nНапиши минимально необходимый JavaScript для интерактивности сайта. Твой код должен быть обернут в `document.addEventListener('DOMContentLoaded', () => { ... });`.\n\n# ЛОГИКА ДЛЯ РЕАЛИЗАЦИИ\n\n1.  **Константа PFX:** В самом начале скрипта определи константу с реальным значением `pfx`.\n\n2.  **Логика Мобильного Off-Canvas Меню:**\n    *   **Проверка:** ЕСЛИ в HTML существуют элементы `.${pfx}-burger-btn` и `#{pfx}-mobile-nav`, реализуй эту логику.\n    *   **Функционал:**\n        *   **A) Переключение состояния:** При клике на бургер, переключай класс `mobile-nav-is-open` на теге `<body>` и обновляй `aria-expanded` на кнопке. Это вызовет CSS-анимации.\n        *   **B) Закрытие меню:** Закрывай меню при клике на ссылку внутри `#{pfx}-mobile-nav` или по нажатию `Escape`.\n        *   **C) \"Ловушка\" фокуса (A11y):** Когда меню открыто (body имеет класс `mobile-nav-is-open`), фокус клавиатуры (Tab/Shift+Tab) не должен покидать пределы `#{pfx}-mobile-nav`.\n        *   **D) Обработка Resize:** Автоматически закрывай меню, если окно браузера становится шире определенной точки (например, `800px`), чтобы избежать визуальных багов.\n\n3.  **Логика Аккордеона (FAQ):**\n    *   **Проверка:** ЕСЛИ в HTML существует блок `.${pfx}-accordion`, реализуй эту логику.\n    *   **Функционал:**\n        *   Найди все элементы `<details>` внутри аккордеона.\n        *   Добавь обработчик события `click` на каждый `<summary>`.\n        *   **Перехвати стандартное поведение:** Используй `event.preventDefault()` для `<summary>`, чтобы управлять открытием/закрытием вручную.\n        *   **Анимация с помощью Web Animations API:**\n            *   При открытии: сначала закрой все другие открытые `<details>` с анимацией, затем открой текущий с плавной анимацией высоты.\n            *   При закрытии: анимируй высоту до нуля, и только после завершения анимации устанавливай атрибут `open = false`.\n        *   Это создаст плавный и профессиональный эффект \"один открыт за раз\".\n\n4.  **Логика для таблицы с горизонтальным скроллом:**\n    *   **Проверка:** ЕСЛИ в HTML существует блок `.{pfx}-tblwrap` с атрибутом `data-scroll-hint=\"true\"`.\n    *   **Функционал:**\n        *   Добавь обработчик события `scroll` на этот элемент.\n        *   Как только пользователь начинает скроллить таблицу по горизонтали, удали атрибут `data-scroll-hint`, чтобы CSS мог скрыть подсказку о скролле.\n\n# ФОРМАТ ВЫВОДА\nВерни только чистый JavaScript-код. Без ```javascript, комментариев или каких-либо объяснений.\n\n---\n\n### Дизайн-план (JSON):\n{{ $('Склей данных').item.json.content.parts[0].text }}\n\n### Готовый HTML-каркас:\n{{ $json.content.parts.map(part => part.text ).join('\\n') }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        5136,
+        1856
+      ],
+      "id": "1697d15c-7676-492e-a97d-bb668fe94119",
+      "name": "Generate JS",
+      "alwaysOutputData": false,
+      "retryOnFail": false,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "googlePalmApi": {
+          "id": "aDoJFjt0lh5UoG42",
+          "name": "alfasearch.seo@gmail.com"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-3-pro-preview",
+          "mode": "list",
+          "cachedResultName": "models/gemini-3-pro-preview"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=# РОЛЬ\nТы — высококвалифицированный Front-end разработчик со специализацией на CSS. Твоя задача — не проявлять креативность, а **точно преобразовывать Дизайн-план и HTML-каркас в готовый CSS-код**.\n\n# ВХОДНЫЕ ДАННЫЕ\n1.  **Дизайн-план (JSON):** JSON-объект, содержащий `pfx`, `font_palette`, `color_palette`, и, самое главное, `element_style` с подробным описанием стилей для компонентов.\n2.  **Готовый HTML-каркас:** Финальная HTML-структура сайта.\n\n# ЗАДАЧА\nНапиши полный CSS-код, который точно реализует все стили, описанные в `Дизайн-плане`, для всех элементов, присутствующих в HTML-каркасе.\n\n<icon_library>\nВот библиотека готовых к использованию, URL-encoded SVG-иконок. Используй их для `background-image`.\n\n- **Шеврон (аккордеон):** `url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='9 18 15 12 9 6'%3E%3C/polyline%3E%3C/svg%3E\")`\n- **Лицензия (`license`):** `url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' ... %3E%3C/svg%3E\")` (и так далее для всех иконок из предыдущей версии)\n- **Facebook:** `url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z'%3E%3C/path%3E%3C/svg%3E\")`\n- **X (Twitter):** `url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='currentColor'%3E%3Cpath d='M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z'%3E%3C/path%3E%3C/svg%3E\")`\n- **Instagram:** `url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2' y='2' width='20' height='20' rx='5' ry='5'%3E%3C/rect%3E%3Cpath d='M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z'%3E%3C/path%3E%3Cline x1='17.5' y1='6.5' x2='17.51' y2='6.5'%3E%3C/line%3E%3C/svg%3E\")`\n- **YouTube:** `url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M22.54 6.42a2.78 2.78 0 0 0-1.94-2C18.88 4 12 4 12 4s-6.88 0-8.6.46a2.78 2.78 0 0 0-1.94 2A29 29 0 0 0 1 11.75a29 29 0 0 0 .46 5.33A2.78 2.78 0 0 0 3.4 19c1.72.46 8.6.46 8.6.46s6.88 0 8.6-.46a2.78 2.78 0 0 0 1.94-2A29 29 0 0 0 23 11.75a29 29 0 0 0-.46-5.33z'%3E%3C/path%3E%3Cpolygon points='9.75 15.02 15.5 11.75 9.75 8.48 9.75 15.02'%3E%3C/polygon%3E%3C/svg%3E\")`\n- **Безопасность/Щит (`safety`):** `url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'%3E%3C/path%3E%3C/svg%3E\")`\n- **Подарок/Бонус (`gift`):** `url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 12 20 22 4 22 4 12'%3E%3C/polyline%3E%3Crect x='2' y='7' width='20' height='5'%3E%3C/rect%3E%3Cline x1='12' y1='22' x2='12' y2='7'%3E%3C/line%3E%3Cpath d='M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z'%3E%3C/path%3E%3Cpath d='M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z'%3E%3C/path%3E%3C/svg%3E\")`\n- **Оплата/Карта (`payment`):** `url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='1' y='4' width='22' height='16' rx='2' ry='2'%3E%3C/rect%3E%3Cline x1='1' y1='10' x2='23' y2='10'%3E%3C/line%3E%3C/svg%3E\")`\n- **Игры/Контроллер (`games`):** `url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M18.5 8.5L20 10l-1.5 1.5L20 13l-1.5 1.5-1.5-1.5-1.5 1.5-1.5-1.5 1.5-1.5-1.5-1.5 1.5-1.5 1.5 1.5 1.5-1.5zM8 12h3M6 10v4'%3E%3C/path%3E%3Cpath d='M6 18h12a4 4 0 004-4V7a4 4 0 00-4-4H6a4 4 0 00-4 4v7a4 4 0 004 4z'%3E%3C/path%3E%3C/svg%3E\")`\n</icon_library>\n\n\n# ПОШАГОВЫЙ ПЛАН ДЕЙСТВИЙ\n\n1.  **Импорт Шрифтов и Переменные (:root):**\n    *   Создай `@import` для шрифта из `font_palette`.\n    *   Создай блок `:root` со всеми переменными для цветов, `border-radius` и `pfx`.\n\n2.  **Базовые Стили:**\n    *   Настрой базовые стили для `body`, типографики и т.д.\n    *   **ВАЖНО:** Не применяй `mix-blend-mode` к основным текстовым элементам (`p`, `h1`-`h6`).\n    *   Контейнер для сайта в десктопной версии не должен быть меньше 1200px.\n\n3.  **Стилизация Компонентов по Дизайн-плану (КРИТИЧЕСКИ ВАЖНО!):**\n    *   **Header (`.{pfx}-page-header`):** Реализуй стиль, описанный в `component_styles.header`.\n    *   **Buttons (`.{pfx}-cta`):** Реализуй стиль, описанный в `component_styles.buttons`.\n    *   **Tables (`.{pfx}-tblwrap table`):** Реализуй стиль, описанный в `component_styles.tables`.\n\n4.  **Стилизация Семантических Блоков по Дизайн-плану:**\n    *   **Блок \"Карточки\" (`.{pfx}-card`):**\n        *   Примени стиль, описанный в `component_styles.cards_and_sections` (например, \"обрамлены элегантной тонкой рамкой\").\n        *   Используй `display: grid` для `.{pfx}-cards-grid` и добавь `margin-bottom`.\n        *   **Примени иконки из `<icon_library>`** к `span[data-icon]` внутри заголовков карточек.\n    *   **Блок \"Плюсы и Минусы\" (`.{pfx}-pros-cons-block`):**\n        *   Используй `display: grid`.\n        *   Примени к каждому блоку (`.{pfx}-pros`, `.{pfx}-cons`) стиль, похожий на `cards_and_sections` (например, рамку или фон).\n        *   Добавь иконки \"галочки\" и \"крестика\" для `.{pfx}-icon`.\n    *   **Блок \"Шаги / Процесс\" (`.{pfx}-steps-block`):**\n        *   Стилизуй номера шагов (`.{pfx}-step-visual`) как круги с акцентным фоном.\n        *   Нарисуй соединительную линию между шагами.\n    *   **Блок \"Аккордеон\" (`.{pfx}-accordion`):**\n        *   Каждый элемент `<details>` должен выглядеть как карточка или панель, используя стиль из `cards_and_sections`.\n        *   Стилизуй `<summary>` и добавь анимированную иконку-шеврон из библиотеки.\n    *   **Блок \"Выноска\" (`.{pfx}-callout-block`):**\n        *   Придай блоку фон `var(--{pfx}-muted)`, рамку слева и иконку \"информации\".\n    *   **Блок \"Нативная интеграция\" (`.{pfx}-native-block`):** Стилизуй этот блок как заметную выноску или цитату. Примени ему фоновый цвет `var(--{pfx}-muted)`, внутренние отступы (`padding: 1.5em;`), и толстую акцентную полосу слева (`border-left: 4px solid var(--{pfx}-accent1);`). Можно добавить иконку (например, восклицательный знак или кавычки) в левый верхний угол с помощью псевдо-элемента `::before`.\n\n5.  **Стилизация Футера (`.{pfx}-page-footer`):**\n    *   Примени общий стиль, соответствующий `Дизайн-плану` (например, `border-top`).\n    *   Используй Grid или Flexbox для расположения элементов в зависимости от класса варианта (`.{pfx}-footer--minimalistic`, `.{pfx}-footer--corporate` и т.д.).\n    *   Добавь иконки для соцсетей в `.{pfx}-socials a`.\n\n6.  **Адаптивность и Off-Canvas Меню (Надежная реализация):**\n    *   На мобильных устройствах (`@media (max-width: 800px)`) скрой `. {pfx}-primary-nav` и `. {pfx}-cta`, и покажи `. {pfx}-burger-btn`.\n    *   Стилизуй off-canvas меню (`#{pfx}-mobile-nav`) так, чтобы оно было за экраном (`transform: translateX(100%)`).\n    *   **Ключевое правило:** Когда `body` получает класс `.mobile-nav-is-open`, **не сдвигай** `.{pfx}-page-wrapper`. Вместо этого, затемняй его с помощью оверлея (`::before` псевдо-элемента) и блокируй прокрутку. Меню (`#{pfx}-mobile-nav`) должно плавно выезжать (`transform: translateX(0)`).\n\n# ФОРМАТ ВЫВОДА\nВерни только чистый CSS-код. Без ```css, комментариев или каких-либо объяснений.\n\n---\n\n### Дизайн-план (JSON): \n{{ $('Склей данных').item.json.content.parts[0].text }}\n\n### Готовый HTML-каркас: \n{{ $json.content.parts[0].text }}\n"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        5136,
+        1568
+      ],
+      "id": "034088b2-e309-4d41-98c5-6b22f740cbfc",
+      "name": "Generate CSS",
+      "alwaysOutputData": false,
+      "retryOnFail": false,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "googlePalmApi": {
+          "id": "aDoJFjt0lh5UoG42",
+          "name": "alfasearch.seo@gmail.com"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-pro-preview-05-06",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-pro-preview-05-06"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=# РОЛЬ\nТы — креативный Front-end разработчик и UX-дизайнер. Твоя задача — создать уникальную и запоминающуюся страницу ошибки 404, которая при этом органично вписывается в существующую дизайн-систему сайта.\n\n# ЗАДАЧА\nСгенерировать полный, самодостаточный HTML-файл (`404.html`), который использует предоставленные стили и компоненты, но представляет контент ошибки в творческой и визуально интересной манере.\n\n# ПОШАГОВЫЙ ПЛАН ДЕЙСТВИЙ\n\n### Шаг 1: Изучение дизайн-системы\n1.  **Проанализируй CSS:** Изучи переменные в `:root`, чтобы понять цветовую палитру, шрифты и общую эстетику (`style_name` из дизайн-плана, например \"Киберпанк\", \"Пиксель-арт\").\n2.  **Проанализируй Компоненты:** Запомни структуру и классы для `<header>` и `<footer>`. Ты должен их переиспользовать.\n\n### Шаг 2: Творческая концепция для `<main>`\nПридумай и реализуй **креативную концепцию** для центрального блока страницы. Она должна соответствовать общему стилю сайта. Вот несколько идей для вдохновения, но не ограничивайся ими:\n\n*   **Для стиля \"Киберпанк\":** Можно изобразить \"глитч\" в матрице, сообщение об ошибке на футуристическом терминале, потерянный сигнал.\n*   **Для стиля \"Пиксель-арт\":** Показать персонажа, который упал в яму, или сломанный игровой уровень.\n*   **Для стиля \"Картина маслом\":** Изобразить пустой холст, перевернутую картину или потерянный набросок.\n*   **Для \"Фотореализма\":** Минималистичная сцена с одним объектом не на своем месте (например, резиновая уточка в офисном конференц-зале).\n\n**Твоя реализация должна включать:**\n1.  **Главный визуальный элемент:** Это может быть крупный стилизованный заголовок `<h1>404</h1>` или интересный SVG-элемент, который ты создашь сам в духе `style_name`.\n2.  **Сообщение об ошибке:** Напиши остроумное или полезное сообщение, соответствующее концепции (например, \"Сигнал потерян во времени и пространстве\" для киберпанка).\n3.  **Призыв к действию:** Обязательно добавь заметную кнопку или ссылку (`<a class=\"{pfx}-cta\" href=\"/\">...</a>`) для возврата на главную страницу.\n\n### Шаг 3: Сборка `404.html`\n1.  **Создай базовую HTML-структуру.**\n2.  **Секция `<head>`:**\n    *   Добавь мета-теги и осмысленный `<title>`.\n    *   **Вставь ВЕСЬ `Полный CSS-код`** внутрь тега `<style>`.\n3.  **Секция `<body>`:**\n    *   Используй основные классы-обертки (`{pfx}-page-wrapper`).\n    *   **Скопируй `<header>`** из `HTML-каркаса`, но удали из него элементы навигации.\n    *   **Вставь свой креативный `<main>`** из Шага 2. Убедись, что ты используешь правильные классы для контейнеров и типографики (`.{pfx}-container`, `.{pfx}-h1`, `.{pfx}-p` и т.д.), чтобы все выглядело гармонично.\n    *   **Скопируй `<footer>`** из `HTML-каркаса` целиком.\n    *   **Вставь `Полный JS-код`** в конце `<body>`.\n\n# ПРАВИЛА ВЫВОДА\n-   Верни только один полный HTML-файл.\n-   Никаких комментариев.\n-   Все стили и скрипты должны быть встроены.\n- Все ссылки на старнице должны везти только на главную страницу. **строго \"/\"**.\n\n---\n### Дизайн-план (для `style_name` и `pfx`):\n{{ $('Генератор Цветовой Палитры1').item.json.content.parts[0].text }}\n### HTML-каркас (для <header>, <footer> и классов):\n{{ $('HTML-Верстальщик').item.json.content.parts.map(part => part.text ).join('\\n') }}\n### Полный CSS-код:\n{{ $json.content.parts[0].text }}\n\n### Язык для текста:\n\"{{ $('Extract the domain from the table').item.json.Lang }}\""
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        5712,
+        1568
+      ],
+      "id": "ba8c83c1-a622-4a5c-80c2-7909cfcb19f6",
+      "name": "404 страница",
+      "alwaysOutputData": false,
+      "executeOnce": false,
+      "retryOnFail": false,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "googlePalmApi": {
+          "id": "aDoJFjt0lh5UoG42",
+          "name": "alfasearch.seo@gmail.com"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nif (!items.length) throw new Error('Нет входных файлов');\n\nconst out = { json: {}, binary: {} };\n\nlet domain = 'site';\nfor (const it of items) {\n  const d = it.json?.domain || it.json?.DOMAIN || it.json?.host;\n  if (d) { domain = String(d).replace(/^www\\./,''); break; }\n}\n\nconst ts = new Date().toISOString().replace(/[-:T.]/g, '').slice(0, 14);\nconst zipName = `bundle-${domain}-${ts}.zip`;\nout.json.zipName = zipName;\n\n// Собираем ВСЕ binary-поля\nlet count = 0;\nfor (const it of items) {\n  const bins = it.binary || {};\n  const binKeys = Object.keys(bins);\n  if (!binKeys.length) continue;\n\n  for (const k of binKeys) {\n    const src = bins[k];\n    if (!src?.data) continue;\n\n    // Гарантируем корректное имя файла\n    const fileName =\n      src.fileName ||\n      it.json?.fileName ||\n      `file-${++count}`;\n\n    const key = `f_${Object.keys(out.binary).length + 1}`;\n    out.binary[key] = {\n      ...src,\n      fileName,            // имя, которое попадёт внутрь ZIP\n      mimeType: src.mimeType || 'application/octet-stream'\n    };\n  }\n}\n\nif (!Object.keys(out.binary).length) {\n  throw new Error('Не найдено ни одного бинарного файла во входе');\n}\n\nout.json.other = items;\nout.json.server = $('Get Table Data').first().json.Server; \nout.json.zipName = `${domain}.zip`;\nout.json._binKeys = Object.keys(out.binary);\n\nreturn [out];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6512,
+        1248
+      ],
+      "id": "a3e69859-ab38-4a0f-bf1d-51f1af3a4101",
+      "name": "Stack binaries one item"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\n// 1. Получаем JSON-объект от Архитектора\nconst designSystemRaw = $input.first().json.message?.content ||  $input.first().json.content?.parts?.[0]?.text;\n// Убираем возможные markdown-блоки ```json ... ```\nconst cleaned = designSystemRaw\n  .replace(/^```json\\s*/i, '')\n  .replace(/^```\\s*/i, '')\n  .replace(/```$/i, '')\n  .trim();\nconst designSystem = JSON.parse(cleaned);\n\n// 2. Извлекаем 'design_seed'\nconst seed = designSystem.design_seed;\nif (!seed) {\n  throw new Error(\"В JSON от Архитектора отсутствует 'design_seed'.\");\n}\n\n// 3. Функция для хеширования и кодирования (надежная)\nfunction generatePfx(inputString) {\n  // Создаем хеш SHA-256 и берем первые 4 байта (32 бита)\n  const hash = crypto.createHash('sha256').update(inputString).digest();\n  const int32 = hash.readUInt32BE(0);\n\n  // Конвертируем в base36 и берем 4 символа\n  const pfxValue = int32.toString(36).slice(0, 4);\n  return 'x' + pfxValue.toLowerCase().padStart(4, '0');\n}\n\n// 4. Генерируем pfx\nconst pfx = generatePfx(seed);\n\n// 5. ДОБАВЛЯЕМ 'pfx' в наш JSON-объект\ndesignSystem.pfx = pfx;\n\n// 6. Возвращаем ПОЛНЫЙ, ОБНОВЛЕННЫЙ JSON для всех последующих узлов\n// Оборачиваем его обратно в структуру, которую ожидают другие LLM-узлы\nreturn [{\n  json: {\n    content: {\n      parts: [{\n        text: JSON.stringify(designSystem, null, 2) // Возвращаем красивый JSON\n      }]\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3408,
+        1616
+      ],
+      "id": "68e713b1-96de-4a87-add6-ce922311a4bc",
+      "name": "Генератор PFX"
+    },
+    {
+      "parameters": {
+        "operation": "compress",
+        "binaryPropertyName": "={{ $('Stack binaries one item').item.json._binKeys.toString().split(',').toString() }}",
+        "fileName": "=n8n-site-generator.zip",
+        "binaryPropertyOutput": "=n8n-site-generator.zip"
+      },
+      "type": "n8n-nodes-base.compression",
+      "typeVersion": 1.1,
+      "position": [
+        6736,
+        1248
+      ],
+      "id": "73757528-f61d-4a6a-a5b2-f20c025795dc",
+      "name": "Compression",
+      "alwaysOutputData": true,
+      "retryOnFail": false
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "n8n-site-generator.zip",
+        "dataPropertyName": "n8n-site-generator.zip",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        6960,
+        1248
+      ],
+      "id": "c2f89504-9e84-4aec-bdb6-473e02074b31",
+      "name": "Read/Write Files from Disk"
+    },
+    {
+      "parameters": {
+        "authentication": "privateKey",
+        "command": "=sudo chown -R n8n_deploy_user:n8n_deploy_user /var/www/{{ $(\"Add sitepath/username\").all()[0].json.username }}/data/www/",
+        "cwd": "=/var/www/"
+      },
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        7184,
+        1248
+      ],
+      "id": "2b018d26-a3a7-4e9e-9e40-fd5672627b00",
+      "name": "Media1 change user",
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "bw62UoJN3oCRczed",
+          "name": "SSH media1"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "privateKey",
+        "command": "=rm -r {{ $(\"Add sitepath/username\").all()[0].json.domain }}.backup.8n8",
+        "cwd": "=/var/www/{{ $(\"Add sitepath/username\").all()[0].json.username }}/data/www/"
+      },
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        7408,
+        1248
+      ],
+      "id": "70f0159b-036f-4f93-a260-9cac53902db1",
+      "name": "remove old backup",
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "bw62UoJN3oCRczed",
+          "name": "SSH media1"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "privateKey",
+        "command": "=cp -r {{ $(\"Add sitepath/username\").all()[0].json.domain }} {{ $(\"Add sitepath/username\").all()[0].json.domain }}.backup.8n8",
+        "cwd": "=/var/www/{{ $(\"Add sitepath/username\").all()[0].json.username }}/data/www/"
+      },
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        7632,
+        1248
+      ],
+      "id": "f70764ac-9d15-41a2-a935-556edf8a653e",
+      "name": "backup",
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "bw62UoJN3oCRczed",
+          "name": "SSH media1"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fileSelector": "n8n-site-generator.zip",
+        "options": {
+          "fileName": "={{ $('Stack binaries one item').item.json.zipName }}",
+          "dataPropertyName": "=data"
+        }
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        7856,
+        1248
+      ],
+      "id": "c66607c1-f8c1-455c-8bd6-8d78b3a710d0",
+      "name": "Read/Write Files from Disk1"
+    },
+    {
+      "parameters": {
+        "authentication": "privateKey",
+        "resource": "file",
+        "path": "=/var/www/{{ $(\"Add sitepath/username\").all()[0].json.username }}/data/www/",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        8080,
+        1248
+      ],
+      "id": "92c7ed51-f25f-42b2-91d7-a5774a912a0e",
+      "name": "upload zip",
+      "retryOnFail": false,
+      "alwaysOutputData": false,
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "bw62UoJN3oCRczed",
+          "name": "SSH media1"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "privateKey",
+        "command": "=rm -r {{ $(\"Add sitepath/username\").all()[0].json.Host  }}/",
+        "cwd": "=/var/www/{{ $(\"Add sitepath/username\").all()[0].json.username }}/data/www/"
+      },
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        8304,
+        1248
+      ],
+      "id": "f776541f-a3c4-42bc-acf1-d1b68fc3b7ce",
+      "name": "Remove Old site",
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "bw62UoJN3oCRczed",
+          "name": "SSH media1"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1ajG-RNCzGIYfe0Lw7sW8NWj21wS-AOJW2_LjNtn2igA",
+          "mode": "list",
+          "cachedResultName": "Гипотезы | Швеция",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1ajG-RNCzGIYfe0Lw7sW8NWj21wS-AOJW2_LjNtn2igA/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1755631355,
+          "mode": "list",
+          "cachedResultName": "Webarchive 8n8 PBN",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1ajG-RNCzGIYfe0Lw7sW8NWj21wS-AOJW2_LjNtn2igA/edit#gid=1755631355"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Site is published": "TRUE",
+            "Дата запуска": "={{ $now.format('dd/MM/yyyy T') }}",
+            "Status generator": "complited",
+            "row_number": "={{$(\"Add sitepath/username\").all()[0].json.row_number }}",
+            "Тематика": "={{ $(\"Add sitepath/username\").all()[0].json['Тематика'] }}",
+            "Host": "={{ $(\"Add sitepath/username\").all()[0].json['Host'] }}",
+            "WebArchive url": "={{ $(\"Add sitepath/username\").all()[0].json['WebArchive url'] }}",
+            "WebArchive summary": "={{ $(\"Add sitepath/username\").all()[0].json['WebArchive summary'] }}",
+            "WebArchive clean_text": "={{ $(\"Add sitepath/username\").all()[0].json['WebArchive clean_text'] }}",
+            "Проставлена": "true",
+            "Дата простановки": "={{ $now.format('dd/MM/yyyy T') }}",
+            "Query": "={{ $(\"Add sitepath/username\").all()[0].json['Query'] }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "URL",
+              "displayName": "URL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Anchor",
+              "displayName": "Anchor",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Acceptor",
+              "displayName": "Acceptor",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Тематика",
+              "displayName": "Тематика",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Query",
+              "displayName": "Query",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Site is published",
+              "displayName": "Site is published",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Дата запуска",
+              "displayName": "Дата запуска",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Проставлена",
+              "displayName": "Проставлена",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Дата простановки",
+              "displayName": "Дата простановки",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Картинки",
+              "displayName": "Картинки",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "LLM",
+              "displayName": "LLM",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "В индексе? (10.10.25)",
+              "displayName": "В индексе? (10.10.25)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "В индексе? (17.10.25)",
+              "displayName": "В индексе? (17.10.25)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Сайт в индексе",
+              "displayName": "Сайт в индексе",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Цитата в индексе",
+              "displayName": "Цитата в индексе",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Blacklist",
+              "displayName": "Blacklist",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Error Log",
+              "displayName": "Error Log",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Host",
+              "displayName": "Host",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Server",
+              "displayName": "Server",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Country",
+              "displayName": "Country",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Lang",
+              "displayName": "Lang",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Status generator",
+              "displayName": "Status generator",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "WebArchive url",
+              "displayName": "WebArchive url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "WebArchive summary",
+              "displayName": "WebArchive summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "WebArchive clean_text",
+              "displayName": "WebArchive clean_text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        9200,
+        1248
+      ],
+      "id": "a52bed01-9b70-4110-b972-c109841ba20b",
+      "name": "Update row in sheet2",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "8y3nvLcGKE7rEm4i",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 * * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -4880,
+        1088
+      ],
+      "id": "bf112298-e3c2-49ae-a685-43df2e62f541",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -4208,
+        896
+      ],
+      "id": "9e92b6d6-344e-4f31-ab0e-c587f194a0b9",
+      "name": "When clicking ‘Execute workflow’"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Запрос к Wayback Machine API": {
+      "main": [
+        [
+          {
+            "node": "Фильтр снимков",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request для скачивания HTML": {
+      "main": [
+        [
+          {
+            "node": "Распаковщик фреймов",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "проверки наличия снимка": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request для скачивания HTML",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Анализ Домена",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Анализ HTML": {
+      "main": [
+        []
+      ]
+    },
+    "Анализ Домена": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Генератор тем статей",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Очистка ответа ИИ": {
+      "main": [
+        []
+      ]
+    },
+    "Генератор тем статей": {
+      "main": [
+        [
+          {
+            "node": "Выбор случайной темы",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update row in sheet": {
+      "main": [
+        [
+          {
+            "node": "Has theme",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Table Data": {
+      "main": [
+        [
+          {
+            "node": "Has Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "extract host": {
+      "main": [
+        [
+          {
+            "node": "Update row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Выбор случайной темы": {
+      "main": [
+        [
+          {
+            "node": "Extract the domain from the table",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Фильтр снимков": {
+      "main": [
+        [
+          {
+            "node": "проверки наличия снимка",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Очистка и Резюмирование": {
+      "main": [
+        [
+          {
+            "node": "Convert to json",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge1": {
+      "main": [
+        [
+          {
+            "node": "Очистка и Резюмирование",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert to json": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Нужен ли доп. запрос?": {
+      "main": [
+        [
+          {
+            "node": "Скачать контент фрейма",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Скачать контент фрейма": {
+      "main": [
+        [
+          {
+            "node": "Распаковщик фреймов",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Распаковщик фреймов": {
+      "main": [
+        [
+          {
+            "node": "Нужен ли доп. запрос?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Data": {
+      "main": [
+        [
+          {
+            "node": "extract host",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Has theme": {
+      "main": [
+        [
+          {
+            "node": "Запрос к Wayback Machine API",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract the domain from the table",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Weekly Log1": {
+      "main": [
+        [
+          {
+            "node": "Count Weekly Sites1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count Weekly Sites1": {
+      "main": [
+        [
+          {
+            "node": "If Weekly Limit Not Reached?1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Weekly Limit Not Reached?1": {
+      "main": [
+        [
+          {
+            "node": "Get Table Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run seo-analyzer1": {
+      "main": [
+        [
+          {
+            "node": "Download contents.txt1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Download analysis.csv1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download contents.txt1": {
+      "main": [
+        [
+          {
+            "node": "Extract from File3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download analysis.csv1": {
+      "main": [
+        [
+          {
+            "node": "Extract from File2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract from File2": {
+      "main": [
+        [
+          {
+            "node": "Merge6",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Extract from File3": {
+      "main": [
+        [
+          {
+            "node": "Merge6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Парсер Gemini1": {
+      "main": [
+        [
+          {
+            "node": "Generate an image1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "parse index.html1": {
+      "main": [
+        [
+          {
+            "node": "Merge7",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "parse 404.html1": {
+      "main": [
+        [
+          {
+            "node": "Merge7",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Make robots.txt1": {
+      "main": [
+        [
+          {
+            "node": "Merge7",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Make sitemap.xml1": {
+      "main": [
+        [
+          {
+            "node": "Merge7",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Make Htaccess1": {
+      "main": [
+        [
+          {
+            "node": "Merge7",
+            "type": "main",
+            "index": 4
+          }
+        ]
+      ]
+    },
+    "Parse images1": {
+      "main": [
+        [
+          {
+            "node": "Merge7",
+            "type": "main",
+            "index": 5
+          }
+        ]
+      ]
+    },
+    "Генерация промптов на изображения1": {
+      "main": [
+        [
+          {
+            "node": "Парсер Gemini1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Генератор Цветовой Палитры1": {
+      "main": [
+        [
+          {
+            "node": "Склей данных",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge5": {
+      "main": [
+        [
+          {
+            "node": "parse index.html1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "404 страница",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Image1": {
+      "main": [
+        [
+          {
+            "node": "Parse images1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove zip1": {
+      "main": [
+        [
+          {
+            "node": "Back old user1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "unpacked zip1": {
+      "main": [
+        [
+          {
+            "node": "Remove zip1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Back old user1": {
+      "main": [
+        [
+          {
+            "node": "Update row in sheet2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate an image1": {
+      "main": [
+        [
+          {
+            "node": "Edit Image1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge6": {
+      "main": [
+        [
+          {
+            "node": "Анализ конкурентов",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge7": {
+      "main": [
+        [
+          {
+            "node": "Stack binaries one item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract the domain from the table": {
+      "main": [
+        [
+          {
+            "node": "Find username/sitepath",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find username/sitepath": {
+      "main": [
+        [
+          {
+            "node": "Add sitepath/username",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add sitepath/username": {
+      "main": [
+        [
+          {
+            "node": "Make Htaccess1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Make sitemap.xml1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Make robots.txt1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Run seo-analyzer1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Анализ конкурентов": {
+      "main": [
+        [
+          {
+            "node": "Generate Random IDs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Random IDs": {
+      "main": [
+        [
+          {
+            "node": "Разработка ТЗ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Разработка ТЗ": {
+      "main": [
+        [
+          {
+            "node": "Написание контента",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Написание контента": {
+      "main": [
+        [
+          {
+            "node": "Архитектор-Исполнитель",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Архитектор-Исполнитель": {
+      "main": [
+        [
+          {
+            "node": "Генератор PFX",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Склей данных": {
+      "main": [
+        [
+          {
+            "node": "Генерация промптов на изображения1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Генератор SVG Логотипа",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Генератор SVG Логотипа": {
+      "main": [
+        [
+          {
+            "node": "Генератора SVG Фавикона",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Генератора SVG Фавикона": {
+      "main": [
+        [
+          {
+            "node": "HTML-Верстальщик",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTML-Верстальщик": {
+      "main": [
+        [
+          {
+            "node": "Generate JS",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge5",
+            "type": "main",
+            "index": 1
+          },
+          {
+            "node": "Generate CSS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate JS": {
+      "main": [
+        [
+          {
+            "node": "Merge5",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Generate CSS": {
+      "main": [
+        [
+          {
+            "node": "Merge5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "404 страница": {
+      "main": [
+        [
+          {
+            "node": "parse 404.html1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stack binaries one item": {
+      "main": [
+        [
+          {
+            "node": "Compression",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Генератор PFX": {
+      "main": [
+        [
+          {
+            "node": "Генератор Цветовой Палитры1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compression": {
+      "main": [
+        [
+          {
+            "node": "Read/Write Files from Disk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read/Write Files from Disk": {
+      "main": [
+        [
+          {
+            "node": "Media1 change user",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Media1 change user": {
+      "main": [
+        [
+          {
+            "node": "remove old backup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "remove old backup": {
+      "main": [
+        [
+          {
+            "node": "backup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "backup": {
+      "main": [
+        [
+          {
+            "node": "Read/Write Files from Disk1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read/Write Files from Disk1": {
+      "main": [
+        [
+          {
+            "node": "upload zip",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "upload zip": {
+      "main": [
+        [
+          {
+            "node": "Remove Old site",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove Old site": {
+      "main": [
+        [
+          {
+            "node": "unpacked zip1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update row in sheet2": {
+      "main": [
+        [
+          {
+            "node": "Append to Weekly Log1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Weekly Log1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Get Table Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveExecutionProgress": true,
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false,
+    "errorWorkflow": "BYXYWWAQNJAIzezB"
+  },
+  "versionId": "e0c5e3d8-c2c7-4510-b8f4-59dae617c16d",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "b788f0a7bea0385d656cd002d3c865ca67dfd5c7fec4b64420122723568be5ab"
+  },
+  "id": "5jigsIZIyEMl2XnX",
+  "tags": [
+    {
+      "updatedAt": "2025-11-27T09:54:00.130Z",
+      "createdAt": "2025-11-27T09:54:00.130Z",
+      "id": "AWNCCUsECGUllU6t",
+      "name": "webarchive"
+    },
+    {
+      "updatedAt": "2025-11-27T09:57:02.898Z",
+      "createdAt": "2025-11-27T09:57:02.898Z",
+      "id": "EmllXivI1G0BXbbu",
+      "name": "surstromming"
+    },
+    {
+      "updatedAt": "2025-11-27T09:58:57.439Z",
+      "createdAt": "2025-11-27T09:58:57.439Z",
+      "id": "eTX2tcoutvXa6niF",
+      "name": "site generator"
+    }
+  ]
+}
