@@ -20,7 +20,7 @@ func (s *LogoGenerationStep) ArtifactKey() string {
 }
 
 func (s *LogoGenerationStep) Progress() int {
-	return 90
+	return 57
 }
 
 func (s *LogoGenerationStep) Execute(ctx context.Context, state *PipelineState) (map[string]any, error) {

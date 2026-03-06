@@ -21,7 +21,7 @@ func (s *DesignArchitectureStep) ArtifactKey() string {
 }
 
 func (s *DesignArchitectureStep) Progress() int {
-	return 80 // Прогресс после выполнения этого шага
+	return 50 // Прогресс после выполнения этого шага
 }
 
 func (s *DesignArchitectureStep) Execute(ctx context.Context, state *PipelineState) (map[string]any, error) {

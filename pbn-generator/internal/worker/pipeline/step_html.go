@@ -20,7 +20,7 @@ func (s *HTMLGenerationStep) ArtifactKey() string {
 }
 
 func (s *HTMLGenerationStep) Progress() int {
-	return 95
+	return 68
 }
 
 func (s *HTMLGenerationStep) Execute(ctx context.Context, state *PipelineState) (map[string]any, error) {

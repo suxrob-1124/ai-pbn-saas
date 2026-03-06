@@ -8,12 +8,12 @@ import (
 	"obzornik-pbn-generator/internal/domainfs"
 )
 
-func buildPublishContentBackend(cfg config.Config) (domainfs.SiteContentBackend, *domainfs.SSHPool, error) {
+func buildPublishContentBackend(cfg config.Config) (domainfs.SiteContentBackend, *domainfs.SSHPool, *domainfs.SSHBackend, error) {
 	localBackend := domainfs.NewLocalFSBackend(cfg.DeployBaseDir)
 
 	targets, err := domainfs.ParseDeployTargetsJSON(cfg.DeployTargetsJSON)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	for alias, target := range targets {
 		if strings.TrimSpace(target.KeyPath) == "" {
@@ -26,10 +26,10 @@ func buildPublishContentBackend(cfg config.Config) (domainfs.SiteContentBackend,
 	if len(targets) == 0 {
 		// И мы при этом требуем глобальный ssh_remote — это фатальная ошибка
 		if strings.EqualFold(strings.TrimSpace(cfg.DeployMode), "ssh_remote") {
-			return nil, nil, fmt.Errorf("DEPLOY_TARGETS_JSON must contain at least one target for ssh_remote")
+			return nil, nil, nil, fmt.Errorf("DEPLOY_TARGETS_JSON must contain at least one target for ssh_remote")
 		}
 		// Иначе мы в local_mock и нам просто не нужен SSH пул
-		return localBackend, nil, nil
+		return localBackend, nil, nil, nil
 	}
 
 	// Если таргеты есть, ВСЕГДА собираем SSH-пул (это критично для Canary Rollout)
@@ -41,14 +41,14 @@ func buildPublishContentBackend(cfg config.Config) (domainfs.SiteContentBackend,
 		KnownHostsPath: cfg.DeployKnownHostsPath,
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	sshBackend, err := domainfs.NewSSHBackend(pool, targets)
 	if err != nil {
 		_ = pool.Close()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	
-	return domainfs.NewRouterBackend(localBackend, sshBackend), pool, nil
+
+	return domainfs.NewRouterBackend(localBackend, sshBackend), pool, sshBackend, nil
 }

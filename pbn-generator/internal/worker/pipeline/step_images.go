@@ -43,7 +43,7 @@ func (s *ImageGenerationStep) Name() string { return StepImageGeneration }
 
 func (s *ImageGenerationStep) ArtifactKey() string { return "image_prompts" }
 
-func (s *ImageGenerationStep) Progress() int { return 96 }
+func (s *ImageGenerationStep) Progress() int { return 88 }
 
 // sanitizeSlug очищает slug от опасных символов и защищает от path traversal атак
 func sanitizeSlug(slug string) string {

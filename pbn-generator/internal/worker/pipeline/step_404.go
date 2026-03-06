@@ -18,7 +18,7 @@ func (s *Page404GenerationStep) Name() string { return Step404Page }
 
 func (s *Page404GenerationStep) ArtifactKey() string { return "404_html" }
 
-func (s *Page404GenerationStep) Progress() int { return 97 }
+func (s *Page404GenerationStep) Progress() int { return 91 }
 
 func (s *Page404GenerationStep) Execute(ctx context.Context, state *PipelineState) (map[string]any, error) {
 	state.AppendLog("Начало генерации 404 страницы")

@@ -20,7 +20,7 @@ func (s *ContentGenerationStep) ArtifactKey() string {
 }
 
 func (s *ContentGenerationStep) Progress() int {
-	return 70 // Прогресс после выполнения этого шага
+	return 40 // Прогресс после выполнения этого шага
 }
 
 func (s *ContentGenerationStep) Execute(ctx context.Context, state *PipelineState) (map[string]any, error) {
