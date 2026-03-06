@@ -386,7 +386,7 @@ export default function ProjectDetailPage() {
         name,
         country: projectCountry.trim(),
         language: projectLanguage.trim(),
-        status: project?.status || "draft",
+        status: project?.status || "active",
         timezone: resolvedProjectTimezone
       };
       const updated = await authFetch<Project>(`/api/projects/${projectId}`, {

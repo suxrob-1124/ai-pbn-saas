@@ -162,7 +162,7 @@ export default function ProjectsPage() {
               <h3 className="font-semibold flex items-center gap-2">
                 <FiFolder /> {p.name}
               </h3>
-              <StatusBadge status={p.status || "draft"} />
+              <StatusBadge status={p.status || "active"} />
             </div>
             <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">
               {p.target_country ? `Страна: ${p.target_country}` : "Страна не задана"}
@@ -255,8 +255,6 @@ function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { text: string; tone: "green" | "slate" | "amber"; icon: ReactNode }> = {
     Активен: { text: "Активен", tone: "green", icon: <FiPlay /> },
     active: { text: "Активен", tone: "green", icon: <FiPlay /> },
-    Черновик: { text: "В подготовке", tone: "slate", icon: <FiClock /> },
-    draft: { text: "В подготовке", tone: "slate", icon: <FiClock /> },
     "В разработке": { text: "В работе", tone: "amber", icon: <FiPauseCircle /> },
     wip: { text: "В работе", tone: "amber", icon: <FiPauseCircle /> },
     paused: { text: "Пауза", tone: "slate", icon: <FiPauseCircle /> },
