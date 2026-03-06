@@ -288,12 +288,12 @@ func (s *stubChecker) CheckWithQuote(ctx context.Context, domain, quote, geo str
 
 func TestRunIndexCheckerTickSuccess(t *testing.T) {
 	now := time.Now().UTC()
-	project := sqlstore.Project{ID: "proj-1", TargetCountry: "SE"}
+	project := sqlstore.Project{ID: "proj-1", TargetCountry: "SE", IndexCheckEnabled: true}
 	projectStore := &stubProjectStore{
 		projects: []sqlstore.Project{project},
 		byID:     map[string]sqlstore.Project{project.ID: project},
 	}
-	domain := sqlstore.Domain{ID: "dom-1", ProjectID: "proj-1", URL: "example.com", Status: "published"}
+	domain := sqlstore.Domain{ID: "dom-1", ProjectID: "proj-1", URL: "example.com", Status: "published", IndexCheckEnabled: true}
 	domainStore := &stubDomainStore{
 		byProject: map[string][]sqlstore.Domain{"proj-1": {domain}},
 		byID:      map[string]sqlstore.Domain{domain.ID: domain},
@@ -312,6 +312,7 @@ func TestRunIndexCheckerTickSuccess(t *testing.T) {
 		checkStore,
 		historyStore,
 		checker,
+		nil,
 		zap.NewNop().Sugar(),
 	); err != nil {
 		t.Fatalf("tick failed: %v", err)
@@ -338,13 +339,13 @@ func TestRunIndexCheckerTickSuccess(t *testing.T) {
 
 func TestRunIndexCheckerTickContinuesOnPerCheckError(t *testing.T) {
 	now := time.Now().UTC()
-	project := sqlstore.Project{ID: "proj-1", TargetCountry: "SE"}
+	project := sqlstore.Project{ID: "proj-1", TargetCountry: "SE", IndexCheckEnabled: true}
 	projectStore := &stubProjectStore{
 		projects: []sqlstore.Project{project},
 		byID:     map[string]sqlstore.Project{project.ID: project},
 	}
-	domainA := sqlstore.Domain{ID: "dom-a", ProjectID: "proj-1", URL: "a.example", Status: "published"}
-	domainB := sqlstore.Domain{ID: "dom-b", ProjectID: "proj-1", URL: "b.example", Status: "published"}
+	domainA := sqlstore.Domain{ID: "dom-a", ProjectID: "proj-1", URL: "a.example", Status: "published", IndexCheckEnabled: true}
+	domainB := sqlstore.Domain{ID: "dom-b", ProjectID: "proj-1", URL: "b.example", Status: "published", IndexCheckEnabled: true}
 	domainStore := &stubDomainStore{
 		byProject: map[string][]sqlstore.Domain{"proj-1": {domainA, domainB}},
 		byID: map[string]sqlstore.Domain{
@@ -380,6 +381,7 @@ func TestRunIndexCheckerTickContinuesOnPerCheckError(t *testing.T) {
 		checkStore,
 		historyStore,
 		checker,
+		nil,
 		zap.NewNop().Sugar(),
 	); err != nil {
 		t.Fatalf("tick failed: %v", err)
@@ -398,7 +400,7 @@ func TestRunIndexCheckerTickContinuesOnPerCheckError(t *testing.T) {
 
 func TestRunIndexCheckerTickFailsStaleChecking(t *testing.T) {
 	now := time.Now().UTC()
-	project := sqlstore.Project{ID: "proj-1", TargetCountry: "SE"}
+	project := sqlstore.Project{ID: "proj-1", TargetCountry: "SE", IndexCheckEnabled: true}
 	projectStore := &stubProjectStore{
 		projects: []sqlstore.Project{project},
 		byID:     map[string]sqlstore.Project{project.ID: project},
@@ -428,6 +430,7 @@ func TestRunIndexCheckerTickFailsStaleChecking(t *testing.T) {
 		checkStore,
 		historyStore,
 		checker,
+		nil,
 		zap.NewNop().Sugar(),
 	); err != nil {
 		t.Fatalf("tick failed: %v", err)

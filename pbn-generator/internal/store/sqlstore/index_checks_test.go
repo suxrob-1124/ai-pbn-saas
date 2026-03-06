@@ -43,6 +43,8 @@ func TestIndexCheckStoreCreate(t *testing.T) {
 				nil,
 				nil,
 				nil,
+				nil,
+				nil,
 			).
 			WillReturnResult(sqlmock.NewResult(0, 1))
 
@@ -63,6 +65,8 @@ func TestIndexCheckStoreCreate(t *testing.T) {
 				check.Status,
 				nil,
 				check.Attempts,
+				nil,
+				nil,
 				nil,
 				nil,
 				nil,
@@ -103,6 +107,8 @@ func TestIndexCheckStoreGet(t *testing.T) {
 		"error_message",
 		"completed_at",
 		"created_at",
+		"content_quote",
+		"is_content_indexed",
 	}).AddRow(
 		"check-1",
 		"domain-1",
@@ -115,10 +121,12 @@ func TestIndexCheckStoreGet(t *testing.T) {
 		sql.NullString{},
 		sql.NullTime{},
 		createdAt,
+		sql.NullString{},
+		sql.NullBool{},
 	)
 
 	t.Run("success", func(t *testing.T) {
-		mock.ExpectQuery(regexp.QuoteMeta("SELECT id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at FROM domain_index_checks WHERE id=$1")).
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at, content_quote, is_content_indexed FROM domain_index_checks WHERE id=$1")).
 			WithArgs("check-1").
 			WillReturnRows(rows)
 
@@ -139,7 +147,7 @@ func TestIndexCheckStoreGet(t *testing.T) {
 	})
 
 	t.Run("db error", func(t *testing.T) {
-		mock.ExpectQuery(regexp.QuoteMeta("SELECT id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at FROM domain_index_checks WHERE id=$1")).
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at, content_quote, is_content_indexed FROM domain_index_checks WHERE id=$1")).
 			WithArgs("check-2").
 			WillReturnError(errors.New("boom"))
 
@@ -176,6 +184,8 @@ func TestIndexCheckStoreGetByDomainAndDate(t *testing.T) {
 		"error_message",
 		"completed_at",
 		"created_at",
+		"content_quote",
+		"is_content_indexed",
 	}).AddRow(
 		"check-1",
 		"domain-1",
@@ -188,10 +198,12 @@ func TestIndexCheckStoreGetByDomainAndDate(t *testing.T) {
 		sql.NullString{},
 		sql.NullTime{},
 		createdAt,
+		sql.NullString{},
+		sql.NullBool{},
 	)
 
 	t.Run("success", func(t *testing.T) {
-		mock.ExpectQuery(regexp.QuoteMeta("SELECT id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at FROM domain_index_checks WHERE domain_id=$1 AND check_date=$2")).
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at, content_quote, is_content_indexed FROM domain_index_checks WHERE domain_id=$1 AND check_date=$2")).
 			WithArgs("domain-1", checkDate).
 			WillReturnRows(rows)
 
@@ -209,7 +221,7 @@ func TestIndexCheckStoreGetByDomainAndDate(t *testing.T) {
 	})
 
 	t.Run("db error", func(t *testing.T) {
-		mock.ExpectQuery(regexp.QuoteMeta("SELECT id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at FROM domain_index_checks WHERE domain_id=$1 AND check_date=$2")).
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at, content_quote, is_content_indexed FROM domain_index_checks WHERE domain_id=$1 AND check_date=$2")).
 			WithArgs("domain-2", checkDate).
 			WillReturnError(errors.New("boom"))
 
@@ -246,6 +258,8 @@ func TestIndexCheckStoreListByDomain(t *testing.T) {
 		"error_message",
 		"completed_at",
 		"created_at",
+		"content_quote",
+		"is_content_indexed",
 	}).AddRow(
 		"check-1",
 		"domain-1",
@@ -258,10 +272,12 @@ func TestIndexCheckStoreListByDomain(t *testing.T) {
 		sql.NullString{},
 		sql.NullTime{},
 		createdAt,
+		sql.NullString{},
+		sql.NullBool{},
 	)
 
 	t.Run("success", func(t *testing.T) {
-		mock.ExpectQuery(regexp.QuoteMeta("SELECT c.id, c.domain_id, c.check_date, c.status, c.is_indexed, c.attempts, c.last_attempt_at, c.next_retry_at, c.error_message, c.completed_at, c.created_at FROM domain_index_checks c WHERE c.domain_id=$1 ORDER BY c.check_date DESC, c.created_at DESC LIMIT $2")).
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT c.id, c.domain_id, c.check_date, c.status, c.is_indexed, c.attempts, c.last_attempt_at, c.next_retry_at, c.error_message, c.completed_at, c.created_at, c.content_quote, c.is_content_indexed FROM domain_index_checks c WHERE c.domain_id=$1 ORDER BY c.check_date DESC, c.created_at DESC LIMIT $2")).
 			WithArgs("domain-1", 10).
 			WillReturnRows(rows)
 
@@ -294,6 +310,8 @@ func TestIndexCheckStoreListByDomain(t *testing.T) {
 			"error_message",
 			"completed_at",
 			"created_at",
+			"content_quote",
+			"is_content_indexed",
 		}).AddRow(
 			"check-1",
 			"domain-1",
@@ -306,9 +324,11 @@ func TestIndexCheckStoreListByDomain(t *testing.T) {
 			sql.NullString{},
 			sql.NullTime{},
 			createdAt,
+			sql.NullString{},
+			sql.NullBool{},
 		)
 
-		mock.ExpectQuery(regexp.QuoteMeta("SELECT c.id, c.domain_id, c.check_date, c.status, c.is_indexed, c.attempts, c.last_attempt_at, c.next_retry_at, c.error_message, c.completed_at, c.created_at FROM domain_index_checks c JOIN domains d ON d.id = c.domain_id WHERE c.domain_id=$1 ORDER BY COALESCE(d.url, c.domain_id) ASC, c.check_date DESC, c.created_at DESC LIMIT $2")).
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT c.id, c.domain_id, c.check_date, c.status, c.is_indexed, c.attempts, c.last_attempt_at, c.next_retry_at, c.error_message, c.completed_at, c.created_at, c.content_quote, c.is_content_indexed FROM domain_index_checks c JOIN domains d ON d.id = c.domain_id WHERE c.domain_id=$1 ORDER BY COALESCE(d.url, c.domain_id) ASC, c.check_date DESC, c.created_at DESC LIMIT $2")).
 			WithArgs("domain-1", 10).
 			WillReturnRows(rowsSorted)
 
@@ -330,7 +350,7 @@ func TestIndexCheckStoreListByDomain(t *testing.T) {
 	})
 
 	t.Run("db error", func(t *testing.T) {
-		mock.ExpectQuery(regexp.QuoteMeta("SELECT c.id, c.domain_id, c.check_date, c.status, c.is_indexed, c.attempts, c.last_attempt_at, c.next_retry_at, c.error_message, c.completed_at, c.created_at FROM domain_index_checks c WHERE c.domain_id=$1 ORDER BY c.check_date DESC, c.created_at DESC LIMIT $2")).
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT c.id, c.domain_id, c.check_date, c.status, c.is_indexed, c.attempts, c.last_attempt_at, c.next_retry_at, c.error_message, c.completed_at, c.created_at, c.content_quote, c.is_content_indexed FROM domain_index_checks c WHERE c.domain_id=$1 ORDER BY c.check_date DESC, c.created_at DESC LIMIT $2")).
 			WithArgs("domain-2", 5).
 			WillReturnError(errors.New("boom"))
 
@@ -368,6 +388,8 @@ func TestIndexCheckStoreListAllFilters(t *testing.T) {
 		"error_message",
 		"completed_at",
 		"created_at",
+		"content_quote",
+		"is_content_indexed",
 	}).AddRow(
 		"check-1",
 		"domain-1",
@@ -380,6 +402,8 @@ func TestIndexCheckStoreListAllFilters(t *testing.T) {
 		sql.NullString{},
 		sql.NullTime{},
 		from.Add(time.Hour),
+		sql.NullString{},
+		sql.NullBool{},
 	)
 
 	search := "Example.COM"
@@ -393,7 +417,7 @@ func TestIndexCheckStoreListAllFilters(t *testing.T) {
 		Limit:     10,
 	}
 
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT c.id, c.domain_id, c.check_date, c.status, c.is_indexed, c.attempts, c.last_attempt_at, c.next_retry_at, c.error_message, c.completed_at, c.created_at FROM domain_index_checks c JOIN domains d ON d.id = c.domain_id WHERE c.status IN ($1,$2) AND (LOWER(COALESCE(d.url, '')) LIKE $3 OR LOWER(c.domain_id) LIKE $3) AND c.is_indexed=$4 AND c.check_date >= $5 AND c.check_date <= $6 ORDER BY c.check_date DESC, c.created_at DESC LIMIT $7")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT c.id, c.domain_id, c.check_date, c.status, c.is_indexed, c.attempts, c.last_attempt_at, c.next_retry_at, c.error_message, c.completed_at, c.created_at, c.content_quote, c.is_content_indexed FROM domain_index_checks c JOIN domains d ON d.id = c.domain_id WHERE c.status IN ($1,$2) AND (LOWER(COALESCE(d.url, '')) LIKE $3 OR LOWER(c.domain_id) LIKE $3) AND c.is_indexed=$4 AND c.check_date >= $5 AND c.check_date <= $6 ORDER BY c.check_date DESC, c.created_at DESC LIMIT $7")).
 		WithArgs("success", "checking", "%example.com%", true, from, to, 10).
 		WillReturnRows(rows)
 
@@ -437,6 +461,8 @@ func TestIndexCheckStoreListPendingRetries(t *testing.T) {
 		"error_message",
 		"completed_at",
 		"created_at",
+		"content_quote",
+		"is_content_indexed",
 	}).AddRow(
 		"check-1",
 		"domain-1",
@@ -449,10 +475,12 @@ func TestIndexCheckStoreListPendingRetries(t *testing.T) {
 		sql.NullString{},
 		sql.NullTime{},
 		checkDate,
+		sql.NullString{},
+		sql.NullBool{},
 	)
 
 	t.Run("success", func(t *testing.T) {
-		mock.ExpectQuery(regexp.QuoteMeta("SELECT id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at FROM domain_index_checks WHERE status='checking' AND next_retry_at IS NOT NULL AND next_retry_at <= NOW() ORDER BY next_retry_at ASC, created_at ASC")).
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at, content_quote, is_content_indexed FROM domain_index_checks WHERE status='checking' AND next_retry_at IS NOT NULL AND next_retry_at <= NOW() ORDER BY next_retry_at ASC, created_at ASC")).
 			WillReturnRows(rows)
 
 		got, err := store.ListPendingRetries(ctx)
@@ -469,7 +497,7 @@ func TestIndexCheckStoreListPendingRetries(t *testing.T) {
 	})
 
 	t.Run("db error", func(t *testing.T) {
-		mock.ExpectQuery(regexp.QuoteMeta("SELECT id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at FROM domain_index_checks WHERE status='checking' AND next_retry_at IS NOT NULL AND next_retry_at <= NOW() ORDER BY next_retry_at ASC, created_at ASC")).
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at, content_quote, is_content_indexed FROM domain_index_checks WHERE status='checking' AND next_retry_at IS NOT NULL AND next_retry_at <= NOW() ORDER BY next_retry_at ASC, created_at ASC")).
 			WillReturnError(errors.New("boom"))
 
 		if _, err := store.ListPendingRetries(ctx); err == nil {
@@ -620,6 +648,8 @@ func TestIndexCheckStoreUpsertManualByDomainAndDate(t *testing.T) {
 		"error_message",
 		"completed_at",
 		"created_at",
+		"content_quote",
+		"is_content_indexed",
 		"inserted",
 	}).AddRow(
 		"check-1",
@@ -633,6 +663,8 @@ func TestIndexCheckStoreUpsertManualByDomainAndDate(t *testing.T) {
 		sql.NullString{},
 		sql.NullTime{},
 		now,
+		sql.NullString{},
+		sql.NullBool{},
 		true,
 	)
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO domain_index_checks(")).
@@ -662,6 +694,8 @@ func TestIndexCheckStoreUpsertManualByDomainAndDate(t *testing.T) {
 		"error_message",
 		"completed_at",
 		"created_at",
+		"content_quote",
+		"is_content_indexed",
 		"inserted",
 	}).AddRow(
 		"check-1",
@@ -675,6 +709,8 @@ func TestIndexCheckStoreUpsertManualByDomainAndDate(t *testing.T) {
 		sql.NullString{},
 		sql.NullTime{},
 		now.Add(-24*time.Hour),
+		sql.NullString{},
+		sql.NullBool{},
 		false,
 	)
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO domain_index_checks(")).
@@ -718,6 +754,8 @@ func TestIndexCheckStoreTryMarkChecking(t *testing.T) {
 		"error_message",
 		"completed_at",
 		"created_at",
+		"content_quote",
+		"is_content_indexed",
 	}).AddRow(
 		"check-1",
 		"domain-1",
@@ -730,6 +768,8 @@ func TestIndexCheckStoreTryMarkChecking(t *testing.T) {
 		sql.NullString{},
 		sql.NullTime{},
 		createdAt,
+		sql.NullString{},
+		sql.NullBool{},
 	)
 	mock.ExpectQuery(regexp.QuoteMeta("UPDATE domain_index_checks")).
 		WithArgs("check-1").
@@ -757,8 +797,10 @@ func TestIndexCheckStoreTryMarkChecking(t *testing.T) {
 			"error_message",
 			"completed_at",
 			"created_at",
+			"content_quote",
+			"is_content_indexed",
 		}))
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at FROM domain_index_checks WHERE id=$1")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at, content_quote, is_content_indexed FROM domain_index_checks WHERE id=$1")).
 		WithArgs("check-2").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id",
@@ -772,6 +814,8 @@ func TestIndexCheckStoreTryMarkChecking(t *testing.T) {
 			"error_message",
 			"completed_at",
 			"created_at",
+			"content_quote",
+			"is_content_indexed",
 		}).AddRow(
 			"check-2",
 			"domain-1",
@@ -784,6 +828,8 @@ func TestIndexCheckStoreTryMarkChecking(t *testing.T) {
 			sql.NullString{},
 			sql.NullTime{Time: createdAt, Valid: true},
 			createdAt,
+			sql.NullString{},
+			sql.NullBool{},
 		))
 
 	started, check, err = store.TryMarkChecking(ctx, "check-2")
@@ -814,7 +860,7 @@ func TestIndexCheckStoreListStaleChecking(t *testing.T) {
 	olderThan := time.Date(2026, 2, 13, 10, 0, 0, 0, time.UTC)
 	checkDate := time.Date(2026, 2, 13, 0, 0, 0, 0, time.UTC)
 
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at FROM domain_index_checks WHERE status='checking' AND next_retry_at IS NULL AND COALESCE(last_attempt_at, created_at) <= $1 ORDER BY COALESCE(last_attempt_at, created_at) ASC, created_at ASC")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, domain_id, check_date, status, is_indexed, attempts, last_attempt_at, next_retry_at, error_message, completed_at, created_at, content_quote, is_content_indexed FROM domain_index_checks WHERE status='checking' AND next_retry_at IS NULL AND COALESCE(last_attempt_at, created_at) <= $1 ORDER BY COALESCE(last_attempt_at, created_at) ASC, created_at ASC")).
 		WithArgs(olderThan).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id",
@@ -828,6 +874,8 @@ func TestIndexCheckStoreListStaleChecking(t *testing.T) {
 			"error_message",
 			"completed_at",
 			"created_at",
+			"content_quote",
+			"is_content_indexed",
 		}).AddRow(
 			"check-1",
 			"domain-1",
@@ -840,6 +888,8 @@ func TestIndexCheckStoreListStaleChecking(t *testing.T) {
 			sql.NullString{},
 			sql.NullTime{},
 			checkDate,
+			sql.NullString{},
+			sql.NullBool{},
 		))
 
 	res, err := store.ListStaleChecking(ctx, olderThan)

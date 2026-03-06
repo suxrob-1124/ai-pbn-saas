@@ -104,6 +104,14 @@ func (m *testUserStore) GetAPIKey(ctx context.Context, email string) ([]byte, *t
 	return nil, nil, errors.New("not implemented")
 }
 
+func (m *testUserStore) Delete(ctx context.Context, email string) error {
+	if _, ok := m.users[email]; !ok {
+		return errors.New("not found")
+	}
+	delete(m.users, email)
+	return nil
+}
+
 type testVerificationStore struct {
 	saveCalls int
 }

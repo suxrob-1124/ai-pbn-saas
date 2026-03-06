@@ -346,7 +346,7 @@ func (s *Server) handleGenerationAction(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 		_ = s.domains.UpdateStatus(r.Context(), gen.DomainID, "processing")
-		task := tasks.NewGenerateTask(id, gen.DomainID, "")
+		task := tasks.NewGenerateTask(id, gen.DomainID, "", gen.GenerationType)
 		queue := "default"
 		if s.domains != nil {
 			if d, err := s.domains.Get(r.Context(), gen.DomainID); err == nil {

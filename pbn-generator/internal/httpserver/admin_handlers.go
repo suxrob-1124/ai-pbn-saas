@@ -116,6 +116,25 @@ func (s *Server) handleAdminUserRoute(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, toAdminUserDTO(u))
+	case http.MethodDelete:
+		user, ok := currentUserFromContext(r.Context())
+		if !ok {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		if strings.EqualFold(user.Email, targetEmail) {
+			writeError(w, http.StatusForbidden, "cannot delete yourself")
+			return
+		}
+		if err := s.svc.DeleteUser(r.Context(), targetEmail); err != nil {
+			if strings.Contains(err.Error(), "admin") {
+				writeError(w, http.StatusForbidden, err.Error())
+				return
+			}
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "user deleted"})
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
@@ -716,4 +735,39 @@ func optionalString(val *string) string {
 		return ""
 	}
 	return *val
+}
+
+// handleAdminIndexCheckerControl manages the global index checker enabled/disabled setting.
+func (s *Server) handleAdminIndexCheckerControl(w http.ResponseWriter, r *http.Request) {
+	if s.appSettings == nil {
+		writeError(w, http.StatusInternalServerError, "app settings not configured")
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		enabled, err := s.appSettings.GetBool(r.Context(), "index_check_enabled")
+		if err != nil {
+			// Default to true if key not found.
+			enabled = true
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"enabled": enabled})
+	case http.MethodPatch:
+		var body struct {
+			Enabled *bool `json:"enabled"`
+		}
+		if !decodeJSONBody(w, r, &body) {
+			return
+		}
+		if body.Enabled == nil {
+			writeError(w, http.StatusBadRequest, "enabled field is required")
+			return
+		}
+		if err := s.appSettings.SetBool(r.Context(), "index_check_enabled", *body.Enabled); err != nil {
+			writeError(w, http.StatusInternalServerError, "could not update setting")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"enabled": *body.Enabled})
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
 }

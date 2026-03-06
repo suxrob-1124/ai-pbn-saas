@@ -138,6 +138,12 @@ func (s *Service) Register(ctx context.Context, ip string, creds Credentials, ca
 	if !s.requireVerification {
 		_ = s.users.SetVerified(ctx, email)
 		u.Verified = true
+		// Auto-approve when email verification is disabled (closed/VPN environment)
+		if !u.IsApproved {
+			if err := s.users.SetApproved(ctx, email, true); err == nil {
+				u.IsApproved = true
+			}
+		}
 	} else {
 		if _, err := s.requestEmailVerification(ctx, email, "", "", false); err != nil && s.logger != nil {
 			s.logger.Warnw("failed to send verification email after register", "email", email, "err", err)
@@ -344,6 +350,7 @@ func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
 var ValidSystemRoles = map[string]bool{
 	"admin":   true,
 	"manager": true,
+	"user":    true,
 }
 
 func (s *Service) SetUserRole(ctx context.Context, email, role string) error {
@@ -352,13 +359,24 @@ func (s *Service) SetUserRole(ctx context.Context, email, role string) error {
 		return errors.New("role is required")
 	}
 	if !ValidSystemRoles[role] {
-		return fmt.Errorf("invalid role: %s (allowed: admin, manager)", role)
+		return fmt.Errorf("invalid role: %s (allowed: admin, manager, user)", role)
 	}
 	return s.users.UpdateRole(ctx, email, role)
 }
 
 func (s *Service) SetUserApproval(ctx context.Context, email string, approved bool) error {
 	return s.users.SetApproved(ctx, email, approved)
+}
+
+func (s *Service) DeleteUser(ctx context.Context, email string) error {
+	u, err := s.users.Get(ctx, email)
+	if err != nil {
+		return errors.New("user not found")
+	}
+	if strings.EqualFold(u.Role, "admin") {
+		return errors.New("cannot delete admin user; demote first")
+	}
+	return s.users.Delete(ctx, email)
 }
 
 func (s *Service) ValidateToken(ctx context.Context, tokenStr string) (Session, error) {

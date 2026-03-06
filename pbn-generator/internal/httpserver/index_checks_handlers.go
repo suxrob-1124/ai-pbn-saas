@@ -752,3 +752,65 @@ func (s *Server) handleAdminIndexCheckHistory(w http.ResponseWriter, r *http.Req
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
+
+// handleProjectIndexCheckerControl manages the index checker enabled/disabled setting for a project.
+func (s *Server) handleProjectIndexCheckerControl(w http.ResponseWriter, r *http.Request, projectID string) {
+	proj, err := s.authorizeProject(r.Context(), projectID)
+	if respondAuthzError(w, err, "project not found") {
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, http.StatusOK, map[string]bool{"enabled": proj.IndexCheckEnabled})
+	case http.MethodPatch:
+		var body struct {
+			Enabled *bool `json:"enabled"`
+		}
+		if !decodeJSONBody(w, r, &body) {
+			return
+		}
+		if body.Enabled == nil {
+			writeError(w, http.StatusBadRequest, "enabled field is required")
+			return
+		}
+		if err := s.projects.UpdateIndexCheckEnabled(r.Context(), projectID, *body.Enabled); err != nil {
+			writeError(w, http.StatusInternalServerError, "could not update setting")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"enabled": *body.Enabled})
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+// handleDomainIndexCheckerControl manages the index checker enabled/disabled setting for a domain.
+func (s *Server) handleDomainIndexCheckerControl(w http.ResponseWriter, r *http.Request, domainID string) {
+	dom, _, err := s.authorizeDomain(r.Context(), domainID)
+	if respondAuthzError(w, err, "domain not found") {
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, http.StatusOK, map[string]bool{"enabled": dom.IndexCheckEnabled})
+	case http.MethodPatch:
+		var body struct {
+			Enabled *bool `json:"enabled"`
+		}
+		if !decodeJSONBody(w, r, &body) {
+			return
+		}
+		if body.Enabled == nil {
+			writeError(w, http.StatusBadRequest, "enabled field is required")
+			return
+		}
+		if err := s.domains.UpdateIndexCheckEnabled(r.Context(), domainID, *body.Enabled); err != nil {
+			writeError(w, http.StatusInternalServerError, "could not update setting")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"enabled": *body.Enabled})
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}

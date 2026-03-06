@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"obzornik-pbn-generator/internal/analyzer"
+
 	"golang.org/x/net/idna"
 )
 
@@ -84,7 +86,7 @@ func (s *SerpChecker) CheckWithQuote(ctx context.Context, domain string, quote s
 
 // querySerpIndexed выполняет SERP-запрос с заданным keyword и возвращает наличие позиций.
 func (s *SerpChecker) querySerpIndexed(ctx context.Context, keyword string, geo string) (bool, error) {
-	geo = strings.ToLower(strings.TrimSpace(geo))
+	geo, _ = analyzer.NormalizeSerpGeoLang(geo, "")
 	if geo == "" {
 		geo = "se"
 	}

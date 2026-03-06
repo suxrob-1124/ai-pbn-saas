@@ -79,7 +79,8 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 		if g.Status == "success" && g.StartedAt.Valid && g.FinishedAt.Valid {
 			d := g.FinishedAt.Time.Sub(g.StartedAt.Time)
-			if d > 0 {
+			// only count full generation runs; short durations are checkpoint resumes (e.g. publish-only)
+			if d >= 3*time.Minute {
 				durations = append(durations, d)
 			}
 		}

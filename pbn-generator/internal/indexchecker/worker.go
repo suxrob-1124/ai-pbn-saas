@@ -50,6 +50,11 @@ type CheckHistoryStore interface {
 	Create(ctx context.Context, history sqlstore.CheckHistory) error
 }
 
+// AppSettingsStore описывает доступ к глобальным настройкам.
+type AppSettingsStore interface {
+	GetBool(ctx context.Context, key string) (bool, error)
+}
+
 // ProcessCheckResult возвращает результат одиночной проверки.
 type ProcessCheckResult struct {
 	Started bool
@@ -67,6 +72,7 @@ func RunIndexCheckerTick(
 	checkStore IndexCheckStore,
 	historyStore CheckHistoryStore,
 	checker IndexChecker,
+	appSettings AppSettingsStore,
 	logger *zap.SugaredLogger,
 ) error {
 	if checker == nil {
@@ -80,6 +86,15 @@ func RunIndexCheckerTick(
 	}
 	if staleTimeout <= 0 {
 		staleTimeout = defaultStaleCheckingTimeout
+	}
+
+	// Check global index checker enabled setting.
+	if appSettings != nil {
+		enabled, err := appSettings.GetBool(ctx, "index_check_enabled")
+		if err == nil && !enabled {
+			logger.Infow("index checker: globally disabled, skipping tick")
+			return nil
+		}
 	}
 
 	if err := failStaleChecks(ctx, now, staleTimeout, checkStore, historyStore, logger); err != nil {
@@ -99,6 +114,9 @@ func RunIndexCheckerTick(
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		if !p.IndexCheckEnabled {
+			continue
+		}
 		domains, err := domainStore.ListByProject(ctx, p.ID)
 		if err != nil {
 			logger.Errorf("index checker: list domains failed for project %s: %v", p.ID, err)
@@ -107,6 +125,9 @@ func RunIndexCheckerTick(
 		}
 		for _, d := range domains {
 			if !isDomainPublished(d) || strings.TrimSpace(d.URL) == "" {
+				continue
+			}
+			if !d.IndexCheckEnabled {
 				continue
 			}
 			check, err := checkStore.GetByDomainAndDate(ctx, d.ID, today)

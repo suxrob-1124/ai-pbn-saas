@@ -828,6 +828,8 @@ func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request, domain
 				return
 			}
 		}
+		// Clean up empty parent directories left after file deletion
+		s.cleanupEmptyParentDirs(r.Context(), domain, relPath)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"status": "deleted",
 			"mode":   map[bool]string{true: "hard", false: "soft"}[hardDelete],
@@ -912,12 +914,18 @@ func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request, domain
 	if statErr == nil && info.IsDir {
 		if recursiveDelete {
 			if err := s.deleteDomainPathRecursiveInBackend(r.Context(), domain, relPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
-				writeError(w, http.StatusInternalServerError, "could not remove directory")
+				if s.logger != nil {
+					s.logger.Errorf("could not remove directory %s recursively for domain %s: %v", relPath, domain.URL, err)
+				}
+				writeError(w, http.StatusInternalServerError, fmt.Sprintf("could not remove directory: %v", err))
 				return
 			}
 		} else {
 			if err := s.deleteDomainPathInBackend(r.Context(), domain, relPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
-				writeError(w, http.StatusInternalServerError, "could not remove directory")
+				if s.logger != nil {
+					s.logger.Errorf("could not remove directory %s for domain %s: %v", relPath, domain.URL, err)
+				}
+				writeError(w, http.StatusInternalServerError, fmt.Sprintf("could not remove directory: %v", err))
 				return
 			}
 		}

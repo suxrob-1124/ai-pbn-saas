@@ -70,6 +70,10 @@ func (s *stubSiteFileStore) Delete(ctx context.Context, fileID string) error {
 	return nil
 }
 
+func (s *stubSiteFileStore) ClearHistory(ctx context.Context, domainID string) error {
+	return nil
+}
+
 func TestSyncPublishedFilesSuccess(t *testing.T) {
 	ctx := context.Background()
 	baseDir := t.TempDir()

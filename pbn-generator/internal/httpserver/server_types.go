@@ -23,6 +23,7 @@ type ProjectStore interface {
 	Get(ctx context.Context, id, email string) (sqlstore.Project, error)
 	GetByID(ctx context.Context, id string) (sqlstore.Project, error)
 	Update(ctx context.Context, p sqlstore.Project) error
+	UpdateIndexCheckEnabled(ctx context.Context, id string, enabled bool) error
 	Delete(ctx context.Context, id, email string) error
 }
 
@@ -40,6 +41,8 @@ type DomainStore interface {
 	UpdateExtras(ctx context.Context, id, country, language string, exclude, server sql.NullString) (bool, error)
 	UpdateLinkSettings(ctx context.Context, id string, anchorText, acceptorURL sql.NullString) (bool, error)
 	Delete(ctx context.Context, id string) error
+	UpdateIndexCheckEnabled(ctx context.Context, id string, enabled bool) error
+	UpdateGenerationType(ctx context.Context, id, genType string) error
 	EnsureDefaultServer(ctx context.Context, email string) error
 }
 
@@ -181,6 +184,22 @@ type ModelPricingStore interface {
 	UpsertActive(ctx context.Context, provider, model string, inputUSDPerMillion, outputUSDPerMillion float64, updatedBy string, at time.Time) error
 }
 
+type AppSettingsStore interface {
+	Get(ctx context.Context, key string) (string, error)
+	Set(ctx context.Context, key, value string) error
+	GetBool(ctx context.Context, key string) (bool, error)
+	SetBool(ctx context.Context, key string, val bool) error
+}
+
+type LegacyImportStore interface {
+	CreateJob(ctx context.Context, job sqlstore.LegacyImportJob) error
+	GetJob(ctx context.Context, id string) (sqlstore.LegacyImportJob, error)
+	ListJobsByProject(ctx context.Context, projectID string) ([]sqlstore.LegacyImportJob, error)
+	CreateItem(ctx context.Context, item sqlstore.LegacyImportItem) error
+	GetItem(ctx context.Context, id string) (sqlstore.LegacyImportItem, error)
+	ListItemsByJob(ctx context.Context, jobID string) ([]sqlstore.LegacyImportItem, error)
+}
+
 type Server struct {
 	cfg              config.Config
 	svc              *auth.Service
@@ -204,6 +223,8 @@ type Server struct {
 	checkHistory     CheckHistoryStore
 	llmUsage         LLMUsageStore
 	modelPricing     ModelPricingStore
+	legacyImports    LegacyImportStore
+	appSettings      AppSettingsStore
 	tasks            tasks.Enqueuer
 	reqDuration      *prometheus.HistogramVec
 	reqCounter       *prometheus.CounterVec

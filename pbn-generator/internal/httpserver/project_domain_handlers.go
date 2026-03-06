@@ -18,6 +18,7 @@ import (
 
 	"obzornik-pbn-generator/internal/store/sqlstore"
 	"obzornik-pbn-generator/internal/tasks"
+	"obzornik-pbn-generator/internal/worker/pipeline"
 )
 
 // --- Projects / Domains / Generations ---
@@ -192,6 +193,18 @@ func (s *Server) handleProjectByID(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(parts) > 1 && parts[1] == "index-checks" {
 		s.handleProjectIndexChecks(w, r, projectID, parts[2:])
+		return
+	}
+	if len(parts) > 1 && parts[1] == "index-checker" {
+		s.handleProjectIndexCheckerControl(w, r, projectID)
+		return
+	}
+	if len(parts) > 1 && parts[1] == "legacy-import" {
+		action := ""
+		if len(parts) > 2 {
+			action = parts[2]
+		}
+		s.handleLegacyImport(w, r, projectID, action)
 		return
 	}
 	if len(parts) > 1 && parts[1] == "llm-usage" {
@@ -876,6 +889,14 @@ func (s *Server) handleProjectDomains(w http.ResponseWriter, r *http.Request, pr
 				siteOwner = discoveredOwner
 				domainStatus = "published"
 			}
+			importGenType := strings.TrimSpace(item.GenerationType)
+			if importGenType == "" {
+				importGenType = pipeline.GenTypeSinglePage
+			}
+			if !pipeline.IsValidGenerationType(importGenType) {
+				importGenType = pipeline.GenTypeSinglePage
+			}
+
 			d := sqlstore.Domain{
 				ID:             uuid.NewString(),
 				ProjectID:      projectID,
@@ -885,6 +906,7 @@ func (s *Server) handleProjectDomains(w http.ResponseWriter, r *http.Request, pr
 				TargetLanguage: targetLanguage,
 				ServerID:       sqlstore.NullableString(serverID),
 				Status:         domainStatus,
+				GenerationType: importGenType,
 			}
 
 			if pubPath != "" {
@@ -912,6 +934,36 @@ func (s *Server) handleProjectDomains(w http.ResponseWriter, r *http.Request, pr
 				if err != nil && s.logger != nil {
 					s.logger.Warnf("import link settings failed (domain=%s): %v", d.ID, err)
 				}
+				// Create LinkTask if both anchor and acceptor are present.
+				if anchor != "" && acceptor != "" {
+					linkPlaced := strings.ToLower(strings.TrimSpace(item.LinkPlaced))
+					taskNow := time.Now().UTC()
+					taskID := uuid.NewString()
+					linkTask := sqlstore.LinkTask{
+						ID:           taskID,
+						DomainID:     d.ID,
+						AnchorText:   anchor,
+						TargetURL:    acceptor,
+						ScheduledFor: taskNow,
+						Action:       "insert",
+						Attempts:     0,
+						CreatedBy:    user.Email,
+						CreatedAt:    taskNow,
+					}
+					if linkPlaced == "true" || isDateString(linkPlaced) {
+						linkTask.Status = "inserted"
+						linkTask.CompletedAt = sql.NullTime{Time: taskNow, Valid: true}
+					} else {
+						linkTask.Status = "pending"
+					}
+					if err := s.linkTasks.Create(r.Context(), linkTask); err != nil {
+						if s.logger != nil {
+							s.logger.Warnf("import link task failed (domain=%s): %v", d.ID, err)
+						}
+					} else {
+						_ = s.domains.UpdateLinkStatus(r.Context(), d.ID, linkTask.Status)
+					}
+				}
 			}
 			created++
 		}
@@ -936,9 +988,10 @@ func (s *Server) handleProjectDomains(w http.ResponseWriter, r *http.Request, pr
 			return
 		}
 		var body struct {
-			URL      string `json:"url"`
-			Keyword  string `json:"keyword"`
-			ServerID string `json:"serverId"`
+			URL            string `json:"url"`
+			Keyword        string `json:"keyword"`
+			ServerID       string `json:"serverId"`
+			GenerationType string `json:"generation_type"`
 		}
 		defer r.Body.Close()
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.URL) == "" {
@@ -977,6 +1030,15 @@ func (s *Server) handleProjectDomains(w http.ResponseWriter, r *http.Request, pr
 			domainStatus = "published"
 		}
 
+		genType := strings.TrimSpace(body.GenerationType)
+		if genType == "" {
+			genType = pipeline.GenTypeSinglePage
+		}
+		if !pipeline.IsValidGenerationType(genType) {
+			writeError(w, http.StatusBadRequest, "invalid generation_type")
+			return
+		}
+
 		d := sqlstore.Domain{
 			ID:             uuid.NewString(),
 			ProjectID:      projectID,
@@ -986,6 +1048,7 @@ func (s *Server) handleProjectDomains(w http.ResponseWriter, r *http.Request, pr
 			TargetLanguage: p.TargetLanguage,
 			ServerID:       sqlstore.NullableString(serverIDToUse),
 			Status:         domainStatus,
+			GenerationType: genType,
 		}
 
 		if pubPath != "" {
@@ -1093,6 +1156,8 @@ func (s *Server) handleDomainActions(w http.ResponseWriter, r *http.Request) {
 		s.handleDomainFiles(w, r, domainID, parts[2:])
 	case "index-checks":
 		s.handleDomainIndexChecks(w, r, domainID, parts[2:])
+	case "index-checker":
+		s.handleDomainIndexCheckerControl(w, r, domainID)
 	case "prompts":
 		stage := ""
 		if len(parts) > 2 {
@@ -1134,6 +1199,7 @@ func (s *Server) handleDomainBase(w http.ResponseWriter, r *http.Request, domain
 			ServerID        *string `json:"server_id"`
 			LinkAnchorText  *string `json:"link_anchor_text"`
 			LinkAcceptorURL *string `json:"link_acceptor_url"`
+			GenerationType  *string `json:"generation_type"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid body")
@@ -1200,6 +1266,19 @@ func (s *Server) handleDomainBase(w http.ResponseWriter, r *http.Request, domain
 			if _, err := s.domains.UpdateLinkSettings(r.Context(), domainID, linkAnchor, linkAcceptor); err != nil {
 				writeError(w, http.StatusInternalServerError, "could not update domain")
 				return
+			}
+		}
+		if body.GenerationType != nil {
+			gt := strings.TrimSpace(*body.GenerationType)
+			if gt != "" {
+				if !pipeline.IsValidGenerationType(gt) {
+					writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid generation_type: %s", gt))
+					return
+				}
+				if err := s.domains.UpdateGenerationType(r.Context(), domainID, gt); err != nil {
+					writeError(w, http.StatusInternalServerError, "could not update generation type")
+					return
+				}
 			}
 		}
 		d, _ = s.domains.Get(r.Context(), domainID)
@@ -1272,7 +1351,8 @@ func (s *Server) handleDomainGenerate(w http.ResponseWriter, r *http.Request, do
 	}
 
 	var req struct {
-		ForceStep string `json:"force_step,omitempty"`
+		ForceStep      string `json:"force_step,omitempty"`
+		GenerationType string `json:"generation_type,omitempty"`
 	}
 	if r.Body != nil {
 		defer r.Body.Close()
@@ -1282,6 +1362,23 @@ func (s *Server) handleDomainGenerate(w http.ResponseWriter, r *http.Request, do
 		}
 	}
 	forceStep := strings.TrimSpace(req.ForceStep)
+
+	// Determine effective generation type: request override > domain default > single_page
+	effectiveGenType := d.GenerationType
+	if effectiveGenType == "" {
+		effectiveGenType = pipeline.GenTypeSinglePage
+	}
+	if gt := strings.TrimSpace(req.GenerationType); gt != "" {
+		if !pipeline.IsValidGenerationType(gt) {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid generation_type: %s", gt))
+			return
+		}
+		effectiveGenType = gt
+	}
+	if !pipeline.IsActiveGenerationType(effectiveGenType) {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("generation type '%s' is not yet supported", effectiveGenType))
+		return
+	}
 
 	// Проверяем наличие API ключа у владельца проекта (или у админа, если он запускает)
 	keyOwnerEmail := p.UserEmail
@@ -1334,7 +1431,7 @@ func (s *Server) handleDomainGenerate(w http.ResponseWriter, r *http.Request, do
 			return
 		}
 	}
-	if strings.TrimSpace(d.MainKeyword) == "" {
+	if effectiveGenType == pipeline.GenTypeSinglePage && strings.TrimSpace(d.MainKeyword) == "" {
 		writeError(w, http.StatusBadRequest, "keyword is required")
 		return
 	}
@@ -1369,13 +1466,14 @@ func (s *Server) handleDomainGenerate(w http.ResponseWriter, r *http.Request, do
 	}
 
 	gen := sqlstore.Generation{
-		ID:          genID,
-		DomainID:    domainID,
-		RequestedBy: sqlstore.NullableString(user.Email),
-		Status:      "pending",
-		Progress:    0,
-		Logs:        json.RawMessage(`[]`),
-		Artifacts:   baseArtifacts,
+		ID:             genID,
+		DomainID:       domainID,
+		RequestedBy:    sqlstore.NullableString(user.Email),
+		GenerationType: effectiveGenType,
+		Status:         "pending",
+		Progress:       0,
+		Logs:           json.RawMessage(`[]`),
+		Artifacts:      baseArtifacts,
 	}
 	if err := s.generations.Create(r.Context(), gen); err != nil {
 		writeError(w, http.StatusInternalServerError, "could not create generation")
@@ -1390,7 +1488,7 @@ func (s *Server) handleDomainGenerate(w http.ResponseWriter, r *http.Request, do
 		writeError(w, http.StatusServiceUnavailable, "queue unavailable")
 		return
 	}
-	task := tasks.NewGenerateTask(genID, domainID, forceStep)
+	task := tasks.NewGenerateTask(genID, domainID, forceStep, effectiveGenType)
 	queue := s.genQueueForProject(d.ProjectID)
 	if _, err := s.tasks.Enqueue(r.Context(), task, asynq.Queue(queue)); err != nil {
 		if s.logger != nil {

@@ -3,6 +3,7 @@ package httpserver
 import (
 	"context"
 	"database/sql"
+	"path"
 	"strings"
 
 	"obzornik-pbn-generator/internal/domainfs"
@@ -68,4 +69,19 @@ func (s *Server) deleteDomainPathInBackend(ctx context.Context, domain sqlstore.
 
 func (s *Server) deleteDomainPathRecursiveInBackend(ctx context.Context, domain sqlstore.Domain, relPath string) error {
 	return s.resolveContentBackend().DeleteAll(ctx, makeDomainFSContext(domain), relPath)
+}
+
+// cleanupEmptyParentDirs walks up from the deleted file's parent directory
+// and removes each empty directory until it hits a non-empty one or the domain root.
+func (s *Server) cleanupEmptyParentDirs(ctx context.Context, domain sqlstore.Domain, filePath string) {
+	dir := path.Dir(filePath)
+	for dir != "" && dir != "." && dir != "/" {
+		entries, err := s.readDomainDirInBackend(ctx, domain, dir)
+		if err != nil || len(entries) > 0 {
+			break
+		}
+		// Directory is empty — remove it
+		_ = s.deleteDomainPathInBackend(ctx, domain, dir)
+		dir = path.Dir(dir)
+	}
 }

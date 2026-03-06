@@ -258,11 +258,13 @@ func (b *SSHBackend) DeleteAll(ctx context.Context, dctx DomainFSContext, relPat
 			// чтобы не сломать саму папку ISPmanager
 			cmd = "bash -c 'shopt -s dotglob nullglob; rm -rf " + shellQuote(fullPath) + "/*'"
 		} else {
-			// Если это вложенная папка (assets, css и т.д.), удаляем её целиком
-			cmd = "rm -rf -- " + shellQuote(fullPath)
+			// Если это вложенная папка (assets, css и т.д.), удаляем её целиком.
+			// Пробуем без sudo, если не получится — с sudo (аналогично Delete).
+			cmd = "rm -rf -- " + shellQuote(fullPath) +
+				" || sudo rm -rf -- " + shellQuote(fullPath)
 		}
 
-		// 2. Выполняем удаление безопасно, без sudo
+		// 2. Выполняем удаление
 		_, stderr, runErr := runSSHCommand(ctx, client, cmd, nil)
 
 		// 3. Возвращаем права владельцу сайта на корень (т.к. корень мы не удалили)

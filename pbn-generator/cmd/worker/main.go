@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 
 	"obzornik-pbn-generator/internal/config"
 	"obzornik-pbn-generator/internal/db"
+	"obzornik-pbn-generator/internal/importer/legacy"
 	"obzornik-pbn-generator/internal/indexchecker"
 	"obzornik-pbn-generator/internal/store/sqlstore"
 	"obzornik-pbn-generator/internal/tasks"
@@ -42,12 +44,12 @@ func main() {
 	llmUsageStore := sqlstore.NewLLMUsageStore(dbConn)
 	modelPricingStore := sqlstore.NewModelPricingStore(dbConn)
 	siteFileStore := sqlstore.NewSiteFileStore(dbConn)
-	fileEditStore := sqlstore.NewFileEditStore(dbConn)
+	fileEditStore := sqlstore.NewFileEditStore(dbConn, cfg.FileRevisionMaxPerFile)
 	linkTaskStore := sqlstore.NewLinkTaskStore(dbConn)
 	indexCheckStore := sqlstore.NewIndexCheckStore(dbConn)
 	checkHistoryStore := sqlstore.NewCheckHistoryStore(dbConn)
 	auditStore := sqlstore.NewAuditStore(dbConn)
-	publishContentBackend, sshPool, err := buildPublishContentBackend(cfg)
+	publishContentBackend, sshPool, sshBackend, err := buildPublishContentBackend(cfg)
 	if err != nil {
 		sugar.Fatalf("failed to init publish content backend: %v", err)
 	}
@@ -125,8 +127,69 @@ func main() {
 		return err
 	})
 
+	// Legacy import handler
+	legacyImportStore := sqlstore.NewLegacyImportStore(dbConn)
+	if sshBackend != nil {
+		webImportSvc := legacy.NewWebImportService(
+			domainStore,
+			siteFileStore,
+			linkTaskStore,
+			genStore,
+			promptStore,
+			sshBackend,
+			legacyImportStore,
+		)
+		mux.HandleFunc(tasks.TaskLegacyImport, func(ctx context.Context, t *asynq.Task) error {
+			payload, err := tasks.ParseLegacyImportPayload(t)
+			if err != nil {
+				return err
+			}
+			item, err := legacyImportStore.GetItem(ctx, payload.ItemID)
+			if err != nil {
+				return fmt.Errorf("load import item: %w", err)
+			}
+			domain, err := domainStore.Get(ctx, payload.DomainID)
+			if err != nil {
+				return fmt.Errorf("load domain: %w", err)
+			}
+			job, err := legacyImportStore.GetJob(ctx, payload.JobID)
+			if err != nil {
+				return fmt.Errorf("load import job: %w", err)
+			}
+			if job.Status == "pending" {
+				_ = legacyImportStore.UpdateJobStarted(ctx, job.ID)
+			}
+
+			processErr := webImportSvc.ProcessSingleDomain(ctx, job.ID, item.ID, domain, job.RequestedBy, job.ForceOverwrite)
+
+			if processErr != nil {
+				_ = legacyImportStore.IncrementJobFailed(ctx, job.ID)
+			} else {
+				_ = legacyImportStore.IncrementJobCompleted(ctx, job.ID)
+			}
+
+			// Check if all items are processed and finalize the job.
+			updatedJob, err := legacyImportStore.GetJob(ctx, job.ID)
+			if err == nil {
+				processed := updatedJob.CompletedItems + updatedJob.FailedItems + updatedJob.SkippedItems
+				if processed >= updatedJob.TotalItems {
+					status := "completed"
+					if updatedJob.FailedItems > 0 && updatedJob.CompletedItems == 0 {
+						status = "failed"
+					}
+					_ = legacyImportStore.UpdateJobFinished(ctx, job.ID, status, nil)
+				}
+			}
+
+			return processErr
+		})
+		sugar.Info("legacy import handler registered")
+	} else {
+		sugar.Warn("SSH backend not configured; legacy import handler not registered")
+	}
+
 	// Запускаем cleanup worker в отдельной горутине
-	go runCleanupWorker(context.Background(), cfg, genStore, sugar)
+	go runCleanupWorker(context.Background(), cfg, genStore, fileEditStore, sugar)
 
 	sugar.Infof("starting worker on redis %s", cfg.RedisAddr)
 	if err := server.Run(mux); err != nil {
@@ -141,7 +204,7 @@ func mustJSON(v any) []byte {
 
 // runCleanupWorker периодически запускает очистку старых артефактов
 // Запускается раз в день в 3:00 UTC
-func runCleanupWorker(ctx context.Context, cfg config.Config, genStore *sqlstore.GenerationStore, logger *zap.SugaredLogger) {
+func runCleanupWorker(ctx context.Context, cfg config.Config, genStore *sqlstore.GenerationStore, fileEditStore *sqlstore.FileEditSQLStore, logger *zap.SugaredLogger) {
 	// Вычисляем время до следующего запуска (3:00 UTC)
 	now := time.Now().UTC()
 	nextRun := time.Date(now.Year(), now.Month(), now.Day(), 3, 0, 0, 0, time.UTC)
@@ -156,7 +219,7 @@ func runCleanupWorker(ctx context.Context, cfg config.Config, genStore *sqlstore
 	time.Sleep(initialDelay)
 
 	// Запускаем cleanup сразу при старте (если прошло время)
-	runCleanup(ctx, cfg, genStore, logger)
+	runCleanup(ctx, cfg, genStore, fileEditStore, logger)
 
 	// Затем запускаем каждые 24 часа
 	ticker := time.NewTicker(24 * time.Hour)
@@ -168,25 +231,36 @@ func runCleanupWorker(ctx context.Context, cfg config.Config, genStore *sqlstore
 			logger.Info("cleanup worker stopped")
 			return
 		case <-ticker.C:
-			runCleanup(ctx, cfg, genStore, logger)
+			runCleanup(ctx, cfg, genStore, fileEditStore, logger)
 		}
 	}
 }
 
 // runCleanup выполняет очистку старых генераций
-func runCleanup(ctx context.Context, cfg config.Config, genStore *sqlstore.GenerationStore, logger *zap.SugaredLogger) {
-	logger.Info("starting cleanup of old generations")
+func runCleanup(ctx context.Context, cfg config.Config, genStore *sqlstore.GenerationStore, fileEditStore *sqlstore.FileEditSQLStore, logger *zap.SugaredLogger) {
+	logger.Info("starting cleanup")
 	startTime := time.Now()
 
 	// Удаляем генерации со статусами cancelled и error старше ArtifactRetentionDays дней
 	statuses := []string{"cancelled", "error"}
-	deletedCount, err := genStore.DeleteOldGenerations(ctx, cfg.ArtifactRetentionDays, statuses)
+	deletedGens, err := genStore.DeleteOldGenerations(ctx, cfg.ArtifactRetentionDays, statuses)
 	if err != nil {
-		logger.Errorf("cleanup failed: %v", err)
-		return
+		logger.Errorf("generation cleanup failed: %v", err)
+	} else {
+		logger.Infof("generation cleanup: deleted %d older than %d days (statuses: %v)",
+			deletedGens, cfg.ArtifactRetentionDays, statuses)
 	}
 
-	duration := time.Since(startTime)
-	logger.Infof("cleanup completed: deleted %d generations older than %d days (statuses: %v) in %v",
-		deletedCount, cfg.ArtifactRetentionDays, statuses, duration)
+	// Удаляем старые ревизии файлов, оставляя keepPerFile новейших
+	if cfg.FileRevisionMaxPerFile > 0 {
+		prunedRevs, err := fileEditStore.PruneOldRevisions(ctx, cfg.FileRevisionMaxPerFile)
+		if err != nil {
+			logger.Errorf("revision pruning failed: %v", err)
+		} else if prunedRevs > 0 {
+			logger.Infof("revision pruning: deleted %d old revisions (keeping %d per file)",
+				prunedRevs, cfg.FileRevisionMaxPerFile)
+		}
+	}
+
+	logger.Infof("cleanup completed in %v", time.Since(startTime))
 }

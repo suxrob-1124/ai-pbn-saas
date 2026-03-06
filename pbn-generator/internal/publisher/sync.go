@@ -25,9 +25,11 @@ type SiteFileStore interface {
 	List(ctx context.Context, domainID string) ([]sqlstore.SiteFile, error)
 	Update(ctx context.Context, fileID string, content []byte) error
 	Delete(ctx context.Context, fileID string) error
+	ClearHistory(ctx context.Context, domainID string) error
 }
 
 // SyncPublishedFilesFromMap синхронизирует файлы домена в БД по уже собранной map.
+// При перегенерации очищает историю ревизий/правок, чтобы не оставлять данные от предыдущей генерации.
 func SyncPublishedFilesFromMap(ctx context.Context, domainID string, files map[string][]byte, store SiteFileStore) (int, int64, error) {
 	if store == nil {
 		return 0, 0, errors.New("site file store is nil")
@@ -37,6 +39,11 @@ func SyncPublishedFilesFromMap(ctx context.Context, domainID string, files map[s
 	}
 	if len(files) == 0 {
 		return 0, 0, errors.New("sync files: no files provided")
+	}
+
+	// Очищаем историю файлов перед синком — перегенерация = новый сайт с нуля.
+	if err := store.ClearHistory(ctx, domainID); err != nil {
+		return 0, 0, fmt.Errorf("sync files: clear history: %w", err)
 	}
 
 	fileCount := 0
@@ -103,6 +110,7 @@ func SyncPublishedFilesFromMap(ctx context.Context, domainID string, files map[s
 }
 
 // SyncPublishedFiles сканирует опубликованные файлы и синхронизирует их с БД.
+// При перегенерации очищает историю ревизий/правок, чтобы не оставлять данные от предыдущей генерации.
 func SyncPublishedFiles(ctx context.Context, baseDir, domainName, domainID string, store SiteFileStore) (int, int64, error) {
 	if store == nil {
 		return 0, 0, errors.New("site file store is nil")
@@ -110,6 +118,12 @@ func SyncPublishedFiles(ctx context.Context, baseDir, domainName, domainID strin
 	if ctx.Err() != nil {
 		return 0, 0, ctx.Err()
 	}
+
+	// Очищаем историю файлов перед синком — перегенерация = новый сайт с нуля.
+	if err := store.ClearHistory(ctx, domainID); err != nil {
+		return 0, 0, fmt.Errorf("sync files: clear history: %w", err)
+	}
+
 	root := filepath.Join(baseDir, domainName)
 	info, err := os.Stat(root)
 	if err != nil {

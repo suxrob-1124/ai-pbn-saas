@@ -17,6 +17,7 @@ const (
 	TaskSchedulerTick = "scheduler:tick"
 	TaskProcessLink   = "link:process"
 	TaskProcessIndex  = "index:process"
+	TaskLegacyImport  = "legacy:import"
 )
 
 const (
@@ -26,9 +27,10 @@ const (
 )
 
 type GeneratePayload struct {
-	GenerationID string `json:"generation_id"`
-	DomainID     string `json:"domain_id"`
-	ForceStep    string `json:"force_step,omitempty"` // С какого шага начать принудительно (и все последующие)
+	GenerationID   string `json:"generation_id"`
+	DomainID       string `json:"domain_id"`
+	ForceStep      string `json:"force_step,omitempty"`      // С какого шага начать принудительно (и все последующие)
+	GenerationType string `json:"generation_type,omitempty"` // Тип генерации (single_page, webarchive_single, ...)
 }
 
 // LinkTaskPayload описывает задачу линкбилдинга.
@@ -40,11 +42,18 @@ type IndexCheckPayload struct {
 	CheckID string `json:"check_id"`
 }
 
-func NewGenerateTask(genID, domainID string, forceStep string) *asynq.Task {
+type LegacyImportPayload struct {
+	JobID    string `json:"job_id"`
+	ItemID   string `json:"item_id"`
+	DomainID string `json:"domain_id"`
+}
+
+func NewGenerateTask(genID, domainID string, forceStep string, generationType string) *asynq.Task {
 	payload, _ := json.Marshal(GeneratePayload{
-		GenerationID: genID,
-		DomainID:     domainID,
-		ForceStep:    forceStep,
+		GenerationID:   genID,
+		DomainID:       domainID,
+		ForceStep:      forceStep,
+		GenerationType: generationType,
 	})
 	return asynq.NewTask(TaskGenerate, payload, asynq.MaxRetry(5))
 }
@@ -62,6 +71,15 @@ func NewLinkTaskTask(taskID string) *asynq.Task {
 func NewIndexCheckTask(checkID string) *asynq.Task {
 	payload, _ := json.Marshal(IndexCheckPayload{CheckID: checkID})
 	return asynq.NewTask(TaskProcessIndex, payload, asynq.MaxRetry(0))
+}
+
+func NewLegacyImportTask(jobID, itemID, domainID string) *asynq.Task {
+	payload, _ := json.Marshal(LegacyImportPayload{
+		JobID:    jobID,
+		ItemID:   itemID,
+		DomainID: domainID,
+	})
+	return asynq.NewTask(TaskLegacyImport, payload, asynq.MaxRetry(2))
 }
 
 type Enqueuer interface {
@@ -183,6 +201,17 @@ func ParseIndexCheckPayload(task *asynq.Task) (IndexCheckPayload, error) {
 	}
 	if strings.TrimSpace(p.CheckID) == "" {
 		return p, fmt.Errorf("missing check id")
+	}
+	return p, nil
+}
+
+func ParseLegacyImportPayload(task *asynq.Task) (LegacyImportPayload, error) {
+	var p LegacyImportPayload
+	if err := json.Unmarshal(task.Payload(), &p); err != nil {
+		return p, fmt.Errorf("invalid payload: %w", err)
+	}
+	if p.JobID == "" || p.ItemID == "" || p.DomainID == "" {
+		return p, fmt.Errorf("missing ids")
 	}
 	return p, nil
 }

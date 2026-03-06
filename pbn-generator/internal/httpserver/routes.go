@@ -39,6 +39,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.Handle("/api/links", s.withAuth(http.HandlerFunc(s.handleLinks)))
 	mux.Handle("/api/links/", s.withAuth(http.HandlerFunc(s.handleLinkByID)))
 	mux.Handle("/api/queue/", s.withAuth(http.HandlerFunc(s.handleQueueItem)))
+	mux.Handle("/api/admin/index-checker/control", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminIndexCheckerControl))))
 	mux.Handle("/api/admin/index-checks", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminIndexChecks))))
 	mux.Handle("/api/admin/index-checks/run", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminIndexChecksRun))))
 	mux.Handle("/api/admin/index-checks/stats", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminIndexChecksStats))))

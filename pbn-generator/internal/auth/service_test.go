@@ -85,6 +85,14 @@ func (m *mockUserStore) GetAPIKey(ctx context.Context, email string) ([]byte, *t
 	return nil, nil, errors.New("not implemented")
 }
 
+func (m *mockUserStore) Delete(ctx context.Context, email string) error {
+	if _, ok := m.users[email]; !ok {
+		return errors.New("not found")
+	}
+	delete(m.users, email)
+	return nil
+}
+
 func setupServiceForRoleTests(t *testing.T) (*Service, *mockUserStore) {
 	t.Helper()
 	logger := zap.NewNop().Sugar()
@@ -210,13 +218,6 @@ func TestSetUserRole_InvalidRoles(t *testing.T) {
 			errorMsg: "role is required",
 		},
 		{
-			name:     "invalid role: user",
-			email:    "user@example.com",
-			role:     "user",
-			wantErr:  true,
-			errorMsg: "invalid role",
-		},
-		{
 			name:     "invalid role: owner",
 			email:    "user@example.com",
 			role:     "owner",
@@ -269,8 +270,8 @@ func TestSetUserRole_InvalidRoles(t *testing.T) {
 
 func TestSetUserRole_ValidSystemRoles(t *testing.T) {
 	// Тест проверяет, что ValidSystemRoles содержит только допустимые роли
-	if len(ValidSystemRoles) != 2 {
-		t.Errorf("ValidSystemRoles should contain exactly 2 roles, got %d", len(ValidSystemRoles))
+	if len(ValidSystemRoles) != 3 {
+		t.Errorf("ValidSystemRoles should contain exactly 3 roles, got %d", len(ValidSystemRoles))
 	}
 
 	if !ValidSystemRoles["admin"] {
@@ -281,9 +282,13 @@ func TestSetUserRole_ValidSystemRoles(t *testing.T) {
 		t.Error("ValidSystemRoles should contain 'manager'")
 	}
 
+	if !ValidSystemRoles["user"] {
+		t.Error("ValidSystemRoles should contain 'user'")
+	}
+
 	// Проверяем, что нет других ролей
 	for role := range ValidSystemRoles {
-		if role != "admin" && role != "manager" {
+		if role != "admin" && role != "manager" && role != "user" {
 			t.Errorf("ValidSystemRoles contains unexpected role: %s", role)
 		}
 	}

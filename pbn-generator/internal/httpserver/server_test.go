@@ -72,7 +72,7 @@ func setupServer(t *testing.T) *Server {
   genQueue := newStubGenQueueStore()
   indexChecks := newStubIndexCheckStore()
   checkHistory := newStubCheckHistoryStore()
-  return New(cfg, svc, logger, proj, nil, dom, gen, prompts, promptOverrides, deployments, schedules, linkSchedules, nil, siteFiles, fileEdits, linkTasks, genQueue, indexChecks, checkHistory, nil, nil, newStubEnqueuer())
+  return New(cfg, svc, logger, proj, nil, dom, gen, prompts, promptOverrides, deployments, schedules, linkSchedules, nil, siteFiles, fileEdits, linkTasks, genQueue, indexChecks, checkHistory, nil, nil, nil, nil, newStubEnqueuer())
 }
 
 func TestRegisterAndLogin(t *testing.T) {
@@ -2036,6 +2036,21 @@ func (s *stubUserStore) ClearAPIKey(ctx context.Context, email string) error {
 	return nil
 }
 
+func (s *stubUserStore) Delete(ctx context.Context, email string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.users[email]; !ok {
+		return errors.New("not found")
+	}
+	delete(s.users, email)
+	delete(s.verified, email)
+	delete(s.roles, email)
+	delete(s.approved, email)
+	delete(s.apiKeys, email)
+	delete(s.apiKeyAt, email)
+	return nil
+}
+
 func (s *stubUserStore) GetAPIKey(ctx context.Context, email string) ([]byte, *time.Time, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -2331,6 +2346,10 @@ func (s *stubProjectStore) Delete(ctx context.Context, id, email string) error {
 	return errors.New("not found")
 }
 
+func (s *stubProjectStore) UpdateIndexCheckEnabled(ctx context.Context, id string, enabled bool) error {
+	return nil
+}
+
 type stubDomainStore struct {
 	mu      sync.Mutex
 	domains map[string]sqlstore.Domain
@@ -2447,6 +2466,12 @@ func (s *stubDomainStore) UpdateLinkSettings(ctx context.Context, id string, anc
 	return false, errors.New("not found")
 }
 
+func (s *stubDomainStore) UpdateIndexCheckEnabled(ctx context.Context, id string, enabled bool) error {
+	return nil
+}
+func (s *stubDomainStore) UpdateGenerationType(ctx context.Context, id, genType string) error {
+	return nil
+}
 func (s *stubDomainStore) EnsureDefaultServer(ctx context.Context, email string) error { return nil }
 
 func (s *stubDomainStore) SetLastGeneration(ctx context.Context, id, genID string) error {

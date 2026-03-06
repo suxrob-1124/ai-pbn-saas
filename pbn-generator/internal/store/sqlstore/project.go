@@ -9,17 +9,18 @@ import (
 )
 
 type Project struct {
-	ID              string
-	UserEmail       string
-	Name            string
-	TargetCountry   string
-	TargetLanguage  string
-	Timezone        sql.NullString
-	GlobalBlacklist []byte
-	DefaultServerID sql.NullString
-	Status          string
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ID                string
+	UserEmail         string
+	Name              string
+	TargetCountry     string
+	TargetLanguage    string
+	Timezone          sql.NullString
+	GlobalBlacklist   []byte
+	DefaultServerID   sql.NullString
+	Status            string
+	IndexCheckEnabled bool
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 type Domain struct {
@@ -52,6 +53,8 @@ type Domain struct {
 	LinkFilePath       sql.NullString
 	LinkAnchorSnapshot sql.NullString
 	LinkReadyAt        sql.NullTime
+	IndexCheckEnabled  bool
+	GenerationType     string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 }
@@ -74,6 +77,7 @@ type Generation struct {
 	StartedAt        sql.NullTime
 	FinishedAt       sql.NullTime
 	PromptID         sql.NullString
+	GenerationType   string
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 }
@@ -103,7 +107,7 @@ func (s *ProjectStore) Create(ctx context.Context, p Project) error {
 }
 
 func (s *ProjectStore) ListByUser(ctx context.Context, email string) ([]Project, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, user_email, name, target_country, target_language, timezone, global_blacklist, default_server_id, status, created_at, updated_at
+	rows, err := s.db.QueryContext(ctx, `SELECT id, user_email, name, target_country, target_language, timezone, global_blacklist, default_server_id, status, index_check_enabled, created_at, updated_at
 FROM projects
 WHERE user_email=$1
    OR EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = projects.id AND pm.user_email = $1)
@@ -116,7 +120,7 @@ ORDER BY updated_at DESC`, email)
 	for rows.Next() {
 		var p Project
 		var gb sql.NullString
-		if err := rows.Scan(&p.ID, &p.UserEmail, &p.Name, &p.TargetCountry, &p.TargetLanguage, &p.Timezone, &gb, &p.DefaultServerID, &p.Status, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.UserEmail, &p.Name, &p.TargetCountry, &p.TargetLanguage, &p.Timezone, &gb, &p.DefaultServerID, &p.Status, &p.IndexCheckEnabled, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if gb.Valid {
@@ -130,10 +134,10 @@ ORDER BY updated_at DESC`, email)
 func (s *ProjectStore) Get(ctx context.Context, id, email string) (Project, error) {
 	var p Project
 	var gb sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT id, user_email, name, target_country, target_language, timezone, global_blacklist, default_server_id, status, created_at, updated_at
+	err := s.db.QueryRowContext(ctx, `SELECT id, user_email, name, target_country, target_language, timezone, global_blacklist, default_server_id, status, index_check_enabled, created_at, updated_at
 FROM projects
 WHERE id=$1 AND (user_email=$2 OR EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = projects.id AND pm.user_email = $2))`, id, email).
-		Scan(&p.ID, &p.UserEmail, &p.Name, &p.TargetCountry, &p.TargetLanguage, &p.Timezone, &gb, &p.DefaultServerID, &p.Status, &p.CreatedAt, &p.UpdatedAt)
+		Scan(&p.ID, &p.UserEmail, &p.Name, &p.TargetCountry, &p.TargetLanguage, &p.Timezone, &gb, &p.DefaultServerID, &p.Status, &p.IndexCheckEnabled, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return Project{}, err
 	}
@@ -144,8 +148,14 @@ WHERE id=$1 AND (user_email=$2 OR EXISTS (SELECT 1 FROM project_members pm WHERE
 }
 
 func (s *ProjectStore) Update(ctx context.Context, p Project) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE projects SET name=$1, target_country=$2, target_language=$3, timezone=$4, global_blacklist=$5, default_server_id=$6, status=$7, updated_at=NOW() WHERE id=$8 AND user_email=$9`,
-		p.Name, p.TargetCountry, p.TargetLanguage, nullableString(p.Timezone), nullableBytes(p.GlobalBlacklist), nullableString(p.DefaultServerID), p.Status, p.ID, p.UserEmail)
+	_, err := s.db.ExecContext(ctx, `UPDATE projects SET name=$1, target_country=$2, target_language=$3, timezone=$4, global_blacklist=$5, default_server_id=$6, status=$7, index_check_enabled=$8, updated_at=NOW() WHERE id=$9 AND user_email=$10`,
+		p.Name, p.TargetCountry, p.TargetLanguage, nullableString(p.Timezone), nullableBytes(p.GlobalBlacklist), nullableString(p.DefaultServerID), p.Status, p.IndexCheckEnabled, p.ID, p.UserEmail)
+	return err
+}
+
+// UpdateIndexCheckEnabled toggles automatic index checking for a project.
+func (s *ProjectStore) UpdateIndexCheckEnabled(ctx context.Context, id string, enabled bool) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE projects SET index_check_enabled=$1, updated_at=NOW() WHERE id=$2`, enabled, id)
 	return err
 }
 
@@ -155,7 +165,7 @@ func (s *ProjectStore) Delete(ctx context.Context, id, email string) error {
 }
 
 func (s *ProjectStore) ListAll(ctx context.Context) ([]Project, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, user_email, name, target_country, target_language, timezone, global_blacklist, default_server_id, status, created_at, updated_at FROM projects ORDER BY updated_at DESC`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, user_email, name, target_country, target_language, timezone, global_blacklist, default_server_id, status, index_check_enabled, created_at, updated_at FROM projects ORDER BY updated_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +174,7 @@ func (s *ProjectStore) ListAll(ctx context.Context) ([]Project, error) {
 	for rows.Next() {
 		var p Project
 		var gb sql.NullString
-		if err := rows.Scan(&p.ID, &p.UserEmail, &p.Name, &p.TargetCountry, &p.TargetLanguage, &p.Timezone, &gb, &p.DefaultServerID, &p.Status, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.UserEmail, &p.Name, &p.TargetCountry, &p.TargetLanguage, &p.Timezone, &gb, &p.DefaultServerID, &p.Status, &p.IndexCheckEnabled, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if gb.Valid {
@@ -177,7 +187,7 @@ func (s *ProjectStore) ListAll(ctx context.Context) ([]Project, error) {
 
 // ListByNameExact возвращает проекты с точным совпадением имени.
 func (s *ProjectStore) ListByNameExact(ctx context.Context, name string) ([]Project, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, user_email, name, target_country, target_language, timezone, global_blacklist, default_server_id, status, created_at, updated_at
+	rows, err := s.db.QueryContext(ctx, `SELECT id, user_email, name, target_country, target_language, timezone, global_blacklist, default_server_id, status, index_check_enabled, created_at, updated_at
 FROM projects
 WHERE name=$1
 ORDER BY updated_at DESC`, name)
@@ -190,7 +200,7 @@ ORDER BY updated_at DESC`, name)
 	for rows.Next() {
 		var p Project
 		var gb sql.NullString
-		if err := rows.Scan(&p.ID, &p.UserEmail, &p.Name, &p.TargetCountry, &p.TargetLanguage, &p.Timezone, &gb, &p.DefaultServerID, &p.Status, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.UserEmail, &p.Name, &p.TargetCountry, &p.TargetLanguage, &p.Timezone, &gb, &p.DefaultServerID, &p.Status, &p.IndexCheckEnabled, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if gb.Valid {
@@ -204,8 +214,8 @@ ORDER BY updated_at DESC`, name)
 func (s *ProjectStore) GetByID(ctx context.Context, id string) (Project, error) {
 	var p Project
 	var gb sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT id, user_email, name, target_country, target_language, timezone, global_blacklist, default_server_id, status, created_at, updated_at FROM projects WHERE id=$1`, id).
-		Scan(&p.ID, &p.UserEmail, &p.Name, &p.TargetCountry, &p.TargetLanguage, &p.Timezone, &gb, &p.DefaultServerID, &p.Status, &p.CreatedAt, &p.UpdatedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT id, user_email, name, target_country, target_language, timezone, global_blacklist, default_server_id, status, index_check_enabled, created_at, updated_at FROM projects WHERE id=$1`, id).
+		Scan(&p.ID, &p.UserEmail, &p.Name, &p.TargetCountry, &p.TargetLanguage, &p.Timezone, &gb, &p.DefaultServerID, &p.Status, &p.IndexCheckEnabled, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return Project{}, err
 	}
@@ -228,20 +238,25 @@ const DefaultServerName = "seotech-web-media1"
 const DefaultServerIP = "46.21.250.153"
 
 func (s *DomainStore) Create(ctx context.Context, d Domain) error {
-  _, err := s.db.ExecContext(ctx, `INSERT INTO domains(id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, published_path, site_owner, created_at, updated_at)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW(),NOW())`,
-    d.ID, 
-    d.ProjectID, 
-    nullableString(d.ServerID), 
-    d.URL, 
-    d.MainKeyword, 
-    d.TargetCountry, 
-    d.TargetLanguage, 
-    nullableString(d.ExcludeDomains), 
-    nullableBytes(d.SpecificBlacklist), 
+  genType := d.GenerationType
+  if genType == "" {
+    genType = "single_page"
+  }
+  _, err := s.db.ExecContext(ctx, `INSERT INTO domains(id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, published_path, site_owner, generation_type, created_at, updated_at)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW(),NOW())`,
+    d.ID,
+    d.ProjectID,
+    nullableString(d.ServerID),
+    d.URL,
+    d.MainKeyword,
+    d.TargetCountry,
+    d.TargetLanguage,
+    nullableString(d.ExcludeDomains),
+    nullableBytes(d.SpecificBlacklist),
     d.Status,
     nullableString(d.PublishedPath),
-    nullableString(d.SiteOwner))
+    nullableString(d.SiteOwner),
+    genType)
   if err != nil {
     return fmt.Errorf("failed to create domain: %w", err)
   }
@@ -249,7 +264,7 @@ func (s *DomainStore) Create(ctx context.Context, d Domain) error {
 }
 
 func (s *DomainStore) ListByProject(ctx context.Context, projectID string) ([]Domain, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, last_success_generation_id, published_at, published_path, file_count, total_size_bytes, deployment_mode, site_owner, inventory_status, inventory_checked_at, inventory_error, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, created_at, updated_at FROM domains WHERE project_id=$1 ORDER BY updated_at DESC`, projectID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, last_success_generation_id, published_at, published_path, file_count, total_size_bytes, deployment_mode, site_owner, inventory_status, inventory_checked_at, inventory_error, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, index_check_enabled, generation_type, created_at, updated_at FROM domains WHERE project_id=$1 ORDER BY updated_at DESC`, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -258,7 +273,7 @@ func (s *DomainStore) ListByProject(ctx context.Context, projectID string) ([]Do
 	for rows.Next() {
 		var d Domain
 		var sb sql.NullString
-		if err := rows.Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.LastSuccessGenID, &d.PublishedAt, &d.PublishedPath, &d.FileCount, &d.TotalSizeBytes, &d.DeploymentMode, &d.SiteOwner, &d.InventoryStatus, &d.InventoryCheckedAt, &d.InventoryError, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.LinkReadyAt, &d.CreatedAt, &d.UpdatedAt); err != nil {
+		if err := rows.Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.LastSuccessGenID, &d.PublishedAt, &d.PublishedPath, &d.FileCount, &d.TotalSizeBytes, &d.DeploymentMode, &d.SiteOwner, &d.InventoryStatus, &d.InventoryCheckedAt, &d.InventoryError, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.LinkReadyAt, &d.IndexCheckEnabled, &d.GenerationType, &d.CreatedAt, &d.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if sb.Valid {
@@ -292,7 +307,7 @@ func (s *DomainStore) ListByIDs(ctx context.Context, ids []string) ([]Domain, er
 		placeholders[i] = fmt.Sprintf("$%d", i+1)
 		args[i] = id
 	}
-	query := fmt.Sprintf(`SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, last_success_generation_id, published_at, published_path, file_count, total_size_bytes, deployment_mode, site_owner, inventory_status, inventory_checked_at, inventory_error, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, created_at, updated_at FROM domains WHERE id IN (%s)`, strings.Join(placeholders, ","))
+	query := fmt.Sprintf(`SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, last_success_generation_id, published_at, published_path, file_count, total_size_bytes, deployment_mode, site_owner, inventory_status, inventory_checked_at, inventory_error, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, index_check_enabled, generation_type, created_at, updated_at FROM domains WHERE id IN (%s)`, strings.Join(placeholders, ","))
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -302,7 +317,7 @@ func (s *DomainStore) ListByIDs(ctx context.Context, ids []string) ([]Domain, er
 	for rows.Next() {
 		var d Domain
 		var sb sql.NullString
-		if err := rows.Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.LastSuccessGenID, &d.PublishedAt, &d.PublishedPath, &d.FileCount, &d.TotalSizeBytes, &d.DeploymentMode, &d.SiteOwner, &d.InventoryStatus, &d.InventoryCheckedAt, &d.InventoryError, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.LinkReadyAt, &d.CreatedAt, &d.UpdatedAt); err != nil {
+		if err := rows.Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.LastSuccessGenID, &d.PublishedAt, &d.PublishedPath, &d.FileCount, &d.TotalSizeBytes, &d.DeploymentMode, &d.SiteOwner, &d.InventoryStatus, &d.InventoryCheckedAt, &d.InventoryError, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.LinkReadyAt, &d.IndexCheckEnabled, &d.GenerationType, &d.CreatedAt, &d.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if sb.Valid {
@@ -316,8 +331,8 @@ func (s *DomainStore) ListByIDs(ctx context.Context, ids []string) ([]Domain, er
 func (s *DomainStore) Get(ctx context.Context, id string) (Domain, error) {
 	var d Domain
 	var sb sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, last_success_generation_id, published_at, published_path, file_count, total_size_bytes, deployment_mode, site_owner, inventory_status, inventory_checked_at, inventory_error, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, created_at, updated_at FROM domains WHERE id=$1`, id).
-		Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.LastSuccessGenID, &d.PublishedAt, &d.PublishedPath, &d.FileCount, &d.TotalSizeBytes, &d.DeploymentMode, &d.SiteOwner, &d.InventoryStatus, &d.InventoryCheckedAt, &d.InventoryError, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.LinkReadyAt, &d.CreatedAt, &d.UpdatedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, last_success_generation_id, published_at, published_path, file_count, total_size_bytes, deployment_mode, site_owner, inventory_status, inventory_checked_at, inventory_error, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, index_check_enabled, generation_type, created_at, updated_at FROM domains WHERE id=$1`, id).
+		Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.LastSuccessGenID, &d.PublishedAt, &d.PublishedPath, &d.FileCount, &d.TotalSizeBytes, &d.DeploymentMode, &d.SiteOwner, &d.InventoryStatus, &d.InventoryCheckedAt, &d.InventoryError, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.LinkReadyAt, &d.IndexCheckEnabled, &d.GenerationType, &d.CreatedAt, &d.UpdatedAt)
 	if err != nil {
 		return Domain{}, err
 	}
@@ -331,8 +346,8 @@ func (s *DomainStore) Get(ctx context.Context, id string) (Domain, error) {
 func (s *DomainStore) GetByURL(ctx context.Context, url string) (Domain, error) {
 	var d Domain
 	var sb sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, last_success_generation_id, published_at, published_path, file_count, total_size_bytes, deployment_mode, site_owner, inventory_status, inventory_checked_at, inventory_error, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, created_at, updated_at FROM domains WHERE url=$1`, url).
-		Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.LastSuccessGenID, &d.PublishedAt, &d.PublishedPath, &d.FileCount, &d.TotalSizeBytes, &d.DeploymentMode, &d.SiteOwner, &d.InventoryStatus, &d.InventoryCheckedAt, &d.InventoryError, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.LinkReadyAt, &d.CreatedAt, &d.UpdatedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, last_success_generation_id, published_at, published_path, file_count, total_size_bytes, deployment_mode, site_owner, inventory_status, inventory_checked_at, inventory_error, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, index_check_enabled, generation_type, created_at, updated_at FROM domains WHERE url=$1`, url).
+		Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.LastSuccessGenID, &d.PublishedAt, &d.PublishedPath, &d.FileCount, &d.TotalSizeBytes, &d.DeploymentMode, &d.SiteOwner, &d.InventoryStatus, &d.InventoryCheckedAt, &d.InventoryError, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.LinkReadyAt, &d.IndexCheckEnabled, &d.GenerationType, &d.CreatedAt, &d.UpdatedAt)
 	if err != nil {
 		return Domain{}, err
 	}
@@ -497,6 +512,18 @@ func (s *DomainStore) UpdateLinkSettings(ctx context.Context, id string, anchorT
 	return rows > 0, nil
 }
 
+// UpdateIndexCheckEnabled toggles automatic index checking for a domain.
+func (s *DomainStore) UpdateIndexCheckEnabled(ctx context.Context, id string, enabled bool) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE domains SET index_check_enabled=$1, updated_at=NOW() WHERE id=$2`, enabled, id)
+	return err
+}
+
+// UpdateGenerationType changes the generation type for a domain.
+func (s *DomainStore) UpdateGenerationType(ctx context.Context, id, genType string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE domains SET generation_type=$1, updated_at=NOW() WHERE id=$2`, genType, id)
+	return err
+}
+
 // UpdateProject переносит домен в другой проект.
 func (s *DomainStore) UpdateProject(ctx context.Context, id, projectID string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE domains SET project_id=$1, updated_at=NOW() WHERE id=$2`, projectID, id)
@@ -529,8 +556,8 @@ func (s *GenerationStore) Get(ctx context.Context, id string) (Generation, error
 	var g Generation
 	var logs, artifacts, checkpoint sql.NullString
 	var summary sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT id, domain_id, requested_by, status, progress, error, logs, artifacts, artifacts_summary, checkpoint_data, attempts, retryable, next_retry_at, last_error_at, started_at, finished_at, prompt_id, created_at, updated_at FROM generations WHERE id=$1`, id).
-		Scan(&g.ID, &g.DomainID, &g.RequestedBy, &g.Status, &g.Progress, &g.Error, &logs, &artifacts, &summary, &checkpoint, &g.Attempts, &g.Retryable, &g.NextRetryAt, &g.LastErrorAt, &g.StartedAt, &g.FinishedAt, &g.PromptID, &g.CreatedAt, &g.UpdatedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT id, domain_id, requested_by, status, progress, error, logs, artifacts, artifacts_summary, checkpoint_data, attempts, retryable, next_retry_at, last_error_at, started_at, finished_at, prompt_id, generation_type, created_at, updated_at FROM generations WHERE id=$1`, id).
+		Scan(&g.ID, &g.DomainID, &g.RequestedBy, &g.Status, &g.Progress, &g.Error, &logs, &artifacts, &summary, &checkpoint, &g.Attempts, &g.Retryable, &g.NextRetryAt, &g.LastErrorAt, &g.StartedAt, &g.FinishedAt, &g.PromptID, &g.GenerationType, &g.CreatedAt, &g.UpdatedAt)
 	if err != nil {
 		return Generation{}, err
 	}
@@ -550,8 +577,8 @@ func (s *GenerationStore) Get(ctx context.Context, id string) (Generation, error
 }
 
 func (s *GenerationStore) Create(ctx context.Context, g Generation) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO generations(id, domain_id, requested_by, status, progress, error, logs, artifacts, artifacts_summary, checkpoint_data, attempts, retryable, next_retry_at, last_error_at, started_at, finished_at, prompt_id, created_at)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,NOW())`,
+	_, err := s.db.ExecContext(ctx, `INSERT INTO generations(id, domain_id, requested_by, status, progress, error, logs, artifacts, artifacts_summary, checkpoint_data, attempts, retryable, next_retry_at, last_error_at, started_at, finished_at, prompt_id, generation_type, created_at)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,NOW())`,
 		g.ID,
 		g.DomainID,
 		nullableString(g.RequestedBy),
@@ -569,6 +596,7 @@ func (s *GenerationStore) Create(ctx context.Context, g Generation) error {
 		nullableTime(g.StartedAt),
 		nullableTime(g.FinishedAt),
 		nullableString(g.PromptID),
+		g.GenerationType,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create generation: %w", err)
@@ -577,7 +605,7 @@ func (s *GenerationStore) Create(ctx context.Context, g Generation) error {
 }
 
 func (s *GenerationStore) ListByDomain(ctx context.Context, domainID string) ([]Generation, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, domain_id, requested_by, status, progress, error, logs, artifacts, artifacts_summary, checkpoint_data, attempts, retryable, next_retry_at, last_error_at, started_at, finished_at, prompt_id, created_at, updated_at FROM generations WHERE domain_id=$1 ORDER BY created_at DESC`, domainID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, domain_id, requested_by, status, progress, error, logs, artifacts, artifacts_summary, checkpoint_data, attempts, retryable, next_retry_at, last_error_at, started_at, finished_at, prompt_id, generation_type, created_at, updated_at FROM generations WHERE domain_id=$1 ORDER BY created_at DESC`, domainID)
 	if err != nil {
 		return nil, err
 	}
@@ -586,7 +614,7 @@ func (s *GenerationStore) ListByDomain(ctx context.Context, domainID string) ([]
 	for rows.Next() {
 		var g Generation
 		var logs, artifacts, summary, checkpoint sql.NullString
-		if err := rows.Scan(&g.ID, &g.DomainID, &g.RequestedBy, &g.Status, &g.Progress, &g.Error, &logs, &artifacts, &summary, &checkpoint, &g.Attempts, &g.Retryable, &g.NextRetryAt, &g.LastErrorAt, &g.StartedAt, &g.FinishedAt, &g.PromptID, &g.CreatedAt, &g.UpdatedAt); err != nil {
+		if err := rows.Scan(&g.ID, &g.DomainID, &g.RequestedBy, &g.Status, &g.Progress, &g.Error, &logs, &artifacts, &summary, &checkpoint, &g.Attempts, &g.Retryable, &g.NextRetryAt, &g.LastErrorAt, &g.StartedAt, &g.FinishedAt, &g.PromptID, &g.GenerationType, &g.CreatedAt, &g.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if logs.Valid {
@@ -643,7 +671,7 @@ LIMIT $2`, now, limit)
 	for rows.Next() {
 		var g Generation
 		var logs, artifacts, summary, checkpoint sql.NullString
-		if err := rows.Scan(&g.ID, &g.DomainID, &g.RequestedBy, &g.Status, &g.Progress, &g.Error, &logs, &artifacts, &summary, &checkpoint, &g.Attempts, &g.Retryable, &g.NextRetryAt, &g.LastErrorAt, &g.StartedAt, &g.FinishedAt, &g.PromptID, &g.CreatedAt, &g.UpdatedAt); err != nil {
+		if err := rows.Scan(&g.ID, &g.DomainID, &g.RequestedBy, &g.Status, &g.Progress, &g.Error, &logs, &artifacts, &summary, &checkpoint, &g.Attempts, &g.Retryable, &g.NextRetryAt, &g.LastErrorAt, &g.StartedAt, &g.FinishedAt, &g.PromptID, &g.GenerationType, &g.CreatedAt, &g.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if logs.Valid {
@@ -700,7 +728,7 @@ func (s *GenerationStore) GetLastSuccessfulByDomain(ctx context.Context, domainI
 	var logs, artifacts, summary, checkpoint sql.NullString
 	err := s.db.QueryRowContext(ctx, `SELECT id, domain_id, requested_by, status, progress, error, logs, artifacts, artifacts_summary, checkpoint_data, attempts, retryable, next_retry_at, last_error_at, started_at, finished_at, prompt_id, created_at, updated_at
 		FROM generations WHERE domain_id=$1 AND status='success' ORDER BY created_at DESC LIMIT 1`, domainID).
-		Scan(&g.ID, &g.DomainID, &g.RequestedBy, &g.Status, &g.Progress, &g.Error, &logs, &artifacts, &summary, &checkpoint, &g.Attempts, &g.Retryable, &g.NextRetryAt, &g.LastErrorAt, &g.StartedAt, &g.FinishedAt, &g.PromptID, &g.CreatedAt, &g.UpdatedAt)
+		Scan(&g.ID, &g.DomainID, &g.RequestedBy, &g.Status, &g.Progress, &g.Error, &logs, &artifacts, &summary, &checkpoint, &g.Attempts, &g.Retryable, &g.NextRetryAt, &g.LastErrorAt, &g.StartedAt, &g.FinishedAt, &g.PromptID, &g.GenerationType, &g.CreatedAt, &g.UpdatedAt)
 	if err != nil {
 		return Generation{}, err
 	}
@@ -725,7 +753,7 @@ func (s *GenerationStore) GetLastByDomain(ctx context.Context, domainID string) 
 	var logs, artifacts, summary, checkpoint sql.NullString
 	err := s.db.QueryRowContext(ctx, `SELECT id, domain_id, requested_by, status, progress, error, logs, artifacts, artifacts_summary, checkpoint_data, attempts, retryable, next_retry_at, last_error_at, started_at, finished_at, prompt_id, created_at, updated_at
 		FROM generations WHERE domain_id=$1 ORDER BY created_at DESC LIMIT 1`, domainID).
-		Scan(&g.ID, &g.DomainID, &g.RequestedBy, &g.Status, &g.Progress, &g.Error, &logs, &artifacts, &summary, &checkpoint, &g.Attempts, &g.Retryable, &g.NextRetryAt, &g.LastErrorAt, &g.StartedAt, &g.FinishedAt, &g.PromptID, &g.CreatedAt, &g.UpdatedAt)
+		Scan(&g.ID, &g.DomainID, &g.RequestedBy, &g.Status, &g.Progress, &g.Error, &logs, &artifacts, &summary, &checkpoint, &g.Attempts, &g.Retryable, &g.NextRetryAt, &g.LastErrorAt, &g.StartedAt, &g.FinishedAt, &g.PromptID, &g.GenerationType, &g.CreatedAt, &g.UpdatedAt)
 	if err != nil {
 		return Generation{}, err
 	}
@@ -781,7 +809,7 @@ func (s *GenerationStore) ListRecentByUser(ctx context.Context, email string, li
 		args = append(args, "%"+strings.ToLower(term)+"%")
 		idx++
 	}
-	query := fmt.Sprintf(`SELECT g.id, g.domain_id, g.requested_by, g.status, g.progress, g.error, g.logs, g.artifacts, g.artifacts_summary, g.checkpoint_data, g.attempts, g.retryable, g.next_retry_at, g.last_error_at, g.started_at, g.finished_at, g.prompt_id, g.created_at, g.updated_at
+	query := fmt.Sprintf(`SELECT g.id, g.domain_id, g.requested_by, g.status, g.progress, g.error, g.logs, g.artifacts, g.artifacts_summary, g.checkpoint_data, g.attempts, g.retryable, g.next_retry_at, g.last_error_at, g.started_at, g.finished_at, g.prompt_id, g.generation_type, g.created_at, g.updated_at
 FROM generations g
 JOIN domains d ON g.domain_id = d.id
 JOIN projects p ON d.project_id = p.id
@@ -798,7 +826,7 @@ LIMIT $%d OFFSET $%d`, strings.Join(clauses, " AND "), idx, idx+1)
 	for rows.Next() {
 		var g Generation
 		var logs, artifacts, summary, checkpoint sql.NullString
-		if err := rows.Scan(&g.ID, &g.DomainID, &g.RequestedBy, &g.Status, &g.Progress, &g.Error, &logs, &artifacts, &summary, &checkpoint, &g.Attempts, &g.Retryable, &g.NextRetryAt, &g.LastErrorAt, &g.StartedAt, &g.FinishedAt, &g.PromptID, &g.CreatedAt, &g.UpdatedAt); err != nil {
+		if err := rows.Scan(&g.ID, &g.DomainID, &g.RequestedBy, &g.Status, &g.Progress, &g.Error, &logs, &artifacts, &summary, &checkpoint, &g.Attempts, &g.Retryable, &g.NextRetryAt, &g.LastErrorAt, &g.StartedAt, &g.FinishedAt, &g.PromptID, &g.GenerationType, &g.CreatedAt, &g.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if logs.Valid {
@@ -830,7 +858,7 @@ func (s *GenerationStore) ListRecentByUserLite(ctx context.Context, email string
 		args = append(args, "%"+strings.ToLower(term)+"%")
 		idx++
 	}
-	query := fmt.Sprintf(`SELECT g.id, g.domain_id, g.requested_by, g.status, g.progress, g.error, g.attempts, g.retryable, g.next_retry_at, g.last_error_at, g.started_at, g.finished_at, g.prompt_id, g.created_at, g.updated_at
+	query := fmt.Sprintf(`SELECT g.id, g.domain_id, g.requested_by, g.status, g.progress, g.error, g.attempts, g.retryable, g.next_retry_at, g.last_error_at, g.started_at, g.finished_at, g.prompt_id, g.generation_type, g.created_at, g.updated_at
 FROM generations g
 JOIN domains d ON g.domain_id = d.id
 JOIN projects p ON d.project_id = p.id
@@ -846,7 +874,7 @@ LIMIT $%d OFFSET $%d`, strings.Join(clauses, " AND "), idx, idx+1)
 	var res []Generation
 	for rows.Next() {
 		var g Generation
-		if err := rows.Scan(&g.ID, &g.DomainID, &g.RequestedBy, &g.Status, &g.Progress, &g.Error, &g.Attempts, &g.Retryable, &g.NextRetryAt, &g.LastErrorAt, &g.StartedAt, &g.FinishedAt, &g.PromptID, &g.CreatedAt, &g.UpdatedAt); err != nil {
+		if err := rows.Scan(&g.ID, &g.DomainID, &g.RequestedBy, &g.Status, &g.Progress, &g.Error, &g.Attempts, &g.Retryable, &g.NextRetryAt, &g.LastErrorAt, &g.StartedAt, &g.FinishedAt, &g.PromptID, &g.GenerationType, &g.CreatedAt, &g.UpdatedAt); err != nil {
 			return nil, err
 		}
 		res = append(res, g)
@@ -857,7 +885,7 @@ LIMIT $%d OFFSET $%d`, strings.Join(clauses, " AND "), idx, idx+1)
 func (s *GenerationStore) ListRecentAll(ctx context.Context, limit, offset int, search string) ([]Generation, error) {
 	args := []interface{}{}
 	idx := 1
-	query := `SELECT g.id, g.domain_id, g.requested_by, g.status, g.progress, g.error, g.logs, g.artifacts, g.artifacts_summary, g.checkpoint_data, g.attempts, g.retryable, g.next_retry_at, g.last_error_at, g.started_at, g.finished_at, g.prompt_id, g.created_at, g.updated_at
+	query := `SELECT g.id, g.domain_id, g.requested_by, g.status, g.progress, g.error, g.logs, g.artifacts, g.artifacts_summary, g.checkpoint_data, g.attempts, g.retryable, g.next_retry_at, g.last_error_at, g.started_at, g.finished_at, g.prompt_id, g.generation_type, g.created_at, g.updated_at
 FROM generations g`
 	if term := strings.TrimSpace(search); term != "" {
 		query += " LEFT JOIN domains d ON d.id = g.domain_id"
@@ -876,7 +904,7 @@ FROM generations g`
 	for rows.Next() {
 		var g Generation
 		var logs, artifacts, summary, checkpoint sql.NullString
-		if err := rows.Scan(&g.ID, &g.DomainID, &g.RequestedBy, &g.Status, &g.Progress, &g.Error, &logs, &artifacts, &summary, &checkpoint, &g.Attempts, &g.Retryable, &g.NextRetryAt, &g.LastErrorAt, &g.StartedAt, &g.FinishedAt, &g.PromptID, &g.CreatedAt, &g.UpdatedAt); err != nil {
+		if err := rows.Scan(&g.ID, &g.DomainID, &g.RequestedBy, &g.Status, &g.Progress, &g.Error, &logs, &artifacts, &summary, &checkpoint, &g.Attempts, &g.Retryable, &g.NextRetryAt, &g.LastErrorAt, &g.StartedAt, &g.FinishedAt, &g.PromptID, &g.GenerationType, &g.CreatedAt, &g.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if logs.Valid {
@@ -899,7 +927,7 @@ FROM generations g`
 func (s *GenerationStore) ListRecentAllLite(ctx context.Context, limit, offset int, search string) ([]Generation, error) {
 	args := []interface{}{}
 	idx := 1
-	query := `SELECT g.id, g.domain_id, g.requested_by, g.status, g.progress, g.error, g.attempts, g.retryable, g.next_retry_at, g.last_error_at, g.started_at, g.finished_at, g.prompt_id, g.created_at, g.updated_at
+	query := `SELECT g.id, g.domain_id, g.requested_by, g.status, g.progress, g.error, g.attempts, g.retryable, g.next_retry_at, g.last_error_at, g.started_at, g.finished_at, g.prompt_id, g.generation_type, g.created_at, g.updated_at
 FROM generations g`
 	if term := strings.TrimSpace(search); term != "" {
 		query += " LEFT JOIN domains d ON d.id = g.domain_id"
@@ -917,7 +945,7 @@ FROM generations g`
 	var res []Generation
 	for rows.Next() {
 		var g Generation
-		if err := rows.Scan(&g.ID, &g.DomainID, &g.RequestedBy, &g.Status, &g.Progress, &g.Error, &g.Attempts, &g.Retryable, &g.NextRetryAt, &g.LastErrorAt, &g.StartedAt, &g.FinishedAt, &g.PromptID, &g.CreatedAt, &g.UpdatedAt); err != nil {
+		if err := rows.Scan(&g.ID, &g.DomainID, &g.RequestedBy, &g.Status, &g.Progress, &g.Error, &g.Attempts, &g.Retryable, &g.NextRetryAt, &g.LastErrorAt, &g.StartedAt, &g.FinishedAt, &g.PromptID, &g.GenerationType, &g.CreatedAt, &g.UpdatedAt); err != nil {
 			return nil, err
 		}
 		res = append(res, g)
