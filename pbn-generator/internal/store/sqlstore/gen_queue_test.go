@@ -429,7 +429,7 @@ func TestGenQueueStoreListHistoryByProjectPage(t *testing.T) {
 	status := "failed"
 	dateFrom := scheduledFor.Add(-time.Hour)
 	dateTo := scheduledFor.Add(time.Hour)
-	expected := `(?s)SELECT q.id, q.domain_id, q.schedule_id, q.priority, q.scheduled_for, q.status, q.error_message, q.created_at, q.processed_at\s+FROM generation_queue q\s+JOIN domains d ON d.id = q.domain_id\s+WHERE d.project_id=\$1\s+AND q.status IN \('completed','failed'\)\s+AND q.status=\$2\s+AND q.scheduled_for >= \$3\s+AND q.scheduled_for <= \$4\s+AND \(LOWER\(COALESCE\(d.url, ''\)\) LIKE \$5 OR LOWER\(q.domain_id\) LIKE \$5\)\s+ORDER BY`
+	expected := `(?s)SELECT q.id, q.domain_id, q.schedule_id, q.priority, q.scheduled_for, q.status, q.error_message, q.created_at, q.processed_at\s+FROM generation_queue q\s+JOIN domains d ON d.id = q.domain_id\s+WHERE d.project_id=\$1 AND d.deleted_at IS NULL\s+AND q.status IN \('completed','failed'\)\s+AND q.status=\$2\s+AND q.scheduled_for >= \$3\s+AND q.scheduled_for <= \$4\s+AND \(LOWER\(COALESCE\(d.url, ''\)\) LIKE \$5 OR LOWER\(q.domain_id\) LIKE \$5\)\s+ORDER BY`
 	mock.ExpectQuery(expected).
 		WithArgs("project-1", status, dateFrom, dateTo, "%domain%").
 		WillReturnRows(rows)

@@ -21,6 +21,8 @@ type Project struct {
 	IndexCheckEnabled bool
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
+	DeletedAt         sql.NullTime
+	DeletedBy         sql.NullString
 }
 
 type Domain struct {
@@ -57,6 +59,9 @@ type Domain struct {
 	GenerationType     string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
+	DeletedAt          sql.NullTime
+	DeletedBy          sql.NullString
+	DeleteBatch        sql.NullString
 }
 
 type Generation struct {
@@ -107,10 +112,10 @@ func (s *ProjectStore) Create(ctx context.Context, p Project) error {
 }
 
 func (s *ProjectStore) ListByUser(ctx context.Context, email string) ([]Project, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, user_email, name, target_country, target_language, timezone, global_blacklist, default_server_id, status, index_check_enabled, created_at, updated_at
+	rows, err := s.db.QueryContext(ctx, `SELECT id, user_email, name, target_country, target_language, timezone, global_blacklist, default_server_id, status, index_check_enabled, created_at, updated_at, deleted_at, deleted_by
 FROM projects
-WHERE user_email=$1
-   OR EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = projects.id AND pm.user_email = $1)
+WHERE deleted_at IS NULL AND (user_email=$1
+   OR EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = projects.id AND pm.user_email = $1))
 ORDER BY updated_at DESC`, email)
 	if err != nil {
 		return nil, err
@@ -120,7 +125,7 @@ ORDER BY updated_at DESC`, email)
 	for rows.Next() {
 		var p Project
 		var gb sql.NullString
-		if err := rows.Scan(&p.ID, &p.UserEmail, &p.Name, &p.TargetCountry, &p.TargetLanguage, &p.Timezone, &gb, &p.DefaultServerID, &p.Status, &p.IndexCheckEnabled, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.UserEmail, &p.Name, &p.TargetCountry, &p.TargetLanguage, &p.Timezone, &gb, &p.DefaultServerID, &p.Status, &p.IndexCheckEnabled, &p.CreatedAt, &p.UpdatedAt, &p.DeletedAt, &p.DeletedBy); err != nil {
 			return nil, err
 		}
 		if gb.Valid {
@@ -134,10 +139,10 @@ ORDER BY updated_at DESC`, email)
 func (s *ProjectStore) Get(ctx context.Context, id, email string) (Project, error) {
 	var p Project
 	var gb sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT id, user_email, name, target_country, target_language, timezone, global_blacklist, default_server_id, status, index_check_enabled, created_at, updated_at
+	err := s.db.QueryRowContext(ctx, `SELECT id, user_email, name, target_country, target_language, timezone, global_blacklist, default_server_id, status, index_check_enabled, created_at, updated_at, deleted_at, deleted_by
 FROM projects
-WHERE id=$1 AND (user_email=$2 OR EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = projects.id AND pm.user_email = $2))`, id, email).
-		Scan(&p.ID, &p.UserEmail, &p.Name, &p.TargetCountry, &p.TargetLanguage, &p.Timezone, &gb, &p.DefaultServerID, &p.Status, &p.IndexCheckEnabled, &p.CreatedAt, &p.UpdatedAt)
+WHERE id=$1 AND deleted_at IS NULL AND (user_email=$2 OR EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = projects.id AND pm.user_email = $2))`, id, email).
+		Scan(&p.ID, &p.UserEmail, &p.Name, &p.TargetCountry, &p.TargetLanguage, &p.Timezone, &gb, &p.DefaultServerID, &p.Status, &p.IndexCheckEnabled, &p.CreatedAt, &p.UpdatedAt, &p.DeletedAt, &p.DeletedBy)
 	if err != nil {
 		return Project{}, err
 	}
@@ -148,7 +153,7 @@ WHERE id=$1 AND (user_email=$2 OR EXISTS (SELECT 1 FROM project_members pm WHERE
 }
 
 func (s *ProjectStore) Update(ctx context.Context, p Project) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE projects SET name=$1, target_country=$2, target_language=$3, timezone=$4, global_blacklist=$5, default_server_id=$6, status=$7, index_check_enabled=$8, updated_at=NOW() WHERE id=$9 AND user_email=$10`,
+	_, err := s.db.ExecContext(ctx, `UPDATE projects SET name=$1, target_country=$2, target_language=$3, timezone=$4, global_blacklist=$5, default_server_id=$6, status=$7, index_check_enabled=$8, updated_at=NOW() WHERE id=$9 AND user_email=$10 AND deleted_at IS NULL`,
 		p.Name, p.TargetCountry, p.TargetLanguage, nullableString(p.Timezone), nullableBytes(p.GlobalBlacklist), nullableString(p.DefaultServerID), p.Status, p.IndexCheckEnabled, p.ID, p.UserEmail)
 	return err
 }
@@ -164,8 +169,66 @@ func (s *ProjectStore) Delete(ctx context.Context, id, email string) error {
 	return err
 }
 
-func (s *ProjectStore) ListAll(ctx context.Context) ([]Project, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, user_email, name, target_country, target_language, timezone, global_blacklist, default_server_id, status, index_check_enabled, created_at, updated_at FROM projects ORDER BY updated_at DESC`)
+// SoftDelete marks a project and all its active domains as deleted within a transaction.
+func (s *ProjectStore) SoftDelete(ctx context.Context, id, deletedBy string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE projects SET deleted_at=NOW(), deleted_by=$1, updated_at=NOW() WHERE id=$2 AND deleted_at IS NULL`,
+		deletedBy, id); err != nil {
+		return fmt.Errorf("soft-delete project: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE domains SET deleted_at=NOW(), deleted_by=$1, delete_batch='project:'||$2, updated_at=NOW() WHERE project_id=$2 AND deleted_at IS NULL`,
+		deletedBy, id); err != nil {
+		return fmt.Errorf("soft-delete project domains: %w", err)
+	}
+	return tx.Commit()
+}
+
+// Restore unmarks a soft-deleted project and restores domains that were batch-deleted with it.
+func (s *ProjectStore) Restore(ctx context.Context, id string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE projects SET deleted_at=NULL, deleted_by=NULL, updated_at=NOW() WHERE id=$1`,
+		id); err != nil {
+		return fmt.Errorf("restore project: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE domains SET deleted_at=NULL, deleted_by=NULL, delete_batch=NULL, updated_at=NOW() WHERE project_id=$1 AND delete_batch='project:'||$1`,
+		id); err != nil {
+		return fmt.Errorf("restore project domains: %w", err)
+	}
+	return tx.Commit()
+}
+
+// GetByIDIncludingDeleted returns a project by ID regardless of soft-delete status.
+func (s *ProjectStore) GetByIDIncludingDeleted(ctx context.Context, id string) (Project, error) {
+	var p Project
+	var gb sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT id, user_email, name, target_country, target_language, timezone, global_blacklist, default_server_id, status, index_check_enabled, created_at, updated_at, deleted_at, deleted_by FROM projects WHERE id=$1`, id).
+		Scan(&p.ID, &p.UserEmail, &p.Name, &p.TargetCountry, &p.TargetLanguage, &p.Timezone, &gb, &p.DefaultServerID, &p.Status, &p.IndexCheckEnabled, &p.CreatedAt, &p.UpdatedAt, &p.DeletedAt, &p.DeletedBy)
+	if err != nil {
+		return Project{}, err
+	}
+	if gb.Valid {
+		p.GlobalBlacklist = []byte(gb.String)
+	}
+	return p, nil
+}
+
+// ListDeleted returns all soft-deleted projects.
+func (s *ProjectStore) ListDeleted(ctx context.Context) ([]Project, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, user_email, name, target_country, target_language, timezone, global_blacklist, default_server_id, status, index_check_enabled, created_at, updated_at, deleted_at, deleted_by FROM projects WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +237,39 @@ func (s *ProjectStore) ListAll(ctx context.Context) ([]Project, error) {
 	for rows.Next() {
 		var p Project
 		var gb sql.NullString
-		if err := rows.Scan(&p.ID, &p.UserEmail, &p.Name, &p.TargetCountry, &p.TargetLanguage, &p.Timezone, &gb, &p.DefaultServerID, &p.Status, &p.IndexCheckEnabled, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.UserEmail, &p.Name, &p.TargetCountry, &p.TargetLanguage, &p.Timezone, &gb, &p.DefaultServerID, &p.Status, &p.IndexCheckEnabled, &p.CreatedAt, &p.UpdatedAt, &p.DeletedAt, &p.DeletedBy); err != nil {
+			return nil, err
+		}
+		if gb.Valid {
+			p.GlobalBlacklist = []byte(gb.String)
+		}
+		res = append(res, p)
+	}
+	return res, rows.Err()
+}
+
+// PurgeExpired permanently deletes projects that have been soft-deleted longer than retentionDays.
+func (s *ProjectStore) PurgeExpired(ctx context.Context, retentionDays int) (int64, error) {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM projects WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - make_interval(days => $1)`,
+		retentionDays)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+func (s *ProjectStore) ListAll(ctx context.Context) ([]Project, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, user_email, name, target_country, target_language, timezone, global_blacklist, default_server_id, status, index_check_enabled, created_at, updated_at, deleted_at, deleted_by FROM projects WHERE deleted_at IS NULL ORDER BY updated_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var res []Project
+	for rows.Next() {
+		var p Project
+		var gb sql.NullString
+		if err := rows.Scan(&p.ID, &p.UserEmail, &p.Name, &p.TargetCountry, &p.TargetLanguage, &p.Timezone, &gb, &p.DefaultServerID, &p.Status, &p.IndexCheckEnabled, &p.CreatedAt, &p.UpdatedAt, &p.DeletedAt, &p.DeletedBy); err != nil {
 			return nil, err
 		}
 		if gb.Valid {
@@ -187,9 +282,9 @@ func (s *ProjectStore) ListAll(ctx context.Context) ([]Project, error) {
 
 // ListByNameExact возвращает проекты с точным совпадением имени.
 func (s *ProjectStore) ListByNameExact(ctx context.Context, name string) ([]Project, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, user_email, name, target_country, target_language, timezone, global_blacklist, default_server_id, status, index_check_enabled, created_at, updated_at
+	rows, err := s.db.QueryContext(ctx, `SELECT id, user_email, name, target_country, target_language, timezone, global_blacklist, default_server_id, status, index_check_enabled, created_at, updated_at, deleted_at, deleted_by
 FROM projects
-WHERE name=$1
+WHERE name=$1 AND deleted_at IS NULL
 ORDER BY updated_at DESC`, name)
 	if err != nil {
 		return nil, err
@@ -200,7 +295,7 @@ ORDER BY updated_at DESC`, name)
 	for rows.Next() {
 		var p Project
 		var gb sql.NullString
-		if err := rows.Scan(&p.ID, &p.UserEmail, &p.Name, &p.TargetCountry, &p.TargetLanguage, &p.Timezone, &gb, &p.DefaultServerID, &p.Status, &p.IndexCheckEnabled, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.UserEmail, &p.Name, &p.TargetCountry, &p.TargetLanguage, &p.Timezone, &gb, &p.DefaultServerID, &p.Status, &p.IndexCheckEnabled, &p.CreatedAt, &p.UpdatedAt, &p.DeletedAt, &p.DeletedBy); err != nil {
 			return nil, err
 		}
 		if gb.Valid {
@@ -214,8 +309,8 @@ ORDER BY updated_at DESC`, name)
 func (s *ProjectStore) GetByID(ctx context.Context, id string) (Project, error) {
 	var p Project
 	var gb sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT id, user_email, name, target_country, target_language, timezone, global_blacklist, default_server_id, status, index_check_enabled, created_at, updated_at FROM projects WHERE id=$1`, id).
-		Scan(&p.ID, &p.UserEmail, &p.Name, &p.TargetCountry, &p.TargetLanguage, &p.Timezone, &gb, &p.DefaultServerID, &p.Status, &p.IndexCheckEnabled, &p.CreatedAt, &p.UpdatedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT id, user_email, name, target_country, target_language, timezone, global_blacklist, default_server_id, status, index_check_enabled, created_at, updated_at, deleted_at, deleted_by FROM projects WHERE id=$1 AND deleted_at IS NULL`, id).
+		Scan(&p.ID, &p.UserEmail, &p.Name, &p.TargetCountry, &p.TargetLanguage, &p.Timezone, &gb, &p.DefaultServerID, &p.Status, &p.IndexCheckEnabled, &p.CreatedAt, &p.UpdatedAt, &p.DeletedAt, &p.DeletedBy)
 	if err != nil {
 		return Project{}, err
 	}
@@ -264,7 +359,7 @@ func (s *DomainStore) Create(ctx context.Context, d Domain) error {
 }
 
 func (s *DomainStore) ListByProject(ctx context.Context, projectID string) ([]Domain, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, last_success_generation_id, published_at, published_path, file_count, total_size_bytes, deployment_mode, site_owner, inventory_status, inventory_checked_at, inventory_error, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, index_check_enabled, generation_type, created_at, updated_at FROM domains WHERE project_id=$1 ORDER BY updated_at DESC`, projectID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, last_success_generation_id, published_at, published_path, file_count, total_size_bytes, deployment_mode, site_owner, inventory_status, inventory_checked_at, inventory_error, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, index_check_enabled, generation_type, created_at, updated_at, deleted_at, deleted_by, delete_batch FROM domains WHERE project_id=$1 AND deleted_at IS NULL ORDER BY updated_at DESC`, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -273,7 +368,7 @@ func (s *DomainStore) ListByProject(ctx context.Context, projectID string) ([]Do
 	for rows.Next() {
 		var d Domain
 		var sb sql.NullString
-		if err := rows.Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.LastSuccessGenID, &d.PublishedAt, &d.PublishedPath, &d.FileCount, &d.TotalSizeBytes, &d.DeploymentMode, &d.SiteOwner, &d.InventoryStatus, &d.InventoryCheckedAt, &d.InventoryError, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.LinkReadyAt, &d.IndexCheckEnabled, &d.GenerationType, &d.CreatedAt, &d.UpdatedAt); err != nil {
+		if err := rows.Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.LastSuccessGenID, &d.PublishedAt, &d.PublishedPath, &d.FileCount, &d.TotalSizeBytes, &d.DeploymentMode, &d.SiteOwner, &d.InventoryStatus, &d.InventoryCheckedAt, &d.InventoryError, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.LinkReadyAt, &d.IndexCheckEnabled, &d.GenerationType, &d.CreatedAt, &d.UpdatedAt, &d.DeletedAt, &d.DeletedBy, &d.DeleteBatch); err != nil {
 			return nil, err
 		}
 		if sb.Valid {
@@ -307,7 +402,7 @@ func (s *DomainStore) ListByIDs(ctx context.Context, ids []string) ([]Domain, er
 		placeholders[i] = fmt.Sprintf("$%d", i+1)
 		args[i] = id
 	}
-	query := fmt.Sprintf(`SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, last_success_generation_id, published_at, published_path, file_count, total_size_bytes, deployment_mode, site_owner, inventory_status, inventory_checked_at, inventory_error, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, index_check_enabled, generation_type, created_at, updated_at FROM domains WHERE id IN (%s)`, strings.Join(placeholders, ","))
+	query := fmt.Sprintf(`SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, last_success_generation_id, published_at, published_path, file_count, total_size_bytes, deployment_mode, site_owner, inventory_status, inventory_checked_at, inventory_error, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, index_check_enabled, generation_type, created_at, updated_at, deleted_at, deleted_by, delete_batch FROM domains WHERE id IN (%s) AND deleted_at IS NULL`, strings.Join(placeholders, ","))
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -317,7 +412,7 @@ func (s *DomainStore) ListByIDs(ctx context.Context, ids []string) ([]Domain, er
 	for rows.Next() {
 		var d Domain
 		var sb sql.NullString
-		if err := rows.Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.LastSuccessGenID, &d.PublishedAt, &d.PublishedPath, &d.FileCount, &d.TotalSizeBytes, &d.DeploymentMode, &d.SiteOwner, &d.InventoryStatus, &d.InventoryCheckedAt, &d.InventoryError, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.LinkReadyAt, &d.IndexCheckEnabled, &d.GenerationType, &d.CreatedAt, &d.UpdatedAt); err != nil {
+		if err := rows.Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.LastSuccessGenID, &d.PublishedAt, &d.PublishedPath, &d.FileCount, &d.TotalSizeBytes, &d.DeploymentMode, &d.SiteOwner, &d.InventoryStatus, &d.InventoryCheckedAt, &d.InventoryError, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.LinkReadyAt, &d.IndexCheckEnabled, &d.GenerationType, &d.CreatedAt, &d.UpdatedAt, &d.DeletedAt, &d.DeletedBy, &d.DeleteBatch); err != nil {
 			return nil, err
 		}
 		if sb.Valid {
@@ -331,8 +426,8 @@ func (s *DomainStore) ListByIDs(ctx context.Context, ids []string) ([]Domain, er
 func (s *DomainStore) Get(ctx context.Context, id string) (Domain, error) {
 	var d Domain
 	var sb sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, last_success_generation_id, published_at, published_path, file_count, total_size_bytes, deployment_mode, site_owner, inventory_status, inventory_checked_at, inventory_error, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, index_check_enabled, generation_type, created_at, updated_at FROM domains WHERE id=$1`, id).
-		Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.LastSuccessGenID, &d.PublishedAt, &d.PublishedPath, &d.FileCount, &d.TotalSizeBytes, &d.DeploymentMode, &d.SiteOwner, &d.InventoryStatus, &d.InventoryCheckedAt, &d.InventoryError, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.LinkReadyAt, &d.IndexCheckEnabled, &d.GenerationType, &d.CreatedAt, &d.UpdatedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, last_success_generation_id, published_at, published_path, file_count, total_size_bytes, deployment_mode, site_owner, inventory_status, inventory_checked_at, inventory_error, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, index_check_enabled, generation_type, created_at, updated_at, deleted_at, deleted_by, delete_batch FROM domains WHERE id=$1 AND deleted_at IS NULL`, id).
+		Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.LastSuccessGenID, &d.PublishedAt, &d.PublishedPath, &d.FileCount, &d.TotalSizeBytes, &d.DeploymentMode, &d.SiteOwner, &d.InventoryStatus, &d.InventoryCheckedAt, &d.InventoryError, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.LinkReadyAt, &d.IndexCheckEnabled, &d.GenerationType, &d.CreatedAt, &d.UpdatedAt, &d.DeletedAt, &d.DeletedBy, &d.DeleteBatch)
 	if err != nil {
 		return Domain{}, err
 	}
@@ -346,8 +441,8 @@ func (s *DomainStore) Get(ctx context.Context, id string) (Domain, error) {
 func (s *DomainStore) GetByURL(ctx context.Context, url string) (Domain, error) {
 	var d Domain
 	var sb sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, last_success_generation_id, published_at, published_path, file_count, total_size_bytes, deployment_mode, site_owner, inventory_status, inventory_checked_at, inventory_error, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, index_check_enabled, generation_type, created_at, updated_at FROM domains WHERE url=$1`, url).
-		Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.LastSuccessGenID, &d.PublishedAt, &d.PublishedPath, &d.FileCount, &d.TotalSizeBytes, &d.DeploymentMode, &d.SiteOwner, &d.InventoryStatus, &d.InventoryCheckedAt, &d.InventoryError, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.LinkReadyAt, &d.IndexCheckEnabled, &d.GenerationType, &d.CreatedAt, &d.UpdatedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, last_success_generation_id, published_at, published_path, file_count, total_size_bytes, deployment_mode, site_owner, inventory_status, inventory_checked_at, inventory_error, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, index_check_enabled, generation_type, created_at, updated_at, deleted_at, deleted_by, delete_batch FROM domains WHERE url=$1 AND deleted_at IS NULL`, url).
+		Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.LastSuccessGenID, &d.PublishedAt, &d.PublishedPath, &d.FileCount, &d.TotalSizeBytes, &d.DeploymentMode, &d.SiteOwner, &d.InventoryStatus, &d.InventoryCheckedAt, &d.InventoryError, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.LinkReadyAt, &d.IndexCheckEnabled, &d.GenerationType, &d.CreatedAt, &d.UpdatedAt, &d.DeletedAt, &d.DeletedBy, &d.DeleteBatch)
 	if err != nil {
 		return Domain{}, err
 	}
@@ -542,6 +637,72 @@ func (s *DomainStore) EnsureDefaultServer(ctx context.Context, userEmail string)
 func (s *DomainStore) Delete(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM domains WHERE id=$1`, id)
 	return err
+}
+
+// SoftDelete marks a domain as deleted.
+func (s *DomainStore) SoftDelete(ctx context.Context, id, deletedBy string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE domains SET deleted_at=NOW(), deleted_by=$1, updated_at=NOW() WHERE id=$2 AND deleted_at IS NULL`,
+		deletedBy, id)
+	return err
+}
+
+// Restore removes soft-delete marks from a domain.
+func (s *DomainStore) Restore(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE domains SET deleted_at=NULL, deleted_by=NULL, delete_batch=NULL, updated_at=NOW() WHERE id=$1`,
+		id)
+	return err
+}
+
+// GetIncludingDeleted returns a domain by ID regardless of soft-delete status.
+func (s *DomainStore) GetIncludingDeleted(ctx context.Context, id string) (Domain, error) {
+	var d Domain
+	var sb sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, last_success_generation_id, published_at, published_path, file_count, total_size_bytes, deployment_mode, site_owner, inventory_status, inventory_checked_at, inventory_error, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, index_check_enabled, generation_type, created_at, updated_at, deleted_at, deleted_by, delete_batch FROM domains WHERE id=$1`, id).
+		Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.LastSuccessGenID, &d.PublishedAt, &d.PublishedPath, &d.FileCount, &d.TotalSizeBytes, &d.DeploymentMode, &d.SiteOwner, &d.InventoryStatus, &d.InventoryCheckedAt, &d.InventoryError, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.LinkReadyAt, &d.IndexCheckEnabled, &d.GenerationType, &d.CreatedAt, &d.UpdatedAt, &d.DeletedAt, &d.DeletedBy, &d.DeleteBatch)
+	if err != nil {
+		return Domain{}, err
+	}
+	if sb.Valid {
+		d.SpecificBlacklist = []byte(sb.String)
+	}
+	return d, nil
+}
+
+// ListDeleted returns all soft-deleted domains.
+func (s *DomainStore) ListDeleted(ctx context.Context) ([]Domain, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, project_id, server_id, url, main_keyword, target_country, target_language, exclude_domains, specific_blacklist, status, last_generation_id, last_success_generation_id, published_at, published_path, file_count, total_size_bytes, deployment_mode, site_owner, inventory_status, inventory_checked_at, inventory_error, link_anchor_text, link_acceptor_url, link_status, link_updated_at, link_last_task_id, link_file_path, link_anchor_snapshot, link_ready_at, index_check_enabled, generation_type, created_at, updated_at, deleted_at, deleted_by, delete_batch FROM domains WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var res []Domain
+	for rows.Next() {
+		var d Domain
+		var sb sql.NullString
+		if err := rows.Scan(&d.ID, &d.ProjectID, &d.ServerID, &d.URL, &d.MainKeyword, &d.TargetCountry, &d.TargetLanguage, &d.ExcludeDomains, &sb, &d.Status, &d.LastGenerationID, &d.LastSuccessGenID, &d.PublishedAt, &d.PublishedPath, &d.FileCount, &d.TotalSizeBytes, &d.DeploymentMode, &d.SiteOwner, &d.InventoryStatus, &d.InventoryCheckedAt, &d.InventoryError, &d.LinkAnchorText, &d.LinkAcceptorURL, &d.LinkStatus, &d.LinkUpdatedAt, &d.LinkLastTaskID, &d.LinkFilePath, &d.LinkAnchorSnapshot, &d.LinkReadyAt, &d.IndexCheckEnabled, &d.GenerationType, &d.CreatedAt, &d.UpdatedAt, &d.DeletedAt, &d.DeletedBy, &d.DeleteBatch); err != nil {
+			return nil, err
+		}
+		if sb.Valid {
+			d.SpecificBlacklist = []byte(sb.String)
+		}
+		res = append(res, d)
+	}
+	return res, rows.Err()
+}
+
+// PurgeExpired permanently deletes domains that have been soft-deleted longer than retentionDays,
+// excluding domains whose parent project is also soft-deleted (those will be cleaned up by project cascade).
+func (s *DomainStore) PurgeExpired(ctx context.Context, retentionDays int) (int64, error) {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM domains WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - make_interval(days => $1)
+		 AND project_id NOT IN (SELECT id FROM projects WHERE deleted_at IS NOT NULL)`,
+		retentionDays)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 type GenerationStore struct {
@@ -799,8 +960,10 @@ func (s *GenerationStore) Delete(ctx context.Context, id string) error {
 
 func (s *GenerationStore) ListRecentByUser(ctx context.Context, email string, limit, offset int, search string) ([]Generation, error) {
 	clauses := []string{
-		`p.user_email = $1
-   OR EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = p.id AND pm.user_email = $1)`,
+		`(p.user_email = $1
+   OR EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = p.id AND pm.user_email = $1))`,
+		`p.deleted_at IS NULL`,
+		`d.deleted_at IS NULL`,
 	}
 	args := []interface{}{email}
 	idx := 2
@@ -848,8 +1011,10 @@ LIMIT $%d OFFSET $%d`, strings.Join(clauses, " AND "), idx, idx+1)
 
 func (s *GenerationStore) ListRecentByUserLite(ctx context.Context, email string, limit, offset int, search string) ([]Generation, error) {
 	clauses := []string{
-		`p.user_email = $1
-   OR EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = p.id AND pm.user_email = $1)`,
+		`(p.user_email = $1
+   OR EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = p.id AND pm.user_email = $1))`,
+		`p.deleted_at IS NULL`,
+		`d.deleted_at IS NULL`,
 	}
 	args := []interface{}{email}
 	idx := 2

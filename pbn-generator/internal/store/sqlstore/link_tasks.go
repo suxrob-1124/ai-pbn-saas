@@ -155,7 +155,7 @@ func (s *LinkTaskSQLStore) ListByDomain(ctx context.Context, domainID string, fi
 // ListByProject возвращает задачи для проекта.
 func (s *LinkTaskSQLStore) ListByProject(ctx context.Context, projectID string, filters LinkTaskFilters) ([]LinkTask, error) {
 	base := `link_tasks lt JOIN domains d ON d.id = lt.domain_id`
-	query, args := buildLinkTaskQuery(base, "d.project_id=$1", []interface{}{projectID}, filters)
+	query, args := buildLinkTaskQuery(base, "d.project_id=$1 AND d.deleted_at IS NULL", []interface{}{projectID}, filters)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -168,7 +168,7 @@ func (s *LinkTaskSQLStore) ListByProject(ctx context.Context, projectID string, 
 // ListByUser возвращает задачи по проектам, доступным пользователю.
 func (s *LinkTaskSQLStore) ListByUser(ctx context.Context, email string, filters LinkTaskFilters) ([]LinkTask, error) {
 	base := `link_tasks lt JOIN domains d ON d.id = lt.domain_id JOIN projects p ON p.id = d.project_id`
-	clause := `(p.user_email = $1 OR EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = p.id AND pm.user_email = $1))`
+	clause := `p.deleted_at IS NULL AND d.deleted_at IS NULL AND (p.user_email = $1 OR EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = p.id AND pm.user_email = $1))`
 	query, args := buildLinkTaskQuery(base, clause, []interface{}{email}, filters)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {

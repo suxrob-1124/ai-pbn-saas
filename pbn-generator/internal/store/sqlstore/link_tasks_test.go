@@ -285,7 +285,7 @@ func TestLinkTaskStoreListByProject(t *testing.T) {
 
 	status := "pending"
 	filters := LinkTaskFilters{Status: &status, Limit: 5}
-	expected := `(?s)SELECT lt.id, lt.domain_id, lt.anchor_text, lt.target_url, lt.scheduled_for, lt.action, lt.status, lt.found_location, lt.generated_content, lt.error_message, lt.attempts, lt.created_by, lt.created_at, lt.completed_at, lt.log_lines\s+FROM link_tasks lt JOIN domains d ON d.id = lt.domain_id\s+WHERE d.project_id=\$1 AND lt.status=\$2\s+ORDER BY lt.scheduled_for ASC, lt.created_at ASC\s+LIMIT \$3`
+	expected := `(?s)SELECT lt.id, lt.domain_id, lt.anchor_text, lt.target_url, lt.scheduled_for, lt.action, lt.status, lt.found_location, lt.generated_content, lt.error_message, lt.attempts, lt.created_by, lt.created_at, lt.completed_at, lt.log_lines\s+FROM link_tasks lt JOIN domains d ON d.id = lt.domain_id\s+WHERE d.project_id=\$1 AND d.deleted_at IS NULL AND lt.status=\$2\s+ORDER BY lt.scheduled_for ASC, lt.created_at ASC\s+LIMIT \$3`
 
 	t.Run("success", func(t *testing.T) {
 		mock.ExpectQuery(expected).
@@ -374,7 +374,7 @@ func TestLinkTaskStoreListByUser(t *testing.T) {
 		Limit:  10,
 		Offset: 5,
 	}
-	expected := `(?s)SELECT lt.id, lt.domain_id, lt.anchor_text, lt.target_url, lt.scheduled_for, lt.action, lt.status, lt.found_location, lt.generated_content, lt.error_message, lt.attempts, lt.created_by, lt.created_at, lt.completed_at, lt.log_lines\s+FROM link_tasks lt JOIN domains d ON d.id = lt.domain_id JOIN projects p ON p.id = d.project_id\s+WHERE \(p.user_email = \$1 OR EXISTS \(SELECT 1 FROM project_members pm WHERE pm.project_id = p.id AND pm.user_email = \$1\)\) AND \(LOWER\(COALESCE\(d.url, ''\)\) LIKE \$2 OR LOWER\(lt.domain_id\) LIKE \$2\) AND lt.status=\$3\s+ORDER BY lt.scheduled_for ASC, lt.created_at ASC\s+LIMIT \$4 OFFSET \$5`
+	expected := `(?s)SELECT lt.id, lt.domain_id, lt.anchor_text, lt.target_url, lt.scheduled_for, lt.action, lt.status, lt.found_location, lt.generated_content, lt.error_message, lt.attempts, lt.created_by, lt.created_at, lt.completed_at, lt.log_lines\s+FROM link_tasks lt JOIN domains d ON d.id = lt.domain_id JOIN projects p ON p.id = d.project_id\s+WHERE p.deleted_at IS NULL AND d.deleted_at IS NULL AND \(p.user_email = \$1 OR EXISTS \(SELECT 1 FROM project_members pm WHERE pm.project_id = p.id AND pm.user_email = \$1\)\) AND \(LOWER\(COALESCE\(d.url, ''\)\) LIKE \$2 OR LOWER\(lt.domain_id\) LIKE \$2\) AND lt.status=\$3\s+ORDER BY lt.scheduled_for ASC, lt.created_at ASC\s+LIMIT \$4 OFFSET \$5`
 
 	t.Run("success", func(t *testing.T) {
 		mock.ExpectQuery(expected).

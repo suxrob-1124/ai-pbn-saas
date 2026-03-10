@@ -644,7 +644,7 @@ func TestProjectSummaryIncludesMyRoleOwner(t *testing.T) {
 
 	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 		Email: "owner@example.com",
-		Role:  "manager",
+		Role:  "user",
 	})
 	req := httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/summary", nil).WithContext(ctx)
 	rec := httptest.NewRecorder()
@@ -739,7 +739,7 @@ func TestDomainSummaryIncludesMyRoleEditor(t *testing.T) {
 
 	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 		Email: memberEmail,
-		Role:  "manager",
+		Role:  "user",
 	})
 	req := httptest.NewRequest(http.MethodGet, "/api/domains/"+domainID+"/summary", nil).WithContext(ctx)
 	rec := httptest.NewRecorder()
@@ -812,7 +812,7 @@ func TestDomainSummaryUsesEffectiveLinkStatusFromActiveTask(t *testing.T) {
 
 	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 		Email: "owner@example.com",
-		Role:  "manager",
+		Role:  "user",
 	})
 	req := httptest.NewRequest(http.MethodGet, "/api/domains/"+domainID+"/summary", nil).WithContext(ctx)
 	rec := httptest.NewRecorder()
@@ -881,7 +881,7 @@ func TestProjectSummaryIncludesEffectiveLinkStatus(t *testing.T) {
 
 	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 		Email: "owner@example.com",
-		Role:  "manager",
+		Role:  "user",
 	})
 	req := httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/summary", nil).WithContext(ctx)
 	rec := httptest.NewRecorder()
@@ -956,7 +956,7 @@ func TestProjectQueueHistoryEndpoint(t *testing.T) {
 
 	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 		Email: "owner@example.com",
-		Role:  "manager",
+		Role:  "user",
 	})
 	req := httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/queue/history?status=failed", nil).WithContext(ctx)
 	rec := httptest.NewRecorder()
@@ -2350,6 +2350,35 @@ func (s *stubProjectStore) UpdateIndexCheckEnabled(ctx context.Context, id strin
 	return nil
 }
 
+func (s *stubProjectStore) SoftDelete(ctx context.Context, id, deletedBy string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.projects, id)
+	return nil
+}
+
+func (s *stubProjectStore) Restore(ctx context.Context, id string) error {
+	return nil
+}
+
+func (s *stubProjectStore) ListDeleted(ctx context.Context) ([]sqlstore.Project, error) {
+	return nil, nil
+}
+
+func (s *stubProjectStore) GetByIDIncludingDeleted(ctx context.Context, id string) (sqlstore.Project, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.projects[id]
+	if !ok {
+		return sqlstore.Project{}, sql.ErrNoRows
+	}
+	return p, nil
+}
+
+func (s *stubProjectStore) PurgeExpired(ctx context.Context, retentionDays int) (int64, error) {
+	return 0, nil
+}
+
 type stubDomainStore struct {
 	mu      sync.Mutex
 	domains map[string]sqlstore.Domain
@@ -2510,6 +2539,35 @@ func (s *stubDomainStore) Delete(ctx context.Context, id string) error {
 	defer s.mu.Unlock()
 	delete(s.domains, id)
 	return nil
+}
+
+func (s *stubDomainStore) SoftDelete(ctx context.Context, id, deletedBy string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.domains, id)
+	return nil
+}
+
+func (s *stubDomainStore) Restore(ctx context.Context, id string) error {
+	return nil
+}
+
+func (s *stubDomainStore) ListDeleted(ctx context.Context) ([]sqlstore.Domain, error) {
+	return nil, nil
+}
+
+func (s *stubDomainStore) GetIncludingDeleted(ctx context.Context, id string) (sqlstore.Domain, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d, ok := s.domains[id]
+	if !ok {
+		return sqlstore.Domain{}, errors.New("not found")
+	}
+	return d, nil
+}
+
+func (s *stubDomainStore) PurgeExpired(ctx context.Context, retentionDays int) (int64, error) {
+	return 0, nil
 }
 
 type stubGenerationStore struct {

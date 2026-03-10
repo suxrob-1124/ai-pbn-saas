@@ -122,6 +122,7 @@ func main() {
 	handler := srv.Handler()
 
 	go startSessionCleanup(svc, cfg.SessionCleanInterval)
+	go startSoftDeleteCleanup(projectStore, domainStore, cfg.SoftDeleteRetentionDays, logger)
 
 	server := &http.Server{
 		Addr:    ":" + cfg.Port,
@@ -188,6 +189,24 @@ func startSessionCleanup(svc *auth.Service, interval time.Duration) {
 	defer ticker.Stop()
 	for now := range ticker.C {
 		svc.CleanupExpired(context.Background(), now)
+	}
+}
+
+func startSoftDeleteCleanup(projects *sqlstore.ProjectStore, domains *sqlstore.DomainStore, retentionDays int, logger *zap.SugaredLogger) {
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+	for range ticker.C {
+		ctx := context.Background()
+		if n, err := domains.PurgeExpired(ctx, retentionDays); err != nil {
+			logger.Warnf("trash cleanup: domains purge error: %v", err)
+		} else if n > 0 {
+			logger.Infof("trash cleanup: purged %d expired domains", n)
+		}
+		if n, err := projects.PurgeExpired(ctx, retentionDays); err != nil {
+			logger.Warnf("trash cleanup: projects purge error: %v", err)
+		} else if n > 0 {
+			logger.Infof("trash cleanup: purged %d expired projects", n)
+		}
 	}
 }
 

@@ -37,7 +37,7 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
 			projects []sqlstore.Project
 			err      error
 		)
-		if strings.EqualFold(user.Role, "admin") {
+		if isAdmin(user.Role) {
 			projects, err = s.projects.ListAll(r.Context())
 		} else {
 			projects, err = s.projects.ListByUser(r.Context(), user.Email)
@@ -56,11 +56,11 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, projectDTOs)
 	case http.MethodPost:
-		if !ensureJSON(w, r) {
+		if !canCreateProject(user.Role) {
+			writeError(w, http.StatusForbidden, "only managers and admins can create projects")
 			return
 		}
-		if err := requireApprovedUser(user); err != nil {
-			writeError(w, http.StatusForbidden, err.Error())
+		if !ensureJSON(w, r) {
 			return
 		}
 		var body struct {
@@ -115,6 +115,10 @@ func (s *Server) handleProjectByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	projectID := parts[0]
+	if len(parts) > 1 && parts[1] == "restore" {
+		s.handleProjectRestore(w, r, projectID)
+		return
+	}
 	if len(parts) > 1 && parts[1] == "domains" {
 		action := ""
 		if len(parts) > 2 {
@@ -295,11 +299,11 @@ func (s *Server) handleProjectByID(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusCreated, s.toProjectDTO(r.Context(), createdProject))
 	case http.MethodDelete:
-		if !strings.EqualFold(user.Role, "admin") && !strings.EqualFold(user.Email, project.UserEmail) {
+		if !isAdmin(user.Role) && !strings.EqualFold(user.Email, project.UserEmail) {
 			writeError(w, http.StatusForbidden, "only owner can delete project")
 			return
 		}
-		if err := s.projects.Delete(r.Context(), projectID, project.UserEmail); err != nil {
+		if err := s.projects.SoftDelete(r.Context(), projectID, user.Email); err != nil {
 			writeError(w, http.StatusInternalServerError, "could not delete project")
 			return
 		}
@@ -355,7 +359,7 @@ func (s *Server) handleProjectSummary(w http.ResponseWriter, r *http.Request, pr
 	}
 
 	memberDTOs := []projectMemberDTO{}
-	allowMembers := strings.EqualFold(user.Role, "admin")
+	allowMembers := isAdmin(user.Role)
 	if !allowMembers {
 		if role, err := s.getProjectMemberRole(r.Context(), projectID, user.Email); err == nil && role == "owner" {
 			allowMembers = true
@@ -1112,7 +1116,7 @@ func (s *Server) handleDomainsBatch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not list domains")
 		return
 	}
-	if !strings.EqualFold(user.Role, "admin") {
+	if !isAdmin(user.Role) {
 		filtered := make([]sqlstore.Domain, 0, len(list))
 		for _, d := range list {
 			if _, err := s.authorizeProject(r.Context(), d.ProjectID); err == nil {
@@ -1142,6 +1146,8 @@ func (s *Server) handleDomainActions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch action {
+	case "restore":
+		s.handleDomainRestore(w, r, domainID)
 	case "generate":
 		s.handleDomainGenerate(w, r, domainID)
 	case "generations":
@@ -1284,7 +1290,8 @@ func (s *Server) handleDomainBase(w http.ResponseWriter, r *http.Request, domain
 		d, _ = s.domains.Get(r.Context(), domainID)
 		writeJSON(w, http.StatusOK, toDomainDTO(d))
 	case http.MethodDelete:
-		if err := s.domains.Delete(r.Context(), domainID); err != nil {
+		user, _ := currentUserFromContext(r.Context())
+		if err := s.domains.SoftDelete(r.Context(), domainID, user.Email); err != nil {
 			writeError(w, http.StatusInternalServerError, "could not delete domain")
 			return
 		}
@@ -1377,21 +1384,6 @@ func (s *Server) handleDomainGenerate(w http.ResponseWriter, r *http.Request, do
 	}
 	if !pipeline.IsActiveGenerationType(effectiveGenType) {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("generation type '%s' is not yet supported", effectiveGenType))
-		return
-	}
-
-	// Проверяем наличие API ключа у владельца проекта (или у админа, если он запускает)
-	keyOwnerEmail := p.UserEmail
-	if strings.EqualFold(user.Role, "admin") {
-		keyOwnerEmail = user.Email
-	}
-	encKey, err := s.svc.GetUserAPIKeyEncrypted(r.Context(), keyOwnerEmail)
-	if err != nil || len(encKey) == 0 {
-		if strings.EqualFold(user.Role, "admin") {
-			writeError(w, http.StatusBadRequest, "API key not configured for admin user. Please configure API key in profile settings.")
-		} else {
-			writeError(w, http.StatusBadRequest, "API key not configured for project owner. Please configure API key in profile settings.")
-		}
 		return
 	}
 
