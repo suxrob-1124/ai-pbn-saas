@@ -13,6 +13,7 @@ import (
 
 type projectDTO struct {
 	ID              string          `json:"id"`
+	OwnerEmail      string          `json:"owner_email,omitempty"`
 	Name            string          `json:"name"`
 	Status          string          `json:"status"`
 	TargetCountry   string          `json:"target_country,omitempty"`
@@ -421,6 +422,7 @@ func (s *Server) toProjectDTO(ctx context.Context, p sqlstore.Project) projectDT
 
 	return projectDTO{
 		ID:                p.ID,
+		OwnerEmail:        p.UserEmail,
 		Name:              p.Name,
 		Status:            p.Status,
 		TargetCountry:     p.TargetCountry,
@@ -443,6 +445,7 @@ func toProjectDTO(p sqlstore.Project) projectDTO {
 	}
 	return projectDTO{
 		ID:                p.ID,
+		OwnerEmail:        p.UserEmail,
 		Name:              p.Name,
 		Status:            p.Status,
 		TargetCountry:     p.TargetCountry,

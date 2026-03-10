@@ -64,6 +64,7 @@ type AdminAuditRule = {
 };
 type ProjectDTO = {
   id: string;
+  owner_email?: string;
   name: string;
   status: string;
   target_country?: string;
@@ -623,7 +624,7 @@ export default function AdminPage() {
                                         {members && !isLoadingMembers && (
                                           <div className="mt-3 border-t border-slate-100 dark:border-slate-700/40 pt-3 space-y-2">
                                             {members.map((m) => {
-                                              const isProjectOwner = m.email === selectedProjectsEmail;
+                                              const isProjectOwner = m.email === (proj.owner_email || selectedProjectsEmail);
                                               return (
                                               <div key={m.email} className="flex items-center justify-between text-xs">
                                                 <span className="font-medium text-slate-700 dark:text-slate-300">{m.email}</span>
