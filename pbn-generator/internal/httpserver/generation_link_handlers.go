@@ -51,7 +51,7 @@ func (s *Server) handleGenerations(w http.ResponseWriter, r *http.Request) {
 		list []sqlstore.Generation
 		err  error
 	)
-	if strings.EqualFold(user.Role, "admin") {
+	if isAdmin(user.Role) {
 		if lite {
 			list, err = s.generations.ListRecentAllLite(r.Context(), limit, offset, search)
 		} else {
@@ -480,7 +480,7 @@ func (s *Server) handleLinks(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	default:
-		if strings.EqualFold(user.Role, "admin") {
+		if isAdmin(user.Role) {
 			list, err = s.linkTasks.ListAll(r.Context(), filters)
 		} else {
 			list, err = s.linkTasks.ListByUser(r.Context(), user.Email, filters)

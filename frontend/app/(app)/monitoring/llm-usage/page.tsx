@@ -32,6 +32,8 @@ import {
   listAdminLLMPricing,
   listAdminLLMUsageEvents,
   listAdminLLMUsageStats,
+  listProjectLLMUsageEvents,
+  listProjectLLMUsageStats,
 } from '@/lib/llmUsageApi';
 import { authFetch } from '@/lib/http';
 import { useAuthGuard } from '@/lib/useAuth';
@@ -77,12 +79,17 @@ export default function LLMUsageMonitoringPage() {
   const [projectQuery, setProjectQuery] = useState('');
   const [domainQuery, setDomainQuery] = useState('');
 
-  const isAdmin = (me?.role || '').toLowerCase() === 'admin';
+  const userRole = (me?.role || '').toLowerCase();
+  const isAdmin = userRole === 'admin';
+  const isManager = userRole === 'manager';
+  const hasAccess = isAdmin || isManager;
   const totalPages = getTotalPages(total, DEFAULT_LIMIT);
   const refreshGuard = canRun({ busy: loading });
 
+  const [managerProjectId, setManagerProjectId] = useState('');
+
   useEffect(() => {
-    if (!isAdmin) return;
+    if (!hasAccess) return;
     authFetch<any[]>('/api/projects')
       .then((res) => {
         if (Array.isArray(res)) {
@@ -90,10 +97,13 @@ export default function LLMUsageMonitoringPage() {
           const map = new Map<string, string>();
           res.forEach((p) => map.set(p.id, p.name));
           setProjectLookup(map);
+          if (isManager && res.length > 0 && !managerProjectId) {
+            setManagerProjectId(res[0].id);
+          }
         }
       })
       .catch(() => {});
-  }, [isAdmin]);
+  }, [hasAccess, isManager]);
 
   const resolvedProjectId = useMemo(() => {
     const q = projectQuery.trim().toLowerCase();
@@ -166,15 +176,27 @@ export default function LLMUsageMonitoringPage() {
   }, [resolvedDomainId, from, model, operation, page, resolvedProjectId, status, to, userEmail]);
 
   const load = useCallback(async () => {
-    if (!isAdmin) return;
+    if (!hasAccess) return;
+    if (isManager && !managerProjectId) return;
     setLoading(true);
     setError(null);
     try {
-      const [eventsRes, statsRes, pricingRes] = await Promise.all([
-        listAdminLLMUsageEvents(filters),
-        listAdminLLMUsageStats(filters),
-        listAdminLLMPricing(),
-      ]);
+      let eventsRes: { items: LLMUsageEventDTO[]; total: number };
+      let statsRes: LLMUsageStatsDTO;
+      let pricingRes: LLMPricingDTO[] = [];
+
+      if (isAdmin) {
+        [eventsRes, statsRes, pricingRes] = await Promise.all([
+          listAdminLLMUsageEvents(filters),
+          listAdminLLMUsageStats(filters),
+          listAdminLLMPricing(),
+        ]);
+      } else {
+        [eventsRes, statsRes] = await Promise.all([
+          listProjectLLMUsageEvents(managerProjectId, filters),
+          listProjectLLMUsageStats(managerProjectId, filters),
+        ]);
+      }
 
       const evs = Array.isArray(eventsRes.items) ? eventsRes.items : [];
       setEvents(evs);
@@ -198,16 +220,16 @@ export default function LLMUsageMonitoringPage() {
     } finally {
       setLoading(false);
     }
-  }, [filters, isAdmin]);
+  }, [filters, hasAccess, isAdmin, isManager, managerProjectId]);
 
   useEffect(() => {
-    if (authLoading || !isAdmin) return;
+    if (authLoading || !hasAccess) return;
     load();
-  }, [authLoading, isAdmin, load]);
+  }, [authLoading, hasAccess, load]);
 
   if (authLoading)
     return <div className="p-10 text-center text-sm text-slate-500">Загрузка...</div>;
-  if (!isAdmin)
+  if (!hasAccess)
     return <div className="p-10 text-center text-red-500 font-bold">Доступ запрещен</div>;
 
   const tableWrapperClass =
@@ -243,7 +265,7 @@ export default function LLMUsageMonitoringPage() {
             <div className="flex items-center text-sm text-slate-500 dark:text-slate-400 mb-1">
               <span className="text-slate-900 dark:text-slate-200 font-medium">Мониторинг</span>
               <ChevronRight className="w-4 h-4 mx-1 opacity-50" />
-              <span>Глобальный Биллинг</span>
+              <span>{isManager ? 'Биллинг проекта' : 'Глобальный Биллинг'}</span>
             </div>
             <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white flex items-center gap-3">
               Расход токенов (LLM Usage)
@@ -260,6 +282,32 @@ export default function LLMUsageMonitoringPage() {
 
       <main className="flex-1 overflow-y-auto p-6">
         <div className="max-w-7xl mx-auto space-y-6">
+          {/* ВЫБОР ПРОЕКТА ДЛЯ МЕНЕДЖЕРА */}
+          {isManager && (
+            <div className="bg-white dark:bg-[#0f1523] border border-indigo-200 dark:border-indigo-700/50 rounded-2xl p-5 shadow-sm">
+              <p className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-3">
+                Выберите проект:
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {allProjects.map((p) => (
+                  <button
+                    key={p.id}
+                    onClick={() => { setManagerProjectId(p.id); setPage(1); }}
+                    className={`px-4 py-2 text-sm font-medium rounded-xl border transition-colors shadow-sm ${
+                      managerProjectId === p.id
+                        ? 'bg-indigo-600 text-white border-indigo-600'
+                        : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/30'
+                    }`}>
+                    {p.name || p.id}
+                  </button>
+                ))}
+                {allProjects.length === 0 && (
+                  <span className="text-sm text-slate-500">Нет доступных проектов.</span>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* ГЛАВНЫЕ МЕТРИКИ */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <StatCard
@@ -371,7 +419,7 @@ export default function LLMUsageMonitoringPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-6">
+          <div className={`grid grid-cols-1 ${isAdmin ? 'lg:grid-cols-[1fr_300px]' : ''} gap-6`}>
             {/* ТАБЛИЦА ЛОГОВ И ФИЛЬТРЫ */}
             <div className={`${tableWrapperClass} flex flex-col`}>
               {/* ФИЛЬТРЫ */}
@@ -385,7 +433,7 @@ export default function LLMUsageMonitoringPage() {
                       Логи операций
                     </h3>
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                      История запросов по всей платформе.
+                      {isManager ? 'История запросов по вашим проектам.' : 'История запросов по всей платформе.'}
                     </p>
                   </div>
                 </div>
@@ -432,46 +480,50 @@ export default function LLMUsageMonitoringPage() {
                     }}
                   />
 
-                  <div className="w-full h-px bg-slate-200 dark:bg-slate-800 my-1 hidden lg:block"></div>
+                  {isAdmin && (
+                    <>
+                      <div className="w-full h-px bg-slate-200 dark:bg-slate-800 my-1 hidden lg:block"></div>
 
-                  <FilterSearchInput
-                    value={userEmail}
-                    onChange={(v) => {
-                      setPage(1);
-                      setUserEmail(v);
-                    }}
-                    placeholder="Email пользователя"
-                  />
+                      <FilterSearchInput
+                        value={userEmail}
+                        onChange={(v) => {
+                          setPage(1);
+                          setUserEmail(v);
+                        }}
+                        placeholder="Email пользователя"
+                      />
 
-                  <FilterSearchInput
-                    value={projectQuery}
-                    onChange={(v) => {
-                      setPage(1);
-                      setProjectQuery(v);
-                    }}
-                    placeholder="Название проекта"
-                    list="usage-projects-list"
-                  />
-                  <datalist id="usage-projects-list">
-                    {allProjects.map((p) => (
-                      <option key={p.id} value={p.name} />
-                    ))}
-                  </datalist>
+                      <FilterSearchInput
+                        value={projectQuery}
+                        onChange={(v) => {
+                          setPage(1);
+                          setProjectQuery(v);
+                        }}
+                        placeholder="Название проекта"
+                        list="usage-projects-list"
+                      />
+                      <datalist id="usage-projects-list">
+                        {allProjects.map((p) => (
+                          <option key={p.id} value={p.name} />
+                        ))}
+                      </datalist>
 
-                  <FilterSearchInput
-                    value={domainQuery}
-                    onChange={(v) => {
-                      setPage(1);
-                      setDomainQuery(v);
-                    }}
-                    placeholder="URL домена"
-                    list="usage-domains-list"
-                  />
-                  <datalist id="usage-domains-list">
-                    {Array.from(domainLookup.values()).map((url) => (
-                      <option key={url} value={url} />
-                    ))}
-                  </datalist>
+                      <FilterSearchInput
+                        value={domainQuery}
+                        onChange={(v) => {
+                          setPage(1);
+                          setDomainQuery(v);
+                        }}
+                        placeholder="URL домена"
+                        list="usage-domains-list"
+                      />
+                      <datalist id="usage-domains-list">
+                        {Array.from(domainLookup.values()).map((url) => (
+                          <option key={url} value={url} />
+                        ))}
+                      </datalist>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -593,41 +645,43 @@ export default function LLMUsageMonitoringPage() {
               </div>
             </div>
 
-            {/* ПРАВАЯ ПАНЕЛЬ: СПРАВОЧНИК ТАРИФОВ */}
-            <div className="flex flex-col gap-4">
-              <div className="bg-white dark:bg-[#0f1523] border border-slate-200 dark:border-slate-700/60 rounded-2xl shadow-sm p-5 animate-in fade-in duration-500">
-                <div className="flex items-center gap-2 mb-4">
-                  <CreditCard className="w-4 h-4 text-slate-400" />
-                  <h3 className="font-bold text-slate-900 dark:text-white">
-                    Тарифы (за 1M токенов)
-                  </h3>
-                </div>
-                <div className="space-y-3">
-                  {pricing.map((item) => (
-                    <div
-                      key={item.id}
-                      className="p-3 rounded-xl border border-slate-100 bg-slate-50 dark:border-slate-800/60 dark:bg-[#0a1020]">
-                      <div className="font-mono text-xs font-bold text-indigo-600 dark:text-indigo-400 mb-2">
-                        {item.model}
+            {/* ПРАВАЯ ПАНЕЛЬ: СПРАВОЧНИК ТАРИФОВ (только для админа) */}
+            {isAdmin && (
+              <div className="flex flex-col gap-4">
+                <div className="bg-white dark:bg-[#0f1523] border border-slate-200 dark:border-slate-700/60 rounded-2xl shadow-sm p-5 animate-in fade-in duration-500">
+                  <div className="flex items-center gap-2 mb-4">
+                    <CreditCard className="w-4 h-4 text-slate-400" />
+                    <h3 className="font-bold text-slate-900 dark:text-white">
+                      Тарифы (за 1M токенов)
+                    </h3>
+                  </div>
+                  <div className="space-y-3">
+                    {pricing.map((item) => (
+                      <div
+                        key={item.id}
+                        className="p-3 rounded-xl border border-slate-100 bg-slate-50 dark:border-slate-800/60 dark:bg-[#0a1020]">
+                        <div className="font-mono text-xs font-bold text-indigo-600 dark:text-indigo-400 mb-2">
+                          {item.model}
+                        </div>
+                        <div className="flex justify-between text-xs text-slate-600 dark:text-slate-400 mb-1">
+                          <span>Input:</span>
+                          <span className="font-mono">${item.input_usd_per_million}</span>
+                        </div>
+                        <div className="flex justify-between text-xs text-slate-600 dark:text-slate-400">
+                          <span>Output:</span>
+                          <span className="font-mono">${item.output_usd_per_million}</span>
+                        </div>
                       </div>
-                      <div className="flex justify-between text-xs text-slate-600 dark:text-slate-400 mb-1">
-                        <span>Input:</span>
-                        <span className="font-mono">${item.input_usd_per_million}</span>
+                    ))}
+                    {pricing.length === 0 && (
+                      <div className="text-xs text-slate-500 text-center py-4">
+                        Тарифы не загружены
                       </div>
-                      <div className="flex justify-between text-xs text-slate-600 dark:text-slate-400">
-                        <span>Output:</span>
-                        <span className="font-mono">${item.output_usd_per_million}</span>
-                      </div>
-                    </div>
-                  ))}
-                  {pricing.length === 0 && (
-                    <div className="text-xs text-slate-500 text-center py-4">
-                      Тарифы не загружены
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
       </main>

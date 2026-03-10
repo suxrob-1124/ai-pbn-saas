@@ -217,7 +217,7 @@ func TestAdminLLMUsageEventsAuthFiltersAndPagination(t *testing.T) {
 	t.Run("forbidden for non-admin", func(t *testing.T) {
 		ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 			Email: "manager@example.com",
-			Role:  "manager",
+			Role:  "user",
 		})
 		req := httptest.NewRequest(http.MethodGet, "/api/admin/llm-usage/events", nil).WithContext(ctx)
 		rec := httptest.NewRecorder()
@@ -386,7 +386,7 @@ func TestProjectLLMUsageEventsForOwnerAndManager(t *testing.T) {
 	t.Run("owner can access own project and project_id query is ignored", func(t *testing.T) {
 		ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 			Email: owner,
-			Role:  "manager",
+			Role:  "user",
 		})
 		req := httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/llm-usage/events?project_id=other-project&limit=50&page=1", nil).WithContext(ctx)
 		rec := httptest.NewRecorder()
@@ -424,7 +424,7 @@ func TestProjectLLMUsageEventsForOwnerAndManager(t *testing.T) {
 
 		ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 			Email: manager,
-			Role:  "manager",
+			Role:  "user",
 		})
 		req := httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/llm-usage/events", nil).WithContext(ctx)
 		rec := httptest.NewRecorder()
@@ -453,7 +453,7 @@ func TestProjectLLMUsageEventsForbiddenForNonMember(t *testing.T) {
 
 	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 		Email: "stranger@example.com",
-		Role:  "manager",
+		Role:  "user",
 	})
 	req := httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/llm-usage/events", nil).WithContext(ctx)
 	rec := httptest.NewRecorder()
@@ -497,7 +497,7 @@ func TestProjectLLMUsageStatsGroupBy(t *testing.T) {
 
 	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 		Email: owner,
-		Role:  "manager",
+		Role:  "user",
 	})
 	req := httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/llm-usage/stats?group_by=user", nil).WithContext(ctx)
 	rec := httptest.NewRecorder()

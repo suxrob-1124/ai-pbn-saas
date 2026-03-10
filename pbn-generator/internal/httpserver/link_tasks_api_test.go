@@ -40,7 +40,7 @@ func TestDomainLinksCreateAndList(t *testing.T) {
 
 	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 		Email:      "owner@example.com",
-		Role:       "manager",
+		Role:       "user",
 		IsApproved: true,
 	})
 
@@ -136,7 +136,7 @@ func TestLinkTasksUpdateAndRetry(t *testing.T) {
 
 	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 		Email:      "owner@example.com",
-		Role:       "manager",
+		Role:       "user",
 		IsApproved: true,
 	})
 
@@ -239,7 +239,7 @@ func TestLinksListGlobalScope(t *testing.T) {
 	t.Run("non-admin gets only accessible projects", func(t *testing.T) {
 		ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 			Email:      "manager@example.com",
-			Role:       "manager",
+			Role:       "user",
 			IsApproved: true,
 		})
 		req := httptest.NewRequest(http.MethodGet, "/api/links", nil).WithContext(ctx)
@@ -269,7 +269,7 @@ func TestLinksListGlobalScope(t *testing.T) {
 	t.Run("non-admin without access gets empty list", func(t *testing.T) {
 		ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 			Email:      "viewer@example.com",
-			Role:       "manager",
+			Role:       "user",
 			IsApproved: true,
 		})
 		req := httptest.NewRequest(http.MethodGet, "/api/links", nil).WithContext(ctx)

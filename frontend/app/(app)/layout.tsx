@@ -60,9 +60,10 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 
   const isEditor = me?.role === 'editor';
   const isAdmin = me?.role === 'admin';
+  const isManager = me?.role === 'manager';
   const isOwner = me?.role === 'owner';
-  const hasFullAccess = isAdmin || isOwner || me?.role === 'manager';
-  const showApiKeyAlert = hasFullAccess && me?.hasApiKey === false;
+  const hasFullAccess = isAdmin || isManager;
+  const showApiKeyAlert = false; // API key is now managed globally via .env
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50 dark:bg-slate-950">
@@ -155,13 +156,15 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
                     currentPath={pathname}
                     isCollapsed={isCollapsed}
                   />
-                  <NavItem
-                    href="/monitoring"
-                    icon={<Settings className="w-4 h-4" />}
-                    label="Статус систем"
-                    currentPath={pathname}
-                    isCollapsed={isCollapsed}
-                  />
+                  {isAdmin && (
+                    <NavItem
+                      href="/monitoring"
+                      icon={<Settings className="w-4 h-4" />}
+                      label="Статус систем"
+                      currentPath={pathname}
+                      isCollapsed={isCollapsed}
+                    />
+                  )}
                 </div>
               </div>
             </>

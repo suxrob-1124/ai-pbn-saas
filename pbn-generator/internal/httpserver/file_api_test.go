@@ -560,7 +560,7 @@ func TestFileAPI_OwnerCanUpdate(t *testing.T) {
 	s, _, domainID, domainDir, _ := setupFileAPIDomainFixture(t)
 	ownerCtx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 		Email: "owner@example.com",
-		Role:  "manager",
+		Role:  "user",
 	})
 
 	updateReq := httptest.NewRequest(http.MethodPut, "/api/domains/"+domainID+"/files/index.html", strings.NewReader(`{"content":"<h1>Owner Edit</h1>"}`)).WithContext(ownerCtx)
@@ -599,7 +599,7 @@ func TestFileAPI_ViewerCannotUpdate(t *testing.T) {
 
 	viewerCtx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 		Email: viewerEmail,
-		Role:  "manager",
+		Role:  "user",
 	})
 	updateReq := httptest.NewRequest(http.MethodPut, "/api/domains/"+domainID+"/files/index.html", strings.NewReader(`{"content":"<h1>Viewer Edit</h1>"}`)).WithContext(viewerCtx)
 	updateReq.Header.Set("Content-Type", "application/json")
@@ -635,7 +635,7 @@ func TestFileAPI_EditorCanUpdate(t *testing.T) {
 
 	editorCtx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 		Email: editorEmail,
-		Role:  "manager",
+		Role:  "user",
 	})
 	updateReq := httptest.NewRequest(http.MethodPut, "/api/domains/"+domainID+"/files/index.html", strings.NewReader(`{"content":"<h1>Editor Edit</h1>"}`)).WithContext(editorCtx)
 	updateReq.Header.Set("Content-Type", "application/json")
