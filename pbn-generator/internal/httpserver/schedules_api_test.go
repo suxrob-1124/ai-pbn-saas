@@ -30,7 +30,7 @@ func TestProjectSchedulesCreateAndList(t *testing.T) {
 
 	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 		Email:      "owner@example.com",
-		Role:       "manager",
+		Role:       "user",
 		IsApproved: true,
 	})
 
@@ -115,7 +115,7 @@ func TestProjectScheduleTriggerEnqueues(t *testing.T) {
 
 	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 		Email:      "owner@example.com",
-		Role:       "manager",
+		Role:       "user",
 		IsApproved: true,
 	})
 
@@ -183,7 +183,7 @@ func TestProjectScheduleTriggerRespectsLimitAndCooldown(t *testing.T) {
 
 	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 		Email:      "owner@example.com",
-		Role:       "manager",
+		Role:       "user",
 		IsApproved: true,
 	})
 
@@ -254,7 +254,7 @@ func TestProjectScheduleTriggerDoesNotUpdateScheduleMeta(t *testing.T) {
 
 	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 		Email:      "owner@example.com",
-		Role:       "manager",
+		Role:       "user",
 		IsApproved: true,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/projects/project-meta/schedules/schedule-meta/trigger", nil).WithContext(ctx)
@@ -289,7 +289,7 @@ func TestProjectSchedulesSinglePerProject(t *testing.T) {
 
 	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 		Email:      "owner@example.com",
-		Role:       "manager",
+		Role:       "user",
 		IsApproved: true,
 	})
 

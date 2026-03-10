@@ -11,7 +11,7 @@ export function isMainGenerationActionDisabled(loading: boolean, status?: string
 }
 
 export function canEditPromptOverrides(role?: string | null): boolean {
-  return role === "admin" || role === "owner" || role === "editor";
+  return role === "admin" || role === "owner";
 }
 
 export function canOpenDomainEditor(domain: unknown): boolean {
