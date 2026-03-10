@@ -2107,6 +2107,16 @@ func (s *stubSessionStore) Delete(ctx context.Context, jti string) error {
 	return nil
 }
 
+func (s *stubSessionStore) Renew(ctx context.Context, jti string, expiresAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if sess, ok := s.sessions[jti]; ok {
+		sess.ExpiresAt = expiresAt
+		s.sessions[jti] = sess
+	}
+	return nil
+}
+
 func (s *stubSessionStore) CleanupExpired(ctx context.Context, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -298,6 +298,7 @@ export default function DomainPage() {
   } = useDomainActions({
     id,
     kw,
+    generationType,
     domain,
     gens,
     latestAttempt,

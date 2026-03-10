@@ -38,6 +38,7 @@ type LinkTaskLite = {
 type UseDomainActionsParams = {
   id: string;
   kw: string;
+  generationType?: string;
   domain: DomainLite | null;
   gens: GenerationLite[];
   latestAttempt: GenerationLite | null;
@@ -57,9 +58,12 @@ type UseDomainActionsParams = {
   setLinkTasks: Dispatch<SetStateAction<LinkTaskLite[]>>;
 };
 
+const WEBARCHIVE_GEN_TYPES = ['webarchive_single', 'webarchive_multi', 'webarchive_eeat'];
+
 export function useDomainActions({
   id,
   kw,
+  generationType,
   domain,
   gens,
   latestAttempt,
@@ -85,7 +89,8 @@ export function useDomainActions({
   const triggerGeneration = async (forceStep?: string) => {
     if (!id) return;
     generationFlowState.validating("Проверяем параметры запуска генерации");
-    if (!kw.trim()) {
+    const isWebarchive = generationType && WEBARCHIVE_GEN_TYPES.includes(generationType);
+    if (!isWebarchive && !kw.trim()) {
       setError("Сначала задайте ключевое слово");
       generationFlowState.fail("Ключевое слово не заполнено");
       return;

@@ -52,6 +52,13 @@ func (s *SessionStore) Get(ctx context.Context, jti string) (auth.Session, error
 	return sess, nil
 }
 
+func (s *SessionStore) Renew(ctx context.Context, jti string, expiresAt time.Time) error {
+	if _, err := s.db.ExecContext(ctx, `UPDATE sessions SET expires_at = $1 WHERE token = $2`, expiresAt, jti); err != nil {
+		return fmt.Errorf("failed to renew session: %w", err)
+	}
+	return nil
+}
+
 func (s *SessionStore) Delete(ctx context.Context, jti string) error {
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE token = $1`, jti); err != nil {
 		return fmt.Errorf("failed to delete session: %w", err)

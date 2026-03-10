@@ -568,9 +568,8 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (TokenPair, 
 	if err != nil {
 		return TokenPair{}, fmt.Errorf("could not sign refresh token")
 	}
-	// продлеваем сессию: удаляем старую запись и создаем новую
-	_ = s.sessions.Delete(ctx, sess.JTI)
-	_ = s.sessions.Create(ctx, Session{JTI: sess.JTI, Email: sess.Email, ExpiresAt: refreshExp})
+	// продлеваем сессию: атомарно обновляем срок действия
+	_ = s.sessions.Renew(ctx, sess.JTI, refreshExp)
 
 	return TokenPair{Access: access, Refresh: refresh, AccessExp: accessExp, RefreshExp: refreshExp}, nil
 }

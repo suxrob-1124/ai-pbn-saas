@@ -26,6 +26,7 @@ type SessionStore interface {
 	Create(ctx context.Context, session Session) error
 	Get(ctx context.Context, jti string) (Session, error)
 	Delete(ctx context.Context, jti string) error
+	Renew(ctx context.Context, jti string, expiresAt time.Time) error
 	CleanupExpired(ctx context.Context, now time.Time) error
 	RevokeByEmail(ctx context.Context, email string) error
 	RevokeAll(ctx context.Context, email string) error
