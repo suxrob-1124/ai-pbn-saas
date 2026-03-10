@@ -6,5 +6,5 @@ export type DomainSummaryResponse = {
     status: string;
   };
   project_name: string;
-  my_role: "admin" | "owner" | "editor" | "viewer";
+  my_role: "admin" | "owner" | "manager" | "editor" | "viewer";
 };

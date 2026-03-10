@@ -529,6 +529,7 @@ func migrationStatements() []string {
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_domains_url_active ON domains(url) WHERE deleted_at IS NULL;`,
 		`UPDATE projects SET status = 'active' WHERE status = 'draft';`,
 		`ALTER TABLE projects ALTER COLUMN status SET DEFAULT 'active';`,
+		`UPDATE project_members SET role = 'manager' WHERE role = 'owner';`,
 	}
 	return append(stmts, projectStmts...)
 }

@@ -58,7 +58,7 @@ export type ProjectSummary = {
   project: Project;
   domains: Domain[];
   members: Array<{ email: string; role: string; createdAt: string }>;
-  my_role?: "admin" | "owner" | "editor" | "viewer";
+  my_role?: "admin" | "owner" | "manager" | "editor" | "viewer";
 };
 
 export type ProjectTab = "domains" | "schedules" | "errors" | "settings";

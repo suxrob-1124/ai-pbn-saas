@@ -95,7 +95,7 @@ func (s *Server) resolveProjectRole(ctx context.Context, project sqlstore.Projec
 		if err == nil {
 			role := strings.ToLower(strings.TrimSpace(member.Role))
 			switch role {
-			case "viewer", "editor", "owner":
+			case "viewer", "editor", "manager", "owner":
 				return role
 			}
 		}
@@ -115,9 +115,10 @@ func hasProjectPermission(userRole string, memberRole string, requiredRole strin
 	}
 
 	roleHierarchy := map[string]int{
-		"viewer": 1,
-		"editor": 2,
-		"owner":  4,
+		"viewer":  1,
+		"editor":  2,
+		"manager": 4,
+		"owner":   4,
 	}
 
 	userLevel := roleHierarchy[actualRole]

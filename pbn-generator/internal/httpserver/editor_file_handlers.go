@@ -258,7 +258,7 @@ func (s *Server) handleDomainFiles(w http.ResponseWriter, r *http.Request, domai
 		if raw := strings.TrimSpace(r.URL.Query().Get("recursive")); raw != "" {
 			recursiveDelete = raw == "1" || strings.EqualFold(raw, "true")
 		}
-		if hardDelete && !strings.EqualFold(user.Role, "admin") && !strings.EqualFold(memberRole, "owner") {
+		if hardDelete && !strings.EqualFold(user.Role, "admin") && !strings.EqualFold(memberRole, "owner") && !strings.EqualFold(memberRole, "manager") {
 			writeError(w, http.StatusForbidden, "hard delete requires owner or admin role")
 			return
 		}

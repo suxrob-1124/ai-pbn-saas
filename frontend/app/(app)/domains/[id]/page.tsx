@@ -108,7 +108,7 @@ type DomainSummary = {
   latest_attempt?: Generation;
   latest_success?: Generation;
   link_tasks: LinkTask[];
-  my_role?: 'admin' | 'owner' | 'editor' | 'viewer';
+  my_role?: 'admin' | 'owner' | 'manager' | 'editor' | 'viewer';
 };
 type GenerationDetail = {
   id: string;
@@ -142,7 +142,7 @@ export default function DomainPage() {
   const [latestAttempt, setLatestAttempt] = useState<Generation | null>(null);
   const [latestSuccess, setLatestSuccess] = useState<Generation | null>(null);
   const [generationDetails, setGenerationDetails] = useState<Record<string, GenerationDetail>>({});
-  const [myRole, setMyRole] = useState<'admin' | 'owner' | 'editor' | 'viewer'>('viewer');
+  const [myRole, setMyRole] = useState<'admin' | 'owner' | 'manager' | 'editor' | 'viewer'>('viewer');
   const [projectName, setProjectName] = useState<string>('');
 
   const [kw, setKw] = useState('');
@@ -169,7 +169,7 @@ export default function DomainPage() {
   const [indexCheckLoading, setIndexCheckLoading] = useState(false);
   const [generationType, setGenerationType] = useState('single_page');
 
-  const hasExtendedAccess = myRole === 'admin' || myRole === 'owner';
+  const hasExtendedAccess = myRole === 'admin' || myRole === 'owner' || myRole === 'manager';
 
   const load = async (force = false) => {
     if (!id) return;

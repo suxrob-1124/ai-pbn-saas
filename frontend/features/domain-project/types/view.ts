@@ -1,4 +1,4 @@
-export type DomainProjectRole = "admin" | "owner" | "editor" | "viewer";
+export type DomainProjectRole = "admin" | "owner" | "manager" | "editor" | "viewer";
 
 export type GenerationView = {
   status: string;

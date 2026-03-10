@@ -630,13 +630,13 @@ export default function AdminPage() {
                                                 <span className="font-medium text-slate-700 dark:text-slate-300">{m.email}</span>
                                                 <div className="flex items-center gap-2">
                                                   {isProjectOwner ? (
-                                                    <Badge label="Владелец" tone="indigo" />
+                                                    <Badge label="Создатель" tone="amber" />
                                                   ) : (
                                                     <select
                                                       className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs outline-none focus:border-indigo-500 dark:text-white"
                                                       value={m.role}
                                                       onChange={(e) => handleUpdateMemberRole(proj.id, m.email, e.target.value)}>
-                                                      <option value="owner">Владелец</option>
+                                                      <option value="manager">Менеджер</option>
                                                       <option value="editor">Редактор</option>
                                                       <option value="viewer">Наблюдатель</option>
                                                     </select>
@@ -668,9 +668,9 @@ export default function AdminPage() {
                                                   value={addMemberRole}
                                                   onChange={(e) => setAddMemberRole(e.target.value)}
                                                   className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-indigo-500 dark:text-white">
-                                                  <option value="owner">Владелец</option>
+                                                  <option value="manager">Менеджер</option>
                                                   <option value="editor">Редактор</option>
-                                                  <option value="viewer">Просмотр</option>
+                                                  <option value="viewer">Наблюдатель</option>
                                                 </select>
                                                 <button
                                                   onClick={() => handleAddMember(proj.id)}

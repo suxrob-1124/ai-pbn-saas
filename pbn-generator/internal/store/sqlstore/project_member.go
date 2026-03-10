@@ -23,12 +23,12 @@ func (s *ProjectMemberStore) Add(ctx context.Context, projectID, email, role str
 	if projectID == "" || email == "" {
 		return errors.New("project_id and email are required")
 	}
-	validRoles := map[string]bool{"owner": true, "editor": true, "viewer": true}
+	validRoles := map[string]bool{"manager": true, "editor": true, "viewer": true}
 	if !validRoles[role] {
-		return fmt.Errorf("invalid role: %s (allowed: owner, editor, viewer)", role)
+		return fmt.Errorf("invalid role: %s (allowed: manager, editor, viewer)", role)
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO project_members(project_id, user_email, role, created_at) 
-		VALUES($1,$2,$3,NOW()) 
+	_, err := s.db.ExecContext(ctx, `INSERT INTO project_members(project_id, user_email, role, created_at)
+		VALUES($1,$2,$3,NOW())
 		ON CONFLICT (project_id, user_email) DO UPDATE SET role=$3`, projectID, email, role)
 	if err != nil {
 		// Проверяем на foreign key constraint - пользователь не существует
@@ -61,9 +61,9 @@ func (s *ProjectMemberStore) UpdateRole(ctx context.Context, projectID, email, r
 	if projectID == "" || email == "" {
 		return errors.New("project_id and email are required")
 	}
-	validRoles := map[string]bool{"owner": true, "editor": true, "viewer": true}
+	validRoles := map[string]bool{"manager": true, "editor": true, "viewer": true}
 	if !validRoles[role] {
-		return fmt.Errorf("invalid role: %s (allowed: owner, editor, viewer)", role)
+		return fmt.Errorf("invalid role: %s (allowed: manager, editor, viewer)", role)
 	}
 	res, err := s.db.ExecContext(ctx, `UPDATE project_members SET role=$3 WHERE project_id=$1 AND user_email=$2`, projectID, email, role)
 	if err != nil {

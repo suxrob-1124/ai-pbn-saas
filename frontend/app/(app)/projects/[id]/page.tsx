@@ -63,7 +63,7 @@ export default function ProjectDetailPage() {
   const projectId = params?.id as string;
 
   const [project, setProject] = useState<Project | null>(null);
-  const [myRole, setMyRole] = useState<'admin' | 'owner' | 'editor' | 'viewer'>('viewer');
+  const [myRole, setMyRole] = useState<'admin' | 'owner' | 'manager' | 'editor' | 'viewer'>('viewer');
   const [domains, setDomains] = useState<Domain[]>([]);
   const [domainSearch, setDomainSearch] = useState('');
 
@@ -124,7 +124,7 @@ export default function ProjectDetailPage() {
   const [runLegacyAfterImport, setRunLegacyAfterImport] = useState(false);
   const legacyImport = useLegacyImport(projectId);
 
-  const hasExtendedAccess = myRole === 'admin' || myRole === 'owner';
+  const hasExtendedAccess = myRole === 'admin' || myRole === 'owner' || myRole === 'manager';
 
   useEffect(() => {
     if (uiView === 'errors') setActiveTab('errors');

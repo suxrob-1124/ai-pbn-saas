@@ -11,7 +11,7 @@ export function isMainGenerationActionDisabled(loading: boolean, status?: string
 }
 
 export function canEditPromptOverrides(role?: string | null): boolean {
-  return role === "admin" || role === "owner";
+  return role === "admin" || role === "owner" || role === "manager";
 }
 
 export function canOpenDomainEditor(domain: unknown): boolean {
@@ -23,7 +23,7 @@ export function hasLinkSettings(anchor?: string | null, acceptor?: string | null
 }
 
 export function normalizeRole(role?: string | null): DomainProjectRole {
-  if (role === "admin" || role === "owner" || role === "editor" || role === "viewer") {
+  if (role === "admin" || role === "owner" || role === "manager" || role === "editor" || role === "viewer") {
     return role;
   }
   return "viewer";

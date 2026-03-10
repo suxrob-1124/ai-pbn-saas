@@ -31,8 +31,16 @@ export function ProjectMembersSection({
 }: ProjectMembersSectionProps) {
   const getRoleIcon = (role: string) => {
     if (role === 'owner') return <Star className="w-4 h-4 text-amber-500" />;
+    if (role === 'manager') return <Star className="w-4 h-4 text-indigo-400" />;
     if (role === 'editor') return <User className="w-4 h-4 text-blue-500" />;
     return <User className="w-4 h-4 text-slate-500" />;
+  };
+
+  const roleLabel = (role: string) => {
+    if (role === 'owner') return 'Создатель';
+    if (role === 'manager') return 'Менеджер';
+    if (role === 'editor') return 'Редактор';
+    return 'Наблюдатель';
   };
 
   return (
@@ -64,9 +72,9 @@ export function ProjectMembersSection({
               className="sm:w-48 bg-white dark:bg-[#060d18] border border-slate-300 dark:border-slate-700 px-4 py-2.5 text-sm rounded-xl outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 dark:text-white transition-all shadow-sm"
               value={newMemberRole}
               onChange={(e) => onNewMemberRoleChange(e.target.value)}>
-              <option value="owner">Владелец</option>
-              <option value="viewer">Наблюдатель</option>
+              <option value="manager">Менеджер</option>
               <option value="editor">Редактор (Копирайтер)</option>
+              <option value="viewer">Наблюдатель</option>
             </select>
             <button
               onClick={onAddMember}
@@ -107,23 +115,27 @@ export function ProjectMembersSection({
 
                 <div className="flex items-center gap-3">
                   <div className="flex items-center gap-2">
-                    {currentUserEmail && member.email === currentUserEmail ? (
+                    {member.role === 'owner' ? (
+                      <span className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-amber-200 dark:border-amber-700/50 text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 select-none">
+                        Создатель
+                      </span>
+                    ) : currentUserEmail && member.email === currentUserEmail ? (
                       <span className="px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500 bg-slate-50 dark:bg-slate-800/50 select-none" title="Нельзя изменить свою роль">
-                        {member.role === 'owner' ? 'Владелец' : member.role === 'editor' ? 'Редактор' : 'Наблюдатель'}
+                        {roleLabel(member.role)}
                       </span>
                     ) : (
                       <select
                         className="bg-transparent border border-slate-200 dark:border-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium outline-none focus:border-indigo-500 dark:text-slate-200"
                         value={member.role}
                         onChange={(e) => onUpdateMemberRole(member.email, e.target.value)}>
-                        <option value="owner">Владелец</option>
-                        <option value="viewer">Наблюдатель</option>
+                        <option value="manager">Менеджер</option>
                         <option value="editor">Редактор</option>
+                        <option value="viewer">Наблюдатель</option>
                       </select>
                     )}
                     <button
                       onClick={() => onRemoveMember(member.email)}
-                      disabled={loading || (!!currentUserEmail && member.email === currentUserEmail)}
+                      disabled={loading || member.role === 'owner' || (!!currentUserEmail && member.email === currentUserEmail)}
                       className="p-1.5 text-slate-400 hover:text-red-500 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
                       <X className="w-4 h-4" />
                     </button>
