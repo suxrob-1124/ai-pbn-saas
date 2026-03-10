@@ -331,6 +331,16 @@ export default function AdminPage() {
     }
   };
 
+  const handleUpdateMemberRole = async (projectId: string, email: string, role: string) => {
+    try {
+      await patch(`/api/projects/${projectId}/members/${encodeURIComponent(email)}`, { role });
+      showToast({ type: 'success', title: 'Роль обновлена' });
+      await loadProjectMembers(projectId);
+    } catch (err: any) {
+      showToast({ type: 'error', title: 'Ошибка', message: err?.message });
+    }
+  };
+
   const handleDeleteUser = async (email: string) => {
     setDeletingUser(true);
     try {
@@ -614,21 +624,29 @@ export default function AdminPage() {
                                           <div className="mt-3 border-t border-slate-100 dark:border-slate-700/40 pt-3 space-y-2">
                                             {members.map((m) => (
                                               <div key={m.email} className="flex items-center justify-between text-xs">
+                                                <span className="font-medium text-slate-700 dark:text-slate-300">{m.email}</span>
                                                 <div className="flex items-center gap-2">
-                                                  <span className="font-medium text-slate-700 dark:text-slate-300">{m.email}</span>
-                                                  <Badge
-                                                    label={m.role === 'owner' ? 'Владелец' : m.role === 'editor' ? 'Редактор' : m.role}
-                                                    tone={m.role === 'owner' ? 'indigo' : 'slate'}
-                                                  />
+                                                  {m.role === 'owner' ? (
+                                                    <Badge label="Владелец" tone="indigo" />
+                                                  ) : (
+                                                    <select
+                                                      className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs outline-none focus:border-indigo-500 dark:text-white"
+                                                      value={m.role}
+                                                      onChange={(e) => handleUpdateMemberRole(proj.id, m.email, e.target.value)}>
+                                                      <option value="owner">Владелец</option>
+                                                      <option value="editor">Редактор</option>
+                                                      <option value="viewer">Наблюдатель</option>
+                                                    </select>
+                                                  )}
+                                                  {m.role !== 'owner' && (
+                                                    <button
+                                                      onClick={() => handleRemoveMember(proj.id, m.email)}
+                                                      className="inline-flex items-center gap-1 text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 transition-colors"
+                                                      title="Снять доступ">
+                                                      <UserMinus className="w-3.5 h-3.5" />
+                                                    </button>
+                                                  )}
                                                 </div>
-                                                {m.role !== 'owner' && (
-                                                  <button
-                                                    onClick={() => handleRemoveMember(proj.id, m.email)}
-                                                    className="inline-flex items-center gap-1 text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 transition-colors"
-                                                    title="Снять доступ">
-                                                    <UserMinus className="w-3.5 h-3.5" />
-                                                  </button>
-                                                )}
                                               </div>
                                             ))}
 

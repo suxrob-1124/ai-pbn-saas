@@ -7,6 +7,7 @@ type ProjectMembersSectionProps = {
   loading: boolean;
   newMemberEmail: string;
   newMemberRole: string;
+  currentUserEmail?: string;
   onNewMemberEmailChange: (value: string) => void;
   onNewMemberRoleChange: (value: string) => void;
   onAddMember: () => void;
@@ -20,6 +21,7 @@ export function ProjectMembersSection({
   loading,
   newMemberEmail,
   newMemberRole,
+  currentUserEmail,
   onNewMemberEmailChange,
   onNewMemberRoleChange,
   onAddMember,
@@ -105,18 +107,24 @@ export function ProjectMembersSection({
 
                 <div className="flex items-center gap-3">
                   <div className="flex items-center gap-2">
-                    <select
-                      className="bg-transparent border border-slate-200 dark:border-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium outline-none focus:border-indigo-500 dark:text-slate-200"
-                      value={member.role}
-                      onChange={(e) => onUpdateMemberRole(member.email, e.target.value)}>
-                      <option value="owner">Владелец</option>
-                      <option value="viewer">Наблюдатель</option>
-                      <option value="editor">Редактор</option>
-                    </select>
+                    {currentUserEmail && member.email === currentUserEmail ? (
+                      <span className="px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500 bg-slate-50 dark:bg-slate-800/50 select-none" title="Нельзя изменить свою роль">
+                        {member.role === 'owner' ? 'Владелец' : member.role === 'editor' ? 'Редактор' : 'Наблюдатель'}
+                      </span>
+                    ) : (
+                      <select
+                        className="bg-transparent border border-slate-200 dark:border-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium outline-none focus:border-indigo-500 dark:text-slate-200"
+                        value={member.role}
+                        onChange={(e) => onUpdateMemberRole(member.email, e.target.value)}>
+                        <option value="owner">Владелец</option>
+                        <option value="viewer">Наблюдатель</option>
+                        <option value="editor">Редактор</option>
+                      </select>
+                    )}
                     <button
                       onClick={() => onRemoveMember(member.email)}
-                      disabled={loading}
-                      className="p-1.5 text-slate-400 hover:text-red-500 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors">
+                      disabled={loading || (!!currentUserEmail && member.email === currentUserEmail)}
+                      className="p-1.5 text-slate-400 hover:text-red-500 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
                       <X className="w-4 h-4" />
                     </button>
                   </div>

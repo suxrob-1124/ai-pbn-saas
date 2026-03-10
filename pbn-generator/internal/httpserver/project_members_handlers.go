@@ -125,6 +125,10 @@ func (s *Server) handleProjectMemberByEmail(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "cannot modify owner")
 		return
 	}
+	if email == strings.ToLower(user.Email) {
+		writeError(w, http.StatusForbidden, "cannot change your own role")
+		return
+	}
 
 	switch r.Method {
 	case http.MethodPatch:

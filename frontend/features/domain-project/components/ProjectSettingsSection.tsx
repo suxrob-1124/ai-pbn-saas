@@ -21,6 +21,7 @@ type ProjectSettingsSectionProps = {
   loading: boolean;
   newMemberEmail: string;
   newMemberRole: string;
+  currentUserEmail?: string;
   indexCheckEnabled?: boolean;
   indexCheckLoading?: boolean;
   getTimezoneOffsetLabel: (timezone: string) => string;
@@ -57,6 +58,7 @@ export function ProjectSettingsSection({
   loading,
   newMemberEmail,
   newMemberRole,
+  currentUserEmail,
   getTimezoneOffsetLabel,
   formatDateTime,
   onSaveProjectSettings,
@@ -272,6 +274,7 @@ export function ProjectSettingsSection({
         loading={loading}
         newMemberEmail={newMemberEmail}
         newMemberRole={newMemberRole}
+        currentUserEmail={currentUserEmail}
         onNewMemberEmailChange={onNewMemberEmailChange}
         onNewMemberRoleChange={onNewMemberRoleChange}
         onAddMember={onAddMember}

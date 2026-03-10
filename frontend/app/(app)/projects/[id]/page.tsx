@@ -868,6 +868,7 @@ export default function ProjectDetailPage() {
                 loading={loading}
                 newMemberEmail={newMemberEmail}
                 newMemberRole={newMemberRole}
+                currentUserEmail={me?.email}
                 getTimezoneOffsetLabel={getTimezoneOffsetLabel}
                 formatDateTime={formatDateTime}
                 onSaveProjectSettings={saveProjectSettings}
