@@ -622,11 +622,13 @@ export default function AdminPage() {
                                         )}
                                         {members && !isLoadingMembers && (
                                           <div className="mt-3 border-t border-slate-100 dark:border-slate-700/40 pt-3 space-y-2">
-                                            {members.map((m) => (
+                                            {members.map((m) => {
+                                              const isProjectOwner = m.email === selectedProjectsEmail;
+                                              return (
                                               <div key={m.email} className="flex items-center justify-between text-xs">
                                                 <span className="font-medium text-slate-700 dark:text-slate-300">{m.email}</span>
                                                 <div className="flex items-center gap-2">
-                                                  {m.role === 'owner' ? (
+                                                  {isProjectOwner ? (
                                                     <Badge label="Владелец" tone="indigo" />
                                                   ) : (
                                                     <select
@@ -638,7 +640,7 @@ export default function AdminPage() {
                                                       <option value="viewer">Наблюдатель</option>
                                                     </select>
                                                   )}
-                                                  {m.role !== 'owner' && (
+                                                  {!isProjectOwner && (
                                                     <button
                                                       onClick={() => handleRemoveMember(proj.id, m.email)}
                                                       className="inline-flex items-center gap-1 text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 transition-colors"
@@ -648,7 +650,8 @@ export default function AdminPage() {
                                                   )}
                                                 </div>
                                               </div>
-                                            ))}
+                                              );
+                                            })}
 
                                             {/* Add member form */}
                                             {isAddingTo ? (

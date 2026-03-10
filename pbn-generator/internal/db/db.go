@@ -125,7 +125,7 @@ func migrationStatements() []string {
 			timezone TEXT,
 			global_blacklist JSONB,
 			default_server_id TEXT REFERENCES servers(id),
-			status TEXT NOT NULL DEFAULT 'draft',
+			status TEXT NOT NULL DEFAULT 'active',
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		);`,
@@ -527,6 +527,8 @@ func migrationStatements() []string {
 		`CREATE INDEX IF NOT EXISTS idx_domains_delete_batch ON domains(delete_batch) WHERE delete_batch IS NOT NULL;`,
 		`DROP INDEX IF EXISTS idx_domains_url;`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_domains_url_active ON domains(url) WHERE deleted_at IS NULL;`,
+		`UPDATE projects SET status = 'active' WHERE status = 'draft';`,
+		`ALTER TABLE projects ALTER COLUMN status SET DEFAULT 'active';`,
 	}
 	return append(stmts, projectStmts...)
 }
