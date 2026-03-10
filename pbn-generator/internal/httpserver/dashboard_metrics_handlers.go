@@ -35,7 +35,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		gens     []sqlstore.Generation
 		err      error
 	)
-	if strings.EqualFold(user.Role, "admin") {
+	if isAdmin(user.Role) {
 		projects, err = s.projects.ListAll(r.Context())
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "could not list projects")

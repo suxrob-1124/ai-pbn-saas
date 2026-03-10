@@ -100,7 +100,8 @@ export default function ProjectsPage() {
   });
   const [recentErrors, setRecentErrors] = useState<GenerationDTO[]>([]);
 
-  const hasExtendedAccess = me?.role === 'admin' || me?.role === 'owner' || me?.role === 'manager';
+  const hasExtendedAccess = me?.role === 'admin';
+  const canCreate = me?.role === 'admin' || me?.role === 'manager';
 
   const load = async (force = false) => {
     setLoading(true);
@@ -155,10 +156,10 @@ export default function ProjectsPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">
-            {hasExtendedAccess ? 'Проекты' : 'Мои сайты'}
+            {canCreate ? 'Проекты' : 'Мои сайты'}
           </h1>
           <p className="text-slate-500 dark:text-slate-400 mt-1">
-            {hasExtendedAccess
+            {canCreate
               ? 'Рабочие пространства для управления сетками сайтов.'
               : 'Выберите рабочее пространство для управления контентом.'}
           </p>
@@ -172,7 +173,7 @@ export default function ProjectsPage() {
             <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
           </button>
 
-          {hasExtendedAccess && (
+          {canCreate && (
             <button
               onClick={() => setIsCreateModalOpen(true)}
               className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-500 transition-colors shadow-sm">

@@ -53,7 +53,7 @@ func TestProjectQueueList(t *testing.T) {
 
 	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 		Email:      "owner@example.com",
-		Role:       "manager",
+		Role:       "user",
 		IsApproved: true,
 	})
 
@@ -137,7 +137,7 @@ func TestQueueDelete(t *testing.T) {
 
 	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 		Email:      "owner@example.com",
-		Role:       "manager",
+		Role:       "user",
 		IsApproved: true,
 	})
 

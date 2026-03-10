@@ -30,7 +30,7 @@ func TestProjectLinkScheduleUpsertGetDelete(t *testing.T) {
 
 	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 		Email:      "owner@example.com",
-		Role:       "manager",
+		Role:       "user",
 		IsApproved: true,
 	})
 
@@ -142,7 +142,7 @@ func TestProjectLinkScheduleTriggerCreatesTasks(t *testing.T) {
 
 	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 		Email:      "owner@example.com",
-		Role:       "manager",
+		Role:       "user",
 		IsApproved: true,
 	})
 	triggerReq := httptest.NewRequest(http.MethodPost, "/api/projects/project-link-trigger/link-schedule/trigger", nil).WithContext(ctx)
@@ -221,7 +221,7 @@ func TestProjectLinkScheduleTriggerPreservesRemoveActionForActiveTask(t *testing
 
 	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 		Email:      "owner@example.com",
-		Role:       "manager",
+		Role:       "user",
 		IsApproved: true,
 	})
 	triggerReq := httptest.NewRequest(http.MethodPost, "/api/projects/project-link-trigger-remove/link-schedule/trigger", nil).WithContext(ctx)
@@ -259,7 +259,7 @@ func TestProjectLinkScheduleInvalidTimezone(t *testing.T) {
 
 	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 		Email:      "owner@example.com",
-		Role:       "manager",
+		Role:       "user",
 		IsApproved: true,
 	})
 

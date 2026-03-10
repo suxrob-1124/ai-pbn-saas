@@ -107,7 +107,7 @@ func currentUserFromContext(ctx context.Context) (auth.User, bool) {
 }
 
 func requireApprovedUser(u auth.User) error {
-	if strings.EqualFold(u.Role, "admin") {
+	if isAdmin(u.Role) {
 		return nil
 	}
 	if !u.IsApproved {
@@ -126,6 +126,7 @@ func (s *Server) requireAdmin(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
 
 func getAccessFromCookie(r *http.Request) string {
 	c, err := r.Cookie("access_token")

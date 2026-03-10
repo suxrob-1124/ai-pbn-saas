@@ -17,7 +17,7 @@ import { FailedChecksAlert } from '@/components/indexing/FailedChecksAlert';
 import { IndexFiltersBar } from '@/components/indexing/IndexFiltersBar';
 import { IndexTable, type IndexCheckSort } from '@/components/indexing/IndexTable';
 import { useAuthGuard } from '@/lib/useAuth';
-import { invalidateAuthCache } from '@/lib/http';
+import { authFetch, invalidateAuthCache } from '@/lib/http';
 import { useDebouncedValue } from '@/lib/useDebouncedValue';
 import { showToast } from '@/lib/toastStore';
 import { useActionLocks } from '@/features/editor-v3/hooks/useActionLocks';
@@ -315,7 +315,9 @@ function IndexingMonitoringContent() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const projectId = (searchParams.get('projectId') || '').trim();
-  const isAdmin = (me?.role || '').toLowerCase() === 'admin';
+  const userRole = (me?.role || '').toLowerCase();
+  const isAdmin = userRole === 'admin';
+  const isManager = userRole === 'manager';
 
   const [checks, setChecks] = useState<IndexCheckDTO[]>([]);
   const [totalChecks, setTotalChecks] = useState(0);
@@ -363,7 +365,16 @@ function IndexingMonitoringContent() {
   const { history, historyLoading, historyError, openHistory, toggleHistory } =
     useIndexCheckHistory({ projectId, domainScope, isAdmin });
 
-  const permissionDenied = !authLoading && !isAdmin && !projectId && !domainScope;
+  const needsProjectPicker = !authLoading && isManager && !projectId && !domainScope;
+  const permissionDenied = !authLoading && !isAdmin && !isManager && !projectId && !domainScope;
+
+  const [managerProjects, setManagerProjects] = useState<{ id: string; name: string }[]>([]);
+  useEffect(() => {
+    if (!isManager) return;
+    authFetch<{ id: string; name: string }[]>('/api/projects')
+      .then((res) => setManagerProjects(Array.isArray(res) ? res : []))
+      .catch(() => {});
+  }, [isManager]);
   const querySnapshot = searchParams.toString();
 
   const refreshLockKey = projectId
@@ -825,6 +836,28 @@ function IndexingMonitoringContent() {
               })
             }
           />
+        </div>
+      )}
+
+      {/* ── Manager project picker ────────────────────────────────── */}
+      {needsProjectPicker && (
+        <div className="rounded-2xl border border-indigo-200 bg-indigo-50 px-5 py-5 dark:border-indigo-700/50 dark:bg-indigo-900/20">
+          <p className="text-sm font-medium text-indigo-800 dark:text-indigo-200 mb-3">
+            Выберите проект для просмотра данных индексации:
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {managerProjects.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => router.push(`${pathname}?projectId=${p.id}` as any)}
+                className="px-4 py-2 text-sm font-medium rounded-xl bg-white dark:bg-slate-800 border border-indigo-200 dark:border-indigo-700/50 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/40 transition-colors shadow-sm">
+                {p.name || p.id}
+              </button>
+            ))}
+            {managerProjects.length === 0 && (
+              <span className="text-sm text-slate-500">Нет доступных проектов.</span>
+            )}
+          </div>
         </div>
       )}
 

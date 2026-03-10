@@ -16,13 +16,24 @@ type projectMemberRoleKeyType string
 
 const projectMemberRoleKey projectMemberRoleKeyType = "project_member_role"
 
+// isAdmin returns true only for system-level admin role.
+func isAdmin(role string) bool {
+	return strings.EqualFold(role, "admin")
+}
+
+// canCreateProject returns true for admin and manager system roles.
+func canCreateProject(role string) bool {
+	r := strings.ToLower(role)
+	return r == "admin" || r == "manager"
+}
+
 func (s *Server) authorizeProject(ctx context.Context, projectID string) (sqlstore.Project, error) {
 	u, ok := currentUserFromContext(ctx)
 	if !ok || u.Email == "" {
 		return sqlstore.Project{}, errUnauthorized
 	}
 
-	if strings.EqualFold(u.Role, "admin") {
+	if isAdmin(u.Role) {
 		return s.projects.GetByID(ctx, projectID)
 	}
 
@@ -51,7 +62,7 @@ func (s *Server) authorizeProject(ctx context.Context, projectID string) (sqlsto
 
 // getProjectMemberRole возвращает роль пользователя в проекте (owner, editor, viewer)
 func (s *Server) getProjectMemberRole(ctx context.Context, projectID, email string) (string, error) {
-	if user, ok := currentUserFromContext(ctx); ok && strings.EqualFold(user.Role, "admin") {
+	if user, ok := currentUserFromContext(ctx); ok && isAdmin(user.Role) {
 		return "admin", nil
 	}
 	p, err := s.projects.GetByID(ctx, projectID)
@@ -73,7 +84,7 @@ func (s *Server) getProjectMemberRole(ctx context.Context, projectID, email stri
 }
 
 func (s *Server) resolveProjectRole(ctx context.Context, project sqlstore.Project, user auth.User) string {
-	if strings.EqualFold(user.Role, "admin") {
+	if isAdmin(user.Role) {
 		return "admin"
 	}
 	if strings.EqualFold(project.UserEmail, user.Email) {
@@ -106,7 +117,7 @@ func hasProjectPermission(userRole string, memberRole string, requiredRole strin
 	roleHierarchy := map[string]int{
 		"viewer": 1,
 		"editor": 2,
-		"owner":  3,
+		"owner":  4,
 	}
 
 	userLevel := roleHierarchy[actualRole]

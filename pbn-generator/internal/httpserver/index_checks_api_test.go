@@ -55,7 +55,7 @@ func TestDomainIndexChecksList(t *testing.T) {
 
 	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 		Email: "owner@example.com",
-		Role:  "manager",
+		Role:  "user",
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/domains/domain-1/index-checks", nil).WithContext(ctx)
@@ -107,7 +107,7 @@ func TestDomainIndexChecksListStoreError(t *testing.T) {
 
 	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 		Email: "owner@example.com",
-		Role:  "manager",
+		Role:  "user",
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/domains/domain-1/index-checks", nil).WithContext(ctx)
@@ -158,7 +158,7 @@ func TestDomainIndexChecksManualRun(t *testing.T) {
 
 	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 		Email:      "owner@example.com",
-		Role:       "manager",
+		Role:       "user",
 		IsApproved: true,
 	})
 
@@ -209,7 +209,7 @@ func TestDomainIndexChecksManualRunUnpublished(t *testing.T) {
 
 	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 		Email:      "owner@example.com",
-		Role:       "manager",
+		Role:       "user",
 		IsApproved: true,
 	})
 
@@ -249,7 +249,7 @@ func TestProjectIndexChecksManualRunStoreError(t *testing.T) {
 
 	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 		Email:      "owner@example.com",
-		Role:       "manager",
+		Role:       "user",
 		IsApproved: true,
 	})
 
@@ -532,7 +532,7 @@ func TestDomainIndexChecksHistory(t *testing.T) {
 
 	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 		Email: "owner@example.com",
-		Role:  "manager",
+		Role:  "user",
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/domains/domain-1/index-checks/check-1/history", nil).WithContext(ctx)
@@ -656,7 +656,7 @@ func TestDomainIndexChecksManualRunEnqueueFailure(t *testing.T) {
 
 	ctx := context.WithValue(context.Background(), currentUserContextKey, auth.User{
 		Email:      "owner@example.com",
-		Role:       "manager",
+		Role:       "user",
 		IsApproved: true,
 	})
 
