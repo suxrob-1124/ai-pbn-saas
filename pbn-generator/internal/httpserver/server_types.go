@@ -141,6 +141,7 @@ type FileEditStore interface {
 	CreateRevision(ctx context.Context, rev sqlstore.FileRevision) error
 	GetRevision(ctx context.Context, revisionID string) (*sqlstore.FileRevision, error)
 	ListRevisionsByFile(ctx context.Context, fileID string, limit int) ([]sqlstore.FileRevision, error)
+	ListRevisionsBySource(ctx context.Context, source string) ([]sqlstore.FileRevision, error)
 }
 
 type LinkTaskStore interface {
@@ -210,6 +211,22 @@ type LegacyImportStore interface {
 	ListItemsByJob(ctx context.Context, jobID string) ([]sqlstore.LegacyImportItem, error)
 }
 
+type AgentSessionStore interface {
+	Create(ctx context.Context, sess sqlstore.AgentSession) error
+	Get(ctx context.Context, id string) (sqlstore.AgentSession, error)
+	ListByDomain(ctx context.Context, domainID string, limit int) ([]sqlstore.AgentSession, error)
+	Finish(ctx context.Context, id, status, summary string, filesChanged []string, messageCount int) error
+	SetSnapshotTag(ctx context.Context, id, tag string) error
+	MarkStaleRunning(ctx context.Context, olderThan time.Duration) (int64, error)
+}
+
+type FileLockStore interface {
+	Acquire(ctx context.Context, domainID, filePath, userEmail string, ttl time.Duration) (sqlstore.FileLock, bool, error)
+	Release(ctx context.Context, domainID, filePath, userEmail string) error
+	ListByDomain(ctx context.Context, domainID string) ([]sqlstore.FileLock, error)
+	PurgeExpired(ctx context.Context) (int64, error)
+}
+
 type Server struct {
 	cfg              config.Config
 	svc              *auth.Service
@@ -243,4 +260,6 @@ type Server struct {
 	logger           *zap.SugaredLogger
 	editorCtxMu      sync.Mutex
 	editorCtxCache   map[string]editorContextPackCacheEntry
+	agentSessions    AgentSessionStore
+	fileLocks        FileLockStore
 }

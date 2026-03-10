@@ -308,6 +308,18 @@ func (s *memoryFileEditStore) ListRevisionsByFile(ctx context.Context, fileID st
 	return items, nil
 }
 
+func (s *memoryFileEditStore) ListRevisionsBySource(ctx context.Context, source string) ([]sqlstore.FileRevision, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	items := make([]sqlstore.FileRevision, 0)
+	for _, rev := range s.revisions {
+		if rev.Source == source {
+			items = append(items, rev)
+		}
+	}
+	return items, nil
+}
+
 func setupFileAPIDomainFixture(t *testing.T) (*Server, string, string, string, *memorySiteFileStore) {
 	t.Helper()
 	tempDir := t.TempDir()

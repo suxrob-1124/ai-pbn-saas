@@ -43,6 +43,7 @@ type FileEditStore interface {
 	GetRevision(ctx context.Context, revisionID string) (*FileRevision, error)
 	ListRevisionsByFile(ctx context.Context, fileID string, limit int) ([]FileRevision, error)
 	PruneOldRevisions(ctx context.Context, keepPerFile int) (int64, error)
+	ListRevisionsBySource(ctx context.Context, source string) ([]FileRevision, error)
 }
 
 // FileEditSQLStore реализует FileEditStore поверх SQL БД.
@@ -260,4 +261,38 @@ func (s *FileEditSQLStore) PruneOldRevisions(ctx context.Context, keepPerFile in
 		return 0, fmt.Errorf("failed to prune old revisions: %w", err)
 	}
 	return res.RowsAffected()
+}
+
+// ListRevisionsBySource returns all file revisions matching the given source string.
+// Used for agent snapshot rollback: source = "agent_snapshot:SESSION_ID".
+func (s *FileEditSQLStore) ListRevisionsBySource(ctx context.Context, source string) ([]FileRevision, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, file_id, version, content, content_hash, size_bytes, mime_type, source, description, edited_by, created_at
+FROM file_revisions
+WHERE source=$1
+ORDER BY created_at ASC`, source)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	res := make([]FileRevision, 0)
+	for rows.Next() {
+		var rev FileRevision
+		if err := rows.Scan(
+			&rev.ID,
+			&rev.FileID,
+			&rev.Version,
+			&rev.Content,
+			&rev.ContentHash,
+			&rev.SizeBytes,
+			&rev.MimeType,
+			&rev.Source,
+			&rev.Description,
+			&rev.EditedBy,
+			&rev.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		res = append(res, rev)
+	}
+	return res, rows.Err()
 }

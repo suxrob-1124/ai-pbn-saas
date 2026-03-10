@@ -1174,6 +1174,8 @@ func (s *Server) handleDomainActions(w http.ResponseWriter, r *http.Request) {
 		s.handleDomainDeployments(w, r, domainID)
 	case "editor":
 		s.handleDomainEditorActions(w, r, domainID, parts[2:])
+	case "agent":
+		s.handleAgentRoute(w, r, domainID)
 	case "":
 		s.handleDomainBase(w, r, domainID)
 	default:

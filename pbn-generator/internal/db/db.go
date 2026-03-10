@@ -530,6 +530,31 @@ func migrationStatements() []string {
 		`UPDATE projects SET status = 'active' WHERE status = 'draft';`,
 		`ALTER TABLE projects ALTER COLUMN status SET DEFAULT 'active';`,
 		`UPDATE project_members SET role = 'manager' WHERE role = 'owner';`,
+		// --- Agent sessions ---
+		`CREATE TABLE IF NOT EXISTS agent_sessions (
+			id            TEXT PRIMARY KEY,
+			domain_id     TEXT NOT NULL REFERENCES domains(id) ON DELETE CASCADE,
+			created_by    TEXT NOT NULL,
+			created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			finished_at   TIMESTAMPTZ,
+			status        TEXT NOT NULL DEFAULT 'running',
+			summary       TEXT,
+			files_changed JSONB,
+			message_count INT NOT NULL DEFAULT 0,
+			snapshot_tag  TEXT
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_agent_sessions_domain ON agent_sessions(domain_id, created_at DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_agent_sessions_snapshot_tag ON agent_sessions(snapshot_tag) WHERE snapshot_tag IS NOT NULL;`,
+		// --- File locks ---
+		`CREATE TABLE IF NOT EXISTS file_locks (
+    domain_id TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    locked_by TEXT NOT NULL,
+    locked_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (domain_id, file_path)
+)`,
+		`CREATE INDEX IF NOT EXISTS idx_file_locks_expires ON file_locks(expires_at)`,
 	}
 	return append(stmts, projectStmts...)
 }

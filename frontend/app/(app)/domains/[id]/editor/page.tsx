@@ -31,11 +31,13 @@ import { useEditorUiActions } from "@/features/editor-v3/hooks/useEditorUiAction
 import { useFileActions } from "@/features/editor-v3/hooks/useFileActions";
 import { useEditorState } from "@/features/editor-v3/hooks/useEditorState";
 import { usePreviewNavigationGuard } from "@/features/editor-v3/hooks/usePreviewNavigationGuard";
-import { EditorAIStudioPanel } from "@/features/editor-v3/components/EditorAIStudioPanel";
 import { EditorFileWorkspacePanel } from "@/features/editor-v3/components/EditorFileWorkspacePanel";
 import { EditorHeaderCard } from "@/features/editor-v3/components/EditorHeaderCard";
 import { EditorHistoryAccess } from "@/features/editor-v3/components/EditorHistoryAccess";
 import { EditorSidebar } from "@/features/editor-v3/components/EditorSidebar";
+import { AgentChatPanel } from "@/features/editor-v3/components/AgentChatPanel";
+import { useAgentSession } from "@/features/editor-v3/hooks/useAgentSession";
+import { useFileLock } from "@/features/editor-v3/hooks/useFileLock";
 import { validateEditorAssets } from "@/features/editor-v3/services/assetValidation";
 import { editorV3Ru } from "@/features/editor-v3/services/i18n-ru";
 import {
@@ -62,7 +64,7 @@ function isAbortError(err: unknown): boolean {
 // verify markers: t.tabs.createPage t.actions.generateFiles t.actions.applySelected t.applyPlan.create t.applyPlan.overwrite t.applyPlan.skip Контекст запроса Нерешённые ассеты Ссылки на файлы без манифеста ассетов
 // verify markers: const onToggleSkipAsset const onCopyAssetPrompt accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml" t.applySafety.overwriteConfirmLabel Подтверждаю перезапись существующих файлов t.actions.regenerateAsset
 export default function DomainEditorPage() {
-  useAuthGuard();
+  const { me } = useAuthGuard();
   const params = useParams();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -176,6 +178,19 @@ export default function DomainEditorPage() {
   const canPreviewCurrentFile = Boolean(selection?.selectedPath?.toLowerCase().endsWith(".html"));
   const readOnly = (summary?.my_role || "viewer") === "viewer";
   const { mode: editorMode, setMode: setEditorMode } = useContentMode(domainId, summary?.my_role);
+  const [agentOpen, setAgentOpen] = useState(false);
+  // Keyboard shortcut: Alt+A toggles agent panel
+  useEffect(() => {
+    if (readOnly) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.altKey && e.key === "a") {
+        e.preventDefault();
+        setAgentOpen((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [readOnly]);
   const binaryPreview = looksBinary(dirtyState.currentContent);
   const canSave =
     !readOnly &&
@@ -461,6 +476,23 @@ export default function DomainEditorPage() {
     setSelectedFolderPath,
     setDirtyState,
     loadFile,
+  });
+  const agentSession = useAgentSession(async (changedPath) => {
+    const refreshed = await loadFiles();
+    const active = selection?.selectedPath;
+    const activeFile = active ? refreshed.find((f) => f.path === active) : null;
+    if (activeFile) {
+      await loadFile(activeFile);
+    } else {
+      const changedFile = refreshed.find((f) => f.path === changedPath);
+      if (changedFile) await loadFile(changedFile);
+    }
+  });
+  const { domainLocks, currentLock, isLockedByOther } = useFileLock({
+    domainId,
+    currentFilePath: selection?.selectedPath,
+    userEmail: me?.email,
+    readOnly,
   });
   const onContentDeletePage = async (file: EditorFileMeta) => {
     if (readOnly) return;
@@ -1145,6 +1177,19 @@ export default function DomainEditorPage() {
               confirmLeaveWithDirty={confirmLeaveWithDirty}
             />
             <ContentModeToggle mode={editorMode} setMode={setEditorMode} />
+            {!readOnly && (
+              <button
+                type="button"
+                onClick={() => setAgentOpen((v) => !v)}
+                className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                  agentOpen
+                    ? "bg-indigo-600 text-white hover:bg-indigo-500"
+                    : "border border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                }`}
+              >
+                ✦ AI Агент
+              </button>
+            )}
           </div>
         </header>
 
@@ -1162,6 +1207,8 @@ export default function DomainEditorPage() {
             readOnly={readOnly}
             files={files}
             deletedFiles={deletedFiles}
+            agentChangedFiles={agentSession.changedFiles}
+            domainLocks={domainLocks}
             selection={selection}
             selectedFolderPath={selectedFolderPath}
             fileLoading={fileLoading}
@@ -1185,6 +1232,14 @@ export default function DomainEditorPage() {
             onRestoreDeleted={onRestoreDeleted}
           />
         <section className="space-y-3">
+          {isLockedByOther && currentLock && (
+            <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 border-b border-amber-200 text-amber-700 text-xs dark:bg-amber-950/20 dark:border-amber-800 dark:text-amber-300">
+              <span>⚠️</span>
+              <span>
+                Файл сейчас редактирует <strong>{currentLock.locked_by}</strong>. Ваши изменения могут конфликтовать.
+              </span>
+            </div>
+          )}
           <EditorFileWorkspacePanel
             selection={selection}
             currentFile={currentFile}
@@ -1213,128 +1268,16 @@ export default function DomainEditorPage() {
             focusLine={focusLine}
             setDirtyState={setDirtyState}
           />
-          <EditorAIStudioPanel
-            t={t}
-            aiStudioTab={aiStudioTab}
-            setAiStudioTab={setAiStudioTab}
-            aiModel={aiModel}
-            setAiModel={setAiModel}
-            aiContextMode={aiContextMode}
-            setAiContextMode={setAiContextMode}
-            selection={selection}
-            aiContextSelectedFiles={aiContextSelectedFiles}
-            setAiContextSelectedFiles={setAiContextSelectedFiles}
-            selectableContextFiles={selectableContextFiles}
-            aiInstruction={aiInstruction}
-            setAiInstruction={setAiInstruction}
-            onAISuggest={onAISuggest}
-            onCancelAISuggest={onCancelAISuggest}
-            aiBusy={aiBusy}
-            suggestLocked={suggestLocked}
-            onApplyAISuggest={onApplyAISuggest}
-            aiOutput={aiOutput}
-            aiApplyPathMismatch={aiApplyPathMismatch}
-            onAISuggestContextPreview={onAISuggestContextPreview}
-            aiSuggestContextBusy={aiSuggestContextBusy}
-            suggestContextLocked={suggestContextLocked}
-            lockReason={lockReason}
-            suggestLockKey={suggestLockKey}
-            suggestContextLockKey={suggestContextLockKey}
-            aiSuggestFlow={aiSuggestFlow}
-            onOpenAISourceFile={onOpenAISourceFile}
-            aiOutputSourcePath={aiOutputSourcePath}
-            aiSuggestMeta={aiSuggestMeta}
-            aiSuggestView={aiSuggestView}
-            setAiSuggestView={setAiSuggestView}
-            dirtyState={dirtyState}
-            setAiOutput={setAiOutput}
-            aiSuggestDiagnosticsOpen={aiSuggestDiagnosticsOpen}
-            setAiSuggestDiagnosticsOpen={setAiSuggestDiagnosticsOpen}
-            aiSuggestContextDebug={aiSuggestContextDebug}
-            aiCreateModel={aiCreateModel}
-            setAiCreateModel={setAiCreateModel}
-            aiCreateContextMode={aiCreateContextMode}
-            setAiCreateContextMode={setAiCreateContextMode}
-            aiCreatePath={aiCreatePath}
-            setAiCreatePath={setAiCreatePath}
-            aiCreateContextSelectedFiles={aiCreateContextSelectedFiles}
-            setAiCreateContextSelectedFiles={setAiCreateContextSelectedFiles}
-            aiCreateInstruction={aiCreateInstruction}
-            setAiCreateInstruction={setAiCreateInstruction}
-            onAICreatePage={onAICreatePage}
-            onCancelAICreatePage={onCancelAICreatePage}
-            aiCreateBusy={aiCreateBusy}
-            createLocked={createLocked}
-            onApplyCreatedFiles={onApplyCreatedFiles}
-            canApplyCreatePlan={canApplyCreatePlan}
-            onAICreateContextPreview={onAICreateContextPreview}
-            aiCreateContextBusy={aiCreateContextBusy}
-            createContextLocked={createContextLocked}
-            createLockKey={createLockKey}
-            createContextLockKey={createContextLockKey}
-            aiCreatePlanSummary={aiCreatePlanSummary}
-            overwriteConfirmed={overwriteConfirmed}
-            setOverwriteConfirmed={setOverwriteConfirmed}
-            applyBlockedByAssetIssues={applyBlockedByAssetIssues}
-            applyNeedsOverwriteConfirm={applyNeedsOverwriteConfirm}
-            aiCreateFlow={aiCreateFlow}
-            aiCreateMeta={aiCreateMeta}
-            aiImageTargetPath={aiImageTargetPath}
-            setAiImageTargetPath={setAiImageTargetPath}
-            aiImageFormat={aiImageFormat}
-            setAiImageFormat={setAiImageFormat}
-            aiImageAlt={aiImageAlt}
-            setAiImageAlt={setAiImageAlt}
-            aiImageModel={aiImageModel}
-            setAiImageModel={setAiImageModel}
-            aiImagePrompt={aiImagePrompt}
-            setAiImagePrompt={setAiImagePrompt}
-            onGenerateImage={onGenerateImage}
-            readOnly={readOnly}
-            imageGenerateLocked={imageGenerateLocked}
-            aiCreateAssetBusyPath={aiCreateAssetBusyPath}
-            normalizedAiImageTargetPath={normalizedAiImageTargetPath}
-            effectiveAiImageModel={effectiveAiImageModel}
-            imageGenerateLockKey={imageGenerateLockKey}
-            aiImageResult={aiImageResult}
-            aiImageDiagnosticsOpen={aiImageDiagnosticsOpen}
-            setAiImageDiagnosticsOpen={setAiImageDiagnosticsOpen}
-            onAssetUploadPick={onAssetUploadPick}
-            unresolvedAssetIssues={unresolvedAssetIssues}
-            assetValidationIssues={assetValidationIssues}
-            aiCreateAssets={aiCreateAssets}
-            aiCreateSkippedAssets={aiCreateSkippedAssets}
-            onRegenerateAsset={onRegenerateAsset}
-            isLocked={isLocked}
-            assetLockKey={assetLockKey}
-            onToggleSkipAsset={onToggleSkipAsset}
-            invalidMimeAssets={invalidMimeAssets}
-            unresolvedBrokenAssets={unresolvedBrokenAssets}
-            unresolvedMissingAssets={unresolvedMissingAssets}
-            onCopyAssetPrompt={onCopyAssetPrompt}
-            aiAssetFlow={aiAssetFlow}
-            unresolvedNonManifestAssets={unresolvedNonManifestAssets}
-            aiCreateFiles={aiCreateFiles}
-            existingFilesMap={existingFilesMap}
-            aiCreateApplyPlan={aiCreateApplyPlan}
-            setAiCreatePreviewPath={setAiCreatePreviewPath}
-            aiCreatePreviewPath={aiCreatePreviewPath}
-            onSetCreatePlan={onSetCreatePlan}
-            aiCreatePreviewFile={aiCreatePreviewFile}
-            aiCreateView={aiCreateView}
-            setAiCreateView={setAiCreateView}
-            aiCreateExistingContent={aiCreateExistingContent}
-            setAiCreateFiles={setAiCreateFiles}
-            aiCreatePreviewSrcDoc={aiCreatePreviewSrcDoc}
-            previewViewport={previewViewport}
-            setPreviewViewport={setPreviewViewport}
-            aiCreatePreviewRef={aiCreatePreviewRef}
-            bindPreviewNavigationGuard={bindPreviewNavigationGuard}
-            previewViewportClass={previewViewportClass}
-            aiCreateDiagnosticsOpen={aiCreateDiagnosticsOpen}
-            setAiCreateDiagnosticsOpen={setAiCreateDiagnosticsOpen}
-            aiCreateContextDebug={aiCreateContextDebug}
-          />
+          {/* EditorAIStudioPanel removed — replaced by AgentChatPanel (✦ AI Агент) */}
+          {agentOpen && (
+            <AgentChatPanel
+              domainId={domainId}
+              currentFilePath={selection?.selectedPath}
+              session={agentSession}
+              onClose={() => setAgentOpen(false)}
+              onFilesRefresh={loadFiles}
+            />
+          )}
           <EditorHistoryAccess
             domainId={domainId}
             selection={selection}

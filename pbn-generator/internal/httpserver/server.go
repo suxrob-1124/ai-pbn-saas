@@ -70,3 +70,11 @@ func New(cfg config.Config, svc *auth.Service, logger *zap.SugaredLogger, projec
 	s.startGenerationMetricsLoop()
 	return s
 }
+
+// SetAgentSessions wires in the AgentSessionStore after construction.
+func (s *Server) SetAgentSessions(store AgentSessionStore) {
+	s.agentSessions = store
+}
+
+// SetFileLocks wires in the FileLockStore after construction.
+func (s *Server) SetFileLocks(store FileLockStore) { s.fileLocks = store }

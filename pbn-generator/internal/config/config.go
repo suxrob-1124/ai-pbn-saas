@@ -95,6 +95,10 @@ type Config struct {
 	IndexCheckerInterval           time.Duration
 	IndexCheckStaleTimeout         time.Duration
 	SoftDeleteRetentionDays        int
+	AnthropicAPIKey                 string
+	AnthropicModel                  string
+	AgentMaxTokens                  int
+	AgentTimeoutSec                 int
 }
 
 func Load() Config {
@@ -181,6 +185,10 @@ func Load() Config {
 		IndexCheckerInterval:           envDuration("INDEX_CHECK_INTERVAL", 10*time.Minute),
 		IndexCheckStaleTimeout:         envDuration("INDEX_CHECK_STALE_TIMEOUT", 20*time.Minute),
 		SoftDeleteRetentionDays:        envInt("SOFT_DELETE_RETENTION_DAYS", 30),
+		AnthropicAPIKey:                 env("ANTHROPIC_API_KEY", ""),
+		AnthropicModel:                  env("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
+		AgentMaxTokens:                  envInt("AGENT_MAX_TOKENS", 8192),
+		AgentTimeoutSec:                 envInt("AGENT_TIMEOUT_SEC", 600),
 	}
 }
 

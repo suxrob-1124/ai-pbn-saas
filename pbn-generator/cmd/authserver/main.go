@@ -59,6 +59,7 @@ func main() {
 	modelPricingStore := sqlstore.NewModelPricingStore(database)
 	legacyImportStore := sqlstore.NewLegacyImportStore(database)
 	appSettingsStore := sqlstore.NewAppSettingsStore(database)
+	agentSessionStore := sqlstore.NewAgentSessionStore(database)
 	mailer := buildMailer(cfg, logger)
 	taskClient, err := tasks.NewClient(cfg)
 	if err != nil {
@@ -111,6 +112,9 @@ func main() {
 	if sshPool != nil {
 		defer sshPool.Close()
 	}
+	srv.SetAgentSessions(agentSessionStore)
+	fileLockStore := sqlstore.NewFileLockStore(database)
+	srv.SetFileLocks(fileLockStore)
 	srv.SetContentBackend(contentBackend)
 	domainFilesCacheClient := redis.NewClient(&redis.Options{
 		Addr:     cfg.RedisAddr,
@@ -123,6 +127,8 @@ func main() {
 
 	go startSessionCleanup(svc, cfg.SessionCleanInterval)
 	go startSoftDeleteCleanup(projectStore, domainStore, cfg.SoftDeleteRetentionDays, logger)
+	go startAgentStaleCleanup(agentSessionStore, time.Duration(cfg.AgentTimeoutSec)*time.Second, logger)
+	go startFileLockCleanup(fileLockStore, logger)
 
 	server := &http.Server{
 		Addr:    ":" + cfg.Port,
@@ -189,6 +195,36 @@ func startSessionCleanup(svc *auth.Service, interval time.Duration) {
 	defer ticker.Stop()
 	for now := range ticker.C {
 		svc.CleanupExpired(context.Background(), now)
+	}
+}
+
+func startAgentStaleCleanup(store sqlstore.AgentSessionStore, timeout time.Duration, logger *zap.SugaredLogger) {
+	if timeout <= 0 {
+		timeout = 10 * time.Minute
+	}
+	// Check every minute; mark sessions running longer than their allowed timeout.
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		n, err := store.MarkStaleRunning(context.Background(), timeout+30*time.Second)
+		if err != nil {
+			logger.Warnf("agent stale cleanup: %v", err)
+		} else if n > 0 {
+			logger.Infof("agent stale cleanup: marked %d stale sessions as stopped", n)
+		}
+	}
+}
+
+func startFileLockCleanup(store sqlstore.FileLockStore, logger *zap.SugaredLogger) {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		n, err := store.PurgeExpired(context.Background())
+		if err != nil {
+			logger.Warnf("file lock cleanup: %v", err)
+		} else if n > 0 {
+			logger.Infof("file lock cleanup: purged %d expired locks", n)
+		}
 	}
 }
 

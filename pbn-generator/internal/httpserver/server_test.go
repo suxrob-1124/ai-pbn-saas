@@ -4216,3 +4216,7 @@ func (s *stubFileEditStore) GetRevision(ctx context.Context, revisionID string) 
 func (s *stubFileEditStore) ListRevisionsByFile(ctx context.Context, fileID string, limit int) ([]sqlstore.FileRevision, error) {
 	return []sqlstore.FileRevision{}, nil
 }
+
+func (s *stubFileEditStore) ListRevisionsBySource(ctx context.Context, source string) ([]sqlstore.FileRevision, error) {
+	return []sqlstore.FileRevision{}, nil
+}

@@ -6,12 +6,15 @@ import { FiEdit3, FiFolder, FiMove, FiPlus, FiTrash2, FiUpload } from "react-ico
 import { FileTree } from "../../../components/FileTree";
 import { editorV3Ru } from "../services/i18n-ru";
 import type { EditorFileMeta, EditorSelectionState } from "../../../types/editor";
+import type { FileLockInfo } from "../hooks/useFileLock";
 
 type EditorSidebarProps = {
   t: typeof editorV3Ru;
   readOnly: boolean;
   files: EditorFileMeta[];
   deletedFiles: EditorFileMeta[];
+  agentChangedFiles?: string[];
+  domainLocks?: Record<string, FileLockInfo>;
   selection: EditorSelectionState | null;
   selectedFolderPath: string;
   fileLoading: boolean;
@@ -36,6 +39,8 @@ export function EditorSidebar({
   readOnly,
   files,
   deletedFiles,
+  agentChangedFiles,
+  domainLocks,
   selection,
   selectedFolderPath,
   fileLoading,
@@ -122,6 +127,18 @@ export function EditorSidebar({
         />
       </div>
       <h2 className="mb-1 text-sm font-semibold">Файлы сайта</h2>
+      {agentChangedFiles && agentChangedFiles.length > 0 && (
+        <div className="rounded-md border border-indigo-200 bg-indigo-50/60 px-2 py-1.5 dark:border-indigo-900 dark:bg-indigo-950/20">
+          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-indigo-500 dark:text-indigo-400">
+            ✦ Агент изменил
+          </div>
+          <div className="space-y-0.5">
+            {agentChangedFiles.map((f) => (
+              <div key={f} className="truncate text-xs text-indigo-700 dark:text-indigo-300">{f}</div>
+            ))}
+          </div>
+        </div>
+      )}
       <FileTree
         files={files}
         selectedPath={selection?.selectedPath}
@@ -132,6 +149,19 @@ export function EditorSidebar({
         canManageFolders={!readOnly}
         onDeleteFolder={onDeleteFolder}
       />
+      {domainLocks && Object.keys(domainLocks).length > 0 && (
+        <div className="mt-2 px-2">
+          <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Редактируются сейчас</p>
+          {Object.values(domainLocks).map((lock) => (
+            <div key={lock.file_path} className="flex items-center gap-1.5 py-0.5">
+              <span className="text-amber-500 text-[10px]">✎</span>
+              <span className="text-[10px] text-slate-500 dark:text-slate-400 truncate" title={lock.locked_by}>
+                {lock.file_path.split("/").pop()} — {lock.locked_by.split("@")[0]}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50/70 p-2 dark:border-slate-700 dark:bg-slate-800/40">
         <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
           Корзина

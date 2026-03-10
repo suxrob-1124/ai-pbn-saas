@@ -78,6 +78,21 @@ func (s *Server) handleDomainFiles(w http.ResponseWriter, r *http.Request, domai
 		return
 	}
 
+	// File lock endpoints: GET|POST|DELETE /files/locks
+	if len(parts) == 1 && strings.EqualFold(parts[0], "locks") {
+		switch r.Method {
+		case http.MethodGet:
+			s.handleFileLockList(w, r, domainID)
+		case http.MethodPost:
+			s.handleFileLockAcquire(w, r, domainID)
+		case http.MethodDelete:
+			s.handleFileLockRelease(w, r, domainID)
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
+		return
+	}
+
 	// /api/domains/:id/files/upload
 	if len(parts) == 1 && strings.EqualFold(parts[0], "upload") {
 		if r.Method != http.MethodPost {
