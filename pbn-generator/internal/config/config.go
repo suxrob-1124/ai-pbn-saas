@@ -94,6 +94,7 @@ type Config struct {
 	GenerationTransitionStaleAfter time.Duration
 	IndexCheckerInterval           time.Duration
 	IndexCheckStaleTimeout         time.Duration
+	SoftDeleteRetentionDays        int
 }
 
 func Load() Config {
@@ -179,6 +180,7 @@ func Load() Config {
 		GenerationTransitionStaleAfter: envDuration("GEN_TRANSITION_STALE_AFTER", 2*time.Minute),
 		IndexCheckerInterval:           envDuration("INDEX_CHECK_INTERVAL", 10*time.Minute),
 		IndexCheckStaleTimeout:         envDuration("INDEX_CHECK_STALE_TIMEOUT", 20*time.Minute),
+		SoftDeleteRetentionDays:        envInt("SOFT_DELETE_RETENTION_DAYS", 30),
 	}
 }
 

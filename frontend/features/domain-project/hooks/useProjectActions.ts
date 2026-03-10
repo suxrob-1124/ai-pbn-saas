@@ -231,7 +231,7 @@ export function useProjectActions({
   };
 
   const deleteDomain = async (id: string) => {
-    if (!confirm("Удалить домен?")) return;
+    if (!confirm("Переместить домен в корзину? Его можно будет восстановить.")) return;
     generationFlowState.sending("Удаляем домен");
     await runLocked(
       `project:${projectId}:domain-delete:${id}`,

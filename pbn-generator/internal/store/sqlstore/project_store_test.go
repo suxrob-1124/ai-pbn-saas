@@ -33,6 +33,8 @@ func TestProjectStoreListByNameExact(t *testing.T) {
 		"index_check_enabled",
 		"created_at",
 		"updated_at",
+		"deleted_at",
+		"deleted_by",
 	}).AddRow(
 		"proj-1",
 		"owner@example.com",
@@ -46,9 +48,11 @@ func TestProjectStoreListByNameExact(t *testing.T) {
 		true,
 		now,
 		now,
+		nil,
+		nil,
 	)
 
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, user_email, name, target_country, target_language, timezone, global_blacklist, default_server_id, status, index_check_enabled, created_at, updated_at\nFROM projects\nWHERE name=$1\nORDER BY updated_at DESC")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, user_email, name, target_country, target_language, timezone, global_blacklist, default_server_id, status, index_check_enabled, created_at, updated_at, deleted_at, deleted_by FROM projects WHERE name=$1 AND deleted_at IS NULL ORDER BY updated_at DESC")).
 		WithArgs("proj-name").
 		WillReturnRows(rows)
 

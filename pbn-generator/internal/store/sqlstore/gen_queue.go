@@ -141,7 +141,7 @@ func (s *GenQueueSQLStore) ListByProject(ctx context.Context, projectID string) 
 	rows, err := s.db.QueryContext(ctx, `SELECT q.id, q.domain_id, q.schedule_id, q.priority, q.scheduled_for, q.status, q.error_message, q.created_at, q.processed_at
 		FROM generation_queue q
 		JOIN domains d ON d.id = q.domain_id
-		WHERE d.project_id=$1
+		WHERE d.project_id=$1 AND d.deleted_at IS NULL
 		ORDER BY q.created_at DESC`, projectID)
 	if err != nil {
 		return nil, err
@@ -164,7 +164,7 @@ func (s *GenQueueSQLStore) ListByProjectPage(ctx context.Context, projectID stri
 	query := `SELECT q.id, q.domain_id, q.schedule_id, q.priority, q.scheduled_for, q.status, q.error_message, q.created_at, q.processed_at
 		FROM generation_queue q
 		JOIN domains d ON d.id = q.domain_id
-		WHERE d.project_id=$1
+		WHERE d.project_id=$1 AND d.deleted_at IS NULL
 			AND q.status IN ('pending','queued')`
 	args := []interface{}{projectID}
 	if term := strings.TrimSpace(search); term != "" {
@@ -210,7 +210,7 @@ func (s *GenQueueSQLStore) ListHistoryByProjectPage(
 	query := `SELECT q.id, q.domain_id, q.schedule_id, q.priority, q.scheduled_for, q.status, q.error_message, q.created_at, q.processed_at
 		FROM generation_queue q
 		JOIN domains d ON d.id = q.domain_id
-		WHERE d.project_id=$1
+		WHERE d.project_id=$1 AND d.deleted_at IS NULL
 			AND q.status IN ('completed','failed')`
 	args := []interface{}{projectID}
 	if status != nil {
