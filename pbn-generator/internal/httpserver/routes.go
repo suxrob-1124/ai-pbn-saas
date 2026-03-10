@@ -56,6 +56,8 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.Handle("/api/admin/prompts/", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminPromptByID))))
 	mux.Handle("/api/admin/audit-rules", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminAuditRules))))
 	mux.Handle("/api/admin/audit-rules/", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminAuditRuleByCode))))
+	mux.Handle("/api/admin/trash", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminTrash))))
+	mux.Handle("/api/admin/trash/", s.withAuth(s.requireAdmin(http.HandlerFunc(s.handleAdminTrashAction))))
 	mux.Handle("/healthz", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	}))

@@ -20,6 +20,8 @@ import {
   UserPlus,
   UserMinus,
   Loader2,
+  RotateCcw,
+  Archive,
 } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 import { showToast } from '@/lib/toastStore';
@@ -74,6 +76,24 @@ type ProjectMemberDTO = {
   role: string;
   created_at: string;
 };
+type TrashProject = {
+  id: string;
+  name: string;
+  userEmail: string;
+  deletedAt: string;
+  deletedBy: string;
+};
+type TrashDomain = {
+  id: string;
+  url: string;
+  projectId: string;
+  deletedAt: string;
+  deletedBy: string;
+};
+type TrashList = {
+  projects: TrashProject[];
+  domains: TrashDomain[];
+};
 type PromptPatch = Partial<{
   name: string;
   description: string | null;
@@ -106,7 +126,7 @@ export default function AdminPage() {
   const { theme } = useTheme(); // Для синхронизации Monaco Editor с темой
   const isAdmin = useMemo(() => (me?.role || '').toLowerCase() === 'admin', [me]);
 
-  const [uiView, setUiView] = useState<'users' | 'prompts' | 'audit'>('users');
+  const [uiView, setUiView] = useState<'users' | 'prompts' | 'audit' | 'trash'>('users');
 
   // --- СТЕЙТЫ ПОЛЬЗОВАТЕЛЕЙ ---
   const [users, setUsers] = useState<AdminUser[]>([]);
@@ -155,6 +175,12 @@ export default function AdminPage() {
   });
   const [creatingRule, setCreatingRule] = useState(false);
 
+  // --- СТЕЙТЫ КОРЗИНЫ ---
+  const [trash, setTrash] = useState<TrashList>({ projects: [], domains: [] });
+  const [trashLoading, setTrashLoading] = useState(false);
+  const [trashError, setTrashError] = useState<string | null>(null);
+  const [trashActionLoading, setTrashActionLoading] = useState<string | null>(null);
+
   // --- ЗАГРУЗКА ---
   const loadUsers = useCallback(async () => {
     setUsersLoading(true);
@@ -195,6 +221,18 @@ export default function AdminPage() {
     }
   }, []);
 
+  const loadTrash = useCallback(async () => {
+    setTrashLoading(true);
+    setTrashError(null);
+    try {
+      setTrash(await authFetch<TrashList>('/api/admin/trash'));
+    } catch (err: any) {
+      setTrashError(err?.message || 'Ошибка загрузки');
+    } finally {
+      setTrashLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (loading) return;
     if (!isAdmin) {
@@ -204,7 +242,8 @@ export default function AdminPage() {
     if (uiView === 'users') loadUsers();
     if (uiView === 'prompts') loadPrompts();
     if (uiView === 'audit') loadAuditRules();
-  }, [isAdmin, loading, router, loadUsers, loadPrompts, loadAuditRules, uiView]);
+    if (uiView === 'trash') loadTrash();
+  }, [isAdmin, loading, router, loadUsers, loadPrompts, loadAuditRules, loadTrash, uiView]);
 
   // Подстановка данных в черновик при выборе промпта
   useEffect(() => {
@@ -393,6 +432,12 @@ export default function AdminPage() {
               onClick={() => setUiView('prompts')}
               icon={<Code2 className="w-4 h-4" />}
               label="Промпты"
+            />
+            <TabBtn
+              active={uiView === 'trash'}
+              onClick={() => setUiView('trash')}
+              icon={<Archive className="w-4 h-4" />}
+              label="Корзина"
             />
           </div>
         </div>
@@ -601,6 +646,7 @@ export default function AdminPage() {
                                                   value={addMemberRole}
                                                   onChange={(e) => setAddMemberRole(e.target.value)}
                                                   className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-indigo-500 dark:text-white">
+                                                  <option value="owner">Владелец</option>
                                                   <option value="editor">Редактор</option>
                                                   <option value="viewer">Просмотр</option>
                                                 </select>
@@ -868,6 +914,178 @@ export default function AdminPage() {
                     <p className="text-sm max-w-sm text-center">
                       Выберите системный промпт слева для настройки или создайте новый.
                     </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ========================================================= */}
+          {/* TAB 3: КОРЗИНА */}
+          {/* ========================================================= */}
+          {uiView === 'trash' && (
+            <div className={cardClass}>
+              <div className="p-5 border-b border-slate-100 dark:border-slate-800/60 bg-slate-50/50 dark:bg-slate-800/20 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-orange-50 dark:bg-orange-900/30 flex items-center justify-center text-orange-600 dark:text-orange-400">
+                    <Archive className="w-4 h-4" />
+                  </div>
+                  <h3 className="font-bold text-slate-900 dark:text-white">Корзина</h3>
+                </div>
+                <button
+                  onClick={loadTrash}
+                  disabled={trashLoading}
+                  className="inline-flex items-center gap-2 p-2 rounded-xl bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 dark:bg-[#060d18] dark:border-slate-700 dark:text-slate-300 dark:hover:bg-[#0a1020] transition-colors">
+                  <RefreshCw className={`w-4 h-4 ${trashLoading ? 'animate-spin' : ''}`} />
+                </button>
+              </div>
+
+              {trashError && (
+                <div className="p-4 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-sm">
+                  {trashError}
+                </div>
+              )}
+
+              <div className="divide-y divide-slate-100 dark:divide-slate-800/60">
+                {/* Удалённые проекты */}
+                {trash.projects.length > 0 && (
+                  <div className="p-5">
+                    <h4 className="text-sm font-semibold text-slate-500 dark:text-slate-400 mb-3 flex items-center gap-2">
+                      <FolderGit2 className="w-4 h-4" /> Проекты ({trash.projects.length})
+                    </h4>
+                    <div className="space-y-2">
+                      {trash.projects.map((p) => {
+                        const deletedDate = new Date(p.deletedAt);
+                        const daysAgo = Math.floor((Date.now() - deletedDate.getTime()) / 86400000);
+                        return (
+                          <div
+                            key={p.id}
+                            className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/40"
+                          >
+                            <div>
+                              <div className="font-medium text-slate-900 dark:text-white text-sm">{p.name}</div>
+                              <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                                Удалено {daysAgo === 0 ? 'сегодня' : `${daysAgo} дн. назад`} · {p.deletedBy}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={async () => {
+                                  setTrashActionLoading(p.id);
+                                  try {
+                                    await post(`/api/admin/trash/projects/${p.id}/restore`, {});
+                                    showToast({ title: `Проект "${p.name}" восстановлен`, type: 'success' });
+                                    loadTrash();
+                                  } catch (err: any) {
+                                    showToast({ title: err?.message || 'Ошибка восстановления', type: 'error' });
+                                  } finally {
+                                    setTrashActionLoading(null);
+                                  }
+                                }}
+                                disabled={trashActionLoading === p.id}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-green-50 text-green-700 hover:bg-green-100 dark:bg-green-900/20 dark:text-green-400 dark:hover:bg-green-900/40 transition-colors"
+                              >
+                                <RotateCcw className="w-3.5 h-3.5" /> Восстановить
+                              </button>
+                              <button
+                                onClick={async () => {
+                                  if (!confirm('Удалить проект навсегда? Это действие необратимо.')) return;
+                                  setTrashActionLoading(p.id);
+                                  try {
+                                    await del(`/api/admin/trash/projects/${p.id}`);
+                                    showToast({ title: 'Проект удалён навсегда', type: 'success' });
+                                    loadTrash();
+                                  } catch (err: any) {
+                                    showToast({ title: err?.message || 'Ошибка удаления', type: 'error' });
+                                  } finally {
+                                    setTrashActionLoading(null);
+                                  }
+                                }}
+                                disabled={trashActionLoading === p.id}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-50 text-red-600 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-900/40 transition-colors"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" /> Удалить
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Удалённые домены */}
+                {trash.domains.length > 0 && (
+                  <div className="p-5">
+                    <h4 className="text-sm font-semibold text-slate-500 dark:text-slate-400 mb-3 flex items-center gap-2">
+                      <ShieldCheck className="w-4 h-4" /> Домены ({trash.domains.length})
+                    </h4>
+                    <div className="space-y-2">
+                      {trash.domains.map((d) => {
+                        const deletedDate = new Date(d.deletedAt);
+                        const daysAgo = Math.floor((Date.now() - deletedDate.getTime()) / 86400000);
+                        return (
+                          <div
+                            key={d.id}
+                            className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/40"
+                          >
+                            <div>
+                              <div className="font-medium text-slate-900 dark:text-white text-sm">{d.url}</div>
+                              <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                                Удалено {daysAgo === 0 ? 'сегодня' : `${daysAgo} дн. назад`} · {d.deletedBy}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={async () => {
+                                  setTrashActionLoading(d.id);
+                                  try {
+                                    await post(`/api/admin/trash/domains/${d.id}/restore`, {});
+                                    showToast({ title: `Домен "${d.url}" восстановлен`, type: 'success' });
+                                    loadTrash();
+                                  } catch (err: any) {
+                                    showToast({ title: err?.message || 'Ошибка восстановления', type: 'error' });
+                                  } finally {
+                                    setTrashActionLoading(null);
+                                  }
+                                }}
+                                disabled={trashActionLoading === d.id}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-green-50 text-green-700 hover:bg-green-100 dark:bg-green-900/20 dark:text-green-400 dark:hover:bg-green-900/40 transition-colors"
+                              >
+                                <RotateCcw className="w-3.5 h-3.5" /> Восстановить
+                              </button>
+                              <button
+                                onClick={async () => {
+                                  if (!confirm('Удалить домен навсегда? Это действие необратимо.')) return;
+                                  setTrashActionLoading(d.id);
+                                  try {
+                                    await del(`/api/admin/trash/domains/${d.id}`);
+                                    showToast({ title: 'Домен удалён навсегда', type: 'success' });
+                                    loadTrash();
+                                  } catch (err: any) {
+                                    showToast({ title: err?.message || 'Ошибка удаления', type: 'error' });
+                                  } finally {
+                                    setTrashActionLoading(null);
+                                  }
+                                }}
+                                disabled={trashActionLoading === d.id}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-50 text-red-600 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-900/40 transition-colors"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" /> Удалить
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Пустое состояние */}
+                {!trashLoading && trash.projects.length === 0 && trash.domains.length === 0 && (
+                  <div className="p-10 flex flex-col items-center justify-center text-slate-400">
+                    <Archive className="w-12 h-12 mb-3 opacity-20" />
+                    <p className="text-sm">Корзина пуста</p>
                   </div>
                 )}
               </div>

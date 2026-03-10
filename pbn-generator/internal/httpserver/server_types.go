@@ -25,6 +25,11 @@ type ProjectStore interface {
 	Update(ctx context.Context, p sqlstore.Project) error
 	UpdateIndexCheckEnabled(ctx context.Context, id string, enabled bool) error
 	Delete(ctx context.Context, id, email string) error
+	SoftDelete(ctx context.Context, id, deletedBy string) error
+	Restore(ctx context.Context, id string) error
+	ListDeleted(ctx context.Context) ([]sqlstore.Project, error)
+	GetByIDIncludingDeleted(ctx context.Context, id string) (sqlstore.Project, error)
+	PurgeExpired(ctx context.Context, retentionDays int) (int64, error)
 }
 
 type DomainStore interface {
@@ -44,6 +49,11 @@ type DomainStore interface {
 	UpdateIndexCheckEnabled(ctx context.Context, id string, enabled bool) error
 	UpdateGenerationType(ctx context.Context, id, genType string) error
 	EnsureDefaultServer(ctx context.Context, email string) error
+	SoftDelete(ctx context.Context, id, deletedBy string) error
+	Restore(ctx context.Context, id string) error
+	ListDeleted(ctx context.Context) ([]sqlstore.Domain, error)
+	GetIncludingDeleted(ctx context.Context, id string) (sqlstore.Domain, error)
+	PurgeExpired(ctx context.Context, retentionDays int) (int64, error)
 }
 
 type GenerationStore interface {

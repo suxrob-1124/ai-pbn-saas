@@ -63,9 +63,7 @@ export default function ProjectDetailPage() {
   const projectId = params?.id as string;
 
   const [project, setProject] = useState<Project | null>(null);
-  const [myRole, setMyRole] = useState<'admin' | 'owner' | 'manager' | 'editor' | 'viewer'>(
-    'viewer',
-  );
+  const [myRole, setMyRole] = useState<'admin' | 'owner' | 'editor' | 'viewer'>('viewer');
   const [domains, setDomains] = useState<Domain[]>([]);
   const [domainSearch, setDomainSearch] = useState('');
 
@@ -126,7 +124,7 @@ export default function ProjectDetailPage() {
   const [runLegacyAfterImport, setRunLegacyAfterImport] = useState(false);
   const legacyImport = useLegacyImport(projectId);
 
-  const hasExtendedAccess = myRole === 'admin' || myRole === 'owner' || myRole === 'manager';
+  const hasExtendedAccess = myRole === 'admin' || myRole === 'owner';
 
   useEffect(() => {
     if (uiView === 'errors') setActiveTab('errors');
@@ -487,7 +485,7 @@ export default function ProjectDetailPage() {
   };
 
   const deleteProject = async () => {
-    if (!confirm('Удалить проект и все его домены?')) return;
+    if (!confirm('Переместить проект в корзину? Его можно будет восстановить в админ-панели.')) return;
     try {
       await del(`/api/projects/${projectId}`);
       router.push('/projects');
@@ -730,7 +728,7 @@ export default function ProjectDetailPage() {
                 {filteredDomains.map((d) => (
                   <div
                     key={d.id}
-                    className="group bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm hover:shadow-md hover:border-indigo-300 dark:hover:border-indigo-500/50 transition-all flex flex-col justify-between h-48">
+                    className="group bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm hover:shadow-md hover:border-indigo-300 dark:hover:border-indigo-500/50 transition-all flex flex-col justify-between h-50">
                     <div>
                       <div className="flex items-start justify-between mb-3">
                         <div className="w-10 h-10 rounded-xl bg-indigo-50 dark:bg-indigo-900/30 flex items-center justify-center text-indigo-600 dark:text-indigo-400 flex-shrink-0">
@@ -743,7 +741,7 @@ export default function ProjectDetailPage() {
                         title={d.url}>
                         {d.url}
                       </h3>
-                      <p className="text-xs font-medium text-slate-500 dark:text-slate-400 mt-1.5 truncate">
+                      <p className="text-xs font-medium text-slate-500 dark:text-slate-400 mt-1.5 pb-2 truncate">
                         {d.target_country ? (
                           <span className="bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md mr-1">
                             {d.target_country}
@@ -956,13 +954,17 @@ export default function ProjectDetailPage() {
                   className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 dark:text-white transition-all"
                   value={addGenType}
                   onChange={(e) => setAddGenType(e.target.value)}>
-                  {(Object.entries(GENERATION_TYPES) as [GenerationType, { label: string; available: boolean }][]).map(
-                    ([key, { label, available }]) => (
-                      <option key={key} value={key} disabled={!available}>
-                        {label}{!available ? ' (Скоро)' : ''}
-                      </option>
-                    ),
-                  )}
+                  {(
+                    Object.entries(GENERATION_TYPES) as [
+                      GenerationType,
+                      { label: string; available: boolean },
+                    ][]
+                  ).map(([key, { label, available }]) => (
+                    <option key={key} value={key} disabled={!available}>
+                      {label}
+                      {!available ? ' (Скоро)' : ''}
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>
@@ -1003,21 +1005,24 @@ export default function ProjectDetailPage() {
               <div className="bg-indigo-50/50 dark:bg-indigo-900/10 rounded-xl p-4 mb-5 border border-indigo-100 dark:border-indigo-800/30 space-y-2">
                 <p className="text-sm text-slate-700 dark:text-slate-300 leading-relaxed">
                   Импорт по строкам в формате: <br />
-                  <code className="inline-block mt-1 px-1.5 py-0.5 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-indigo-600 dark:text-indigo-400 font-mono text-xs">
+                  {/* <code className="inline-block mt-1 px-1.5 py-0.5 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-indigo-600 dark:text-indigo-400 font-mono text-xs">
                     url[,keyword[,country[,language[,server_id[,anchor[,acceptor[,link_placed[,generation_type]]]]]]]]
-                  </code>
+                  </code> */}
                 </p>
                 <p className="text-sm text-slate-700 dark:text-slate-300 leading-relaxed">
                   Пример: <br />
                   <code className="inline-block mt-1 px-1.5 py-0.5 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-indigo-600 dark:text-indigo-400 font-mono text-xs">
-                    example.com,casino,se,sv,seotech-web-media1,"Лучший
+                    example.ru,casino,ru,ru,seotech-web-media1,"Лучший
+                    бонус","https://acceptor.example/page"
+                    <br/>
+                    example2.com,casino,ru,ru,seotech-web-media1,"Лучший
                     бонус","https://acceptor.example/page"
                   </code>
                 </p>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-2">
+                {/* <p className="text-xs text-slate-500 dark:text-slate-400 mt-2">
                   * Проверка существования домена на сервере `media1` будет добавлена на этапе
                   серверной интеграции.
-                </p>
+                </p> */}
               </div>
 
               <textarea
