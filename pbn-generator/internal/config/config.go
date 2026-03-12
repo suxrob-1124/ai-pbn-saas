@@ -95,6 +95,11 @@ type Config struct {
 	IndexCheckerInterval           time.Duration
 	IndexCheckStaleTimeout         time.Duration
 	SoftDeleteRetentionDays        int
+	LLMUsageRetentionDays          int // Хранить события LLM N дней (default 90)
+	LinkTaskRetentionDays          int // Хранить завершённые link_tasks N дней (default 90)
+	GenQueueRetentionDays          int // Хранить обработанные элементы generation_queue N дней (default 30)
+	AgentSessionRetentionDays      int // Хранить завершённые agent_sessions N дней (default 90)
+	IndexCheckHistoryKeepPerCheck  int // Хранить последние N попыток на каждый check (default 5)
 	AnthropicAPIKey                 string
 	AnthropicModel                  string
 	AgentMaxTokens                  int
@@ -185,6 +190,11 @@ func Load() Config {
 		IndexCheckerInterval:           envDuration("INDEX_CHECK_INTERVAL", 10*time.Minute),
 		IndexCheckStaleTimeout:         envDuration("INDEX_CHECK_STALE_TIMEOUT", 20*time.Minute),
 		SoftDeleteRetentionDays:        envInt("SOFT_DELETE_RETENTION_DAYS", 30),
+		LLMUsageRetentionDays:          envInt("LLM_USAGE_RETENTION_DAYS", 90),
+		LinkTaskRetentionDays:          envInt("LINK_TASK_RETENTION_DAYS", 90),
+		GenQueueRetentionDays:          envInt("GEN_QUEUE_RETENTION_DAYS", 30),
+		AgentSessionRetentionDays:      envInt("AGENT_SESSION_RETENTION_DAYS", 90),
+		IndexCheckHistoryKeepPerCheck:  envInt("INDEX_CHECK_HISTORY_KEEP_PER_CHECK", 5),
 		AnthropicAPIKey:                 env("ANTHROPIC_API_KEY", ""),
 		AnthropicModel:                  env("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
 		AgentMaxTokens:                  envInt("AGENT_MAX_TOKENS", 8192),

@@ -430,7 +430,9 @@ function IndexingMonitoringContent() {
     setFailedLoading(true);
     setFailedError(null);
     try {
-      const list = await listFailed({ limit: 5, domainId: domainScope || undefined });
+      const since = new Date();
+      since.setDate(since.getDate() - 7);
+      const list = await listFailed({ limit: 5, domainId: domainScope || undefined, from: since });
       setFailedChecks(Array.isArray(list?.items) ? list.items : []);
       setFailedTotal(typeof list?.total === 'number' ? list.total : 0);
     } catch (err: any) {

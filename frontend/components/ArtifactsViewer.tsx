@@ -14,6 +14,7 @@ const ARTIFACT_GROUPS = [
   { id: "publish", name: "📦 Публикация и деплой", order: ["published_path", "deployment_mode", "deployment_status", "file_count", "total_size_bytes"] },
   { id: "content", name: "🧠 Контент и структура", order: ["technical_spec", "content_markdown", "design_system", "html_raw", "css_content", "js_content", "404_html"] },
   { id: "media", name: "🖼️ Медиа и файлы", order: ["logo_svg", "image_prompts", "generated_files", "favicon_tag"] },
+  { id: "webarchive", name: "🗄️ Вебархив", order: ["wayback_data", "generated_keyword", "wayback_theme_prompt", "wayback_keyword_prompt"] },
   { id: "analysis", name: "📊 Аналитика и источники", order: ["analysis_csv", "contents_txt", "serp_data", "competitor_analysis", "llm_analysis"] },
   { id: "prompts", name: "📝 Промпты и резолв", order: ["llm_analysis_prompt", "technical_spec_prompt", "content_generation_prompt", "design_architecture_prompt", "logo_prompt", "html_generation_prompt", "css_generation_prompt", "js_generation_prompt", "404_page_prompt", "prompt_trace", "legacy_decode_meta"] },
   { id: "audit", name: "🧪 Диагностика", order: ["audit_report", "audit_status", "audit_has_issues"] },
@@ -63,6 +64,10 @@ const LABELS: Record<string, string> = {
   total_size_bytes: "Размер сайта (байт)",
   prompt_trace: "Трассировка резолва промптов",
   legacy_decode_meta: "Метаданные legacy decode",
+  wayback_data: "🗄️ Данные Wayback Machine",
+  generated_keyword: "🔑 Сгенерированное ключевое слово",
+  wayback_theme_prompt: "📝 Промпт извлечения темы",
+  wayback_keyword_prompt: "📝 Промпт генерации ключевых слов",
 };
 
 const DESCRIPTIONS: Record<string, string> = {
@@ -105,6 +110,10 @@ const DESCRIPTIONS: Record<string, string> = {
   total_size_bytes: "Итоговый размер опубликованных файлов в байтах",
   prompt_trace: "Источник промптов по этапам: domain/project/global",
   legacy_decode_meta: "Служебная информация о декодировании legacy-сайта",
+  wayback_data: "Архивные снэпшоты с Wayback Machine: список снэпшотов и извлечённый текст",
+  generated_keyword: "Тема сайта, описание, 15 кандидатов и выбранный ключевой запрос для SERP",
+  wayback_theme_prompt: "Промпт для извлечения темы из архивного текста сайта",
+  wayback_keyword_prompt: "Промпт для генерации ключевых слов по теме",
 };
 
 const TYPE_BY_KEY: Record<string, ArtifactType> = {
@@ -786,10 +795,10 @@ export function LogsViewer({ logs }: { logs?: any }) {
           </div>
         </div>
       </div>
-      <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/40">
+      <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/40 overflow-hidden">
         {viewMode === "raw" ? (
           rawOutput ? (
-            <pre className="text-xs p-3 overflow-auto text-slate-700 dark:text-slate-200 max-h-96 font-mono whitespace-pre-wrap">
+            <pre className="text-xs p-3 overflow-auto text-slate-700 dark:text-slate-200 max-h-96 font-mono whitespace-pre-wrap break-all">
               {rawOutput}
             </pre>
           ) : (
@@ -798,23 +807,23 @@ export function LogsViewer({ logs }: { logs?: any }) {
             </div>
           )
         ) : filteredLines.length > 0 ? (
-          <div className="text-xs p-3 overflow-auto max-h-96 font-mono space-y-1">
+          <div className="text-xs p-3 overflow-y-auto overflow-x-hidden max-h-96 font-mono space-y-1">
             {filteredLines.map((line, idx) => (
-              <div key={`${line.raw}-${idx}`} className="flex flex-wrap items-start gap-x-2 gap-y-1">
+              <div key={`${line.raw}-${idx}`} className="flex flex-wrap items-start gap-x-2 gap-y-1 min-w-0">
                 {line.timestamp && (
                   <span className="text-slate-400 dark:text-slate-500 shrink-0">{line.timestamp}</span>
                 )}
                 {line.level && (
-                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${levelClass(line.level)}`}>
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide shrink-0 ${levelClass(line.level)}`}>
                     {LEVEL_LABELS[line.level] || line.level}
                   </span>
                 )}
                 {line.step && (
-                  <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                  <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-200 shrink-0">
                     {line.step}
                   </span>
                 )}
-                <div className="min-w-0 flex-1">
+                <div className="min-w-0 flex-1 break-words">
                   {renderLogMessage(line.message)}
                 </div>
               </div>

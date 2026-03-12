@@ -78,3 +78,6 @@ func (s *Server) SetAgentSessions(store AgentSessionStore) {
 
 // SetFileLocks wires in the FileLockStore after construction.
 func (s *Server) SetFileLocks(store FileLockStore) { s.fileLocks = store }
+
+// SetScheduleRunLogs wires in the ScheduleRunLogStore after construction.
+func (s *Server) SetScheduleRunLogs(store ScheduleRunLogStore) { s.scheduleRunLogs = store }

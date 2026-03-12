@@ -201,7 +201,7 @@ export default function LinkTaskPage() {
               <Link
                 href={`/domains/${domain.id}`}
                 className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-500 transition-all shadow-sm active:scale-95">
-                <ExternalLink className="w-4 h-4" /> Открыть сайт
+                <ExternalLink className="w-4 h-4" /> Перейти к домену
               </Link>
             )}
           </div>
@@ -231,7 +231,7 @@ export default function LinkTaskPage() {
                       <LinkTaskStatusBadge status={task.status} />
                     </div>
                     <div className="flex items-center gap-2">
-                      {normStatus === 'failed' && (
+                      {(normStatus === 'failed' || (normStatus === 'pending' && !!task.error_message)) && (
                         <button
                           onClick={handleRetry}
                           disabled={loading}
@@ -281,6 +281,20 @@ export default function LinkTaskPage() {
                       </div>
                     )}
                   </div>
+
+                  {normStatus === 'pending' && !task.error_message && (
+                    <div className="p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/50 rounded-xl flex items-start gap-3">
+                      <Clock className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+                      <div>
+                        <div className="text-amber-700 dark:text-amber-400 font-semibold text-sm">Ожидание постановки в очередь</div>
+                        <div className="text-amber-600 dark:text-amber-500 text-xs mt-0.5">
+                          {new Date(task.scheduled_for) <= new Date()
+                            ? 'Задача готова к выполнению — планировщик поставит её в очередь в течение минуты.'
+                            : `Запуск запланирован на ${new Date(task.scheduled_for).toLocaleString()}`}
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {task.error_message && (
                     <div className="p-4 bg-red-50 border border-red-200 rounded-xl">
@@ -395,7 +409,7 @@ export default function LinkTaskPage() {
                     <div>
                       <label className={labelClass}>Попыток выполнения</label>
                       <div className="text-sm text-slate-700 dark:text-slate-300 font-medium">
-                        {task.attempts} / 3
+                        {task.attempts} / 7
                       </div>
                     </div>
                   </div>

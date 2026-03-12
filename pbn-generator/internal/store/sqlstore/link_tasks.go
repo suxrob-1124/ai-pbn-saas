@@ -65,8 +65,11 @@ type LinkTaskStore interface {
 	ListAll(ctx context.Context, filters LinkTaskFilters) ([]LinkTask, error)
 	ListPending(ctx context.Context, limit int) ([]LinkTask, error)
 	ListActiveByDomainIDs(ctx context.Context, domainIDs []string) (map[string]LinkTask, error)
+	ListStuck(ctx context.Context, olderThan time.Duration, limit int) ([]LinkTask, error)
 	Update(ctx context.Context, taskID string, updates LinkTaskUpdates) error
 	Delete(ctx context.Context, taskID string) error
+	// PurgeCompleted удаляет завершённые задачи старше retentionDays дней.
+	PurgeCompleted(ctx context.Context, retentionDays int) (int64, error)
 }
 
 // LinkTaskSQLStore реализует LinkTaskStore поверх SQL БД.
@@ -355,6 +358,10 @@ func (s *LinkTaskSQLStore) Update(ctx context.Context, taskID string, updates Li
 		return fmt.Errorf("no link task updates provided")
 	}
 
+	setClauses = append(setClauses, fmt.Sprintf("updated_at=$%d", idx))
+	args = append(args, time.Now().UTC())
+	idx++
+
 	query := fmt.Sprintf("UPDATE link_tasks SET %s WHERE id=$%d", strings.Join(setClauses, ", "), idx)
 	args = append(args, taskID)
 
@@ -494,6 +501,35 @@ func normalizeLinkTaskAction(action string) string {
 		return "insert"
 	}
 	return action
+}
+
+// ListStuck возвращает задачи, зависшие в статусе searching/removing дольше olderThan,
+// которые ещё не исчерпали attempts < maxAttempts.
+func (s *LinkTaskSQLStore) ListStuck(ctx context.Context, olderThan time.Duration, limit int) ([]LinkTask, error) {
+	cutoff := time.Now().UTC().Add(-olderThan)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, domain_id, anchor_text, target_url, scheduled_for, action, status, found_location, generated_content, error_message, attempts, created_by, created_at, completed_at, log_lines
+		FROM link_tasks
+		WHERE status IN ('searching', 'removing')
+		  AND updated_at < $1
+		  AND attempts < 5
+		ORDER BY updated_at ASC
+		LIMIT $2`, cutoff, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanLinkTasks(rows)
+}
+
+// PurgeCompleted удаляет завершённые задачи линкбилдинга старше retentionDays дней.
+func (s *LinkTaskSQLStore) PurgeCompleted(ctx context.Context, retentionDays int) (int64, error) {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM link_tasks WHERE status IN ('inserted','generated','removed','failed') AND completed_at IS NOT NULL AND completed_at < NOW() - make_interval(days => $1)`,
+		retentionDays)
+	if err != nil {
+		return 0, fmt.Errorf("purge link_tasks: %w", err)
+	}
+	return res.RowsAffected()
 }
 
 func marshalLogLines(lines []string) ([]byte, error) {

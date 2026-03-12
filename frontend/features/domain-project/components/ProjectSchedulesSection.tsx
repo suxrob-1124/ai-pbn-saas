@@ -1,7 +1,9 @@
 import { useState } from 'react';
-import { Clock, Play, Power, PowerOff, Settings2, Trash2, X, Plus } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Clock, Play, Power, PowerOff, Settings2, Trash2, X, Plus, XCircle } from 'lucide-react';
+import type { LinkEligibilityDTO } from '../../../types/schedules';
 import { ScheduleForm } from '../../../components/ScheduleForm';
 import { ScheduleTrigger } from '../../../components/ScheduleTrigger';
+import { ScheduleRunHistory } from './ScheduleRunHistory';
 import type { ScheduleFormValue } from '../../../lib/scheduleFormValidation';
 import type { ScheduleDTO } from '../../../types/schedules';
 import {
@@ -12,6 +14,7 @@ import {
 import { getScheduleStrategyLabel } from '../../../features/queue-monitoring/services/statusMeta';
 
 type ProjectSchedulesSectionProps = {
+  projectId: string;
   schedulesMultiple: boolean;
   scheduleForm: ScheduleFormValue;
   schedulesLoading: boolean;
@@ -40,9 +43,103 @@ type ProjectSchedulesSectionProps = {
   onToggleLinkSchedule: (schedule: ScheduleDTO) => Promise<void>;
   onEditLinkSchedule: (schedule: ScheduleDTO) => void;
   onDeleteLinkSchedule: (schedule: ScheduleDTO) => Promise<void>;
+  linkEligibility?: LinkEligibilityDTO | null;
+  linkEligibilityLoading?: boolean;
 };
 
+const REASON_LABELS: Record<string, string> = {
+  already_inserted: 'Ссылка уже вставлена',
+  not_published: 'Сайт не опубликован',
+  no_link_settings: 'Не настроен анкор/акцептор',
+  active_task_running: 'Задача уже выполняется',
+  link_ready_at_future: 'Ещё не готов (link_ready_at)',
+};
+
+function LinkEligibilityPanel({
+  eligibility,
+  loading,
+}: {
+  eligibility: LinkEligibilityDTO | null;
+  loading: boolean;
+}) {
+  const [showSkipped, setShowSkipped] = useState(false);
+
+  if (loading && !eligibility) {
+    return (
+      <div className="border border-slate-200 dark:border-slate-800 rounded-2xl p-4 text-sm text-slate-500 animate-pulse">
+        Загрузка данных о доменах...
+      </div>
+    );
+  }
+  if (!eligibility) return null;
+
+  const eligible = eligibility.domains.filter((d) => d.eligible);
+  const skipped = eligibility.domains.filter((d) => !d.eligible);
+
+  return (
+    <div className="border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-3 bg-slate-50 dark:bg-slate-900/40 border-b border-slate-200 dark:border-slate-800">
+        <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">
+          Домены при следующем запуске
+        </span>
+        <div className="flex gap-3 text-xs text-slate-500">
+          <span className="text-emerald-600 dark:text-emerald-400 font-medium">
+            ✓ {eligibility.summary.eligible_count} запустятся
+          </span>
+          {skipped.length > 0 && (
+            <span className="text-red-500 font-medium">
+              ✗ {eligibility.summary.ineligible_count} пропускаются
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div className="divide-y divide-slate-100 dark:divide-slate-800">
+        {eligible.map((d) => (
+          <div key={d.id} className="flex items-center gap-2 px-4 py-2.5 text-sm">
+            <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
+            <span className="text-slate-700 dark:text-slate-300 truncate">{d.url}</span>
+          </div>
+        ))}
+
+        {skipped.length > 0 && (
+          <>
+            <button
+              onClick={() => setShowSkipped((v) => !v)}
+              className="w-full flex items-center justify-between px-4 py-2.5 text-xs text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-900/30 transition-colors">
+              <span className="font-semibold text-red-500">
+                Пропускаются ({skipped.length})
+              </span>
+              <span>{showSkipped ? '▲ скрыть' : '▼ показать'}</span>
+            </button>
+            {showSkipped &&
+              skipped.map((d) => (
+                <div key={d.id} className="flex items-start gap-2 px-4 py-2.5 text-sm bg-red-50/40 dark:bg-red-900/10">
+                  <XCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+                  <div className="min-w-0">
+                    <span className="text-slate-700 dark:text-slate-300 truncate block">{d.url}</span>
+                    <span className="text-xs text-red-500 dark:text-red-400">
+                      {REASON_LABELS[d.reason] ?? d.reason}
+                    </span>
+                  </div>
+                </div>
+              ))}
+          </>
+        )}
+
+        {eligible.length === 0 && skipped.length === 0 && (
+          <div className="px-4 py-6 text-center text-sm text-slate-400">
+            <AlertTriangle className="w-5 h-5 mx-auto mb-1 text-slate-300" />
+            Нет доменов в проекте
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function ProjectSchedulesSection({
+  projectId,
   schedulesMultiple,
   scheduleForm,
   schedulesLoading,
@@ -67,6 +164,8 @@ export function ProjectSchedulesSection({
   onToggleLinkSchedule,
   onEditLinkSchedule,
   onDeleteLinkSchedule,
+  linkEligibility,
+  linkEligibilityLoading,
 }: ProjectSchedulesSectionProps) {
   // Состояния для модалок
   const [isGenModalOpen, setIsGenModalOpen] = useState(false);
@@ -251,6 +350,17 @@ export function ProjectSchedulesSection({
         />
       </div>
 
+      {/* Домены при следующем запуске */}
+      {(linkEligibility || linkEligibilityLoading) && (
+        <LinkEligibilityPanel eligibility={linkEligibility ?? null} loading={!!linkEligibilityLoading} />
+      )}
+
+      {/* История запусков */}
+      <ScheduleRunHistory
+        projectId={projectId}
+        isScheduleActive={genSchedule?.isActive || linkSchedule?.isActive}
+      />
+
       {/* МОДАЛКА: Настройка Генерации */}
       {isGenModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
@@ -266,6 +376,8 @@ export function ProjectSchedulesSection({
               onChange={onScheduleFormChange}
               onSubmit={submitGenForm}
               onCancel={() => setIsGenModalOpen(false)}
+              projectId={projectId}
+              scheduleType="generation"
             />
           </div>
         </div>
@@ -286,6 +398,8 @@ export function ProjectSchedulesSection({
               onChange={onLinkScheduleFormChange}
               onSubmit={submitLinkForm}
               onCancel={() => setIsLinkModalOpen(false)}
+              projectId={projectId}
+              scheduleType="link"
             />
           </div>
         </div>

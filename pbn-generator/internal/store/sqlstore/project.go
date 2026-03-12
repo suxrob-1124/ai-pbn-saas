@@ -819,7 +819,7 @@ func (s *GenerationStore) PrepareRetry(ctx context.Context, id string) error {
 
 // ListRetryDue returns retryable generations ready to be retried.
 func (s *GenerationStore) ListRetryDue(ctx context.Context, now time.Time, limit int) ([]Generation, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, domain_id, requested_by, status, progress, error, logs, artifacts, artifacts_summary, checkpoint_data, attempts, retryable, next_retry_at, last_error_at, started_at, finished_at, prompt_id, created_at, updated_at
+	rows, err := s.db.QueryContext(ctx, `SELECT id, domain_id, requested_by, status, progress, error, logs, artifacts, artifacts_summary, checkpoint_data, attempts, retryable, next_retry_at, last_error_at, started_at, finished_at, prompt_id, generation_type, created_at, updated_at
 FROM generations
 WHERE status='error' AND retryable=TRUE AND next_retry_at IS NOT NULL AND next_retry_at <= $1
 ORDER BY next_retry_at ASC

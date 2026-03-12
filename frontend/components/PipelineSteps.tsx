@@ -1,7 +1,7 @@
 'use client';
 
 import { CheckCircle2, CircleDashed, Loader2, Play, RefreshCw, RotateCcw } from 'lucide-react';
-import { PIPELINE_STEPS, computeDisplayProgress, isStepComplete } from '../lib/pipelineProgress';
+import { getStepsForGenerationType, computeDisplayProgress, isStepComplete } from '../lib/pipelineProgress';
 
 type PipelineGeneration = {
   artifacts?: Record<string, any>;
@@ -12,6 +12,7 @@ type PipelineGeneration = {
 type PipelineStepsProps = {
   domainId: string;
   generation?: PipelineGeneration;
+  generationType?: string;
   disabled?: boolean;
   activeStep?: string | null;
   onForceStep?: (stepId: string) => Promise<void>;
@@ -34,14 +35,16 @@ const STATUS_TEXT: Record<string, string> = {
 export default function PipelineSteps({
   domainId,
   generation,
+  generationType,
   disabled,
   activeStep,
   onForceStep,
 }: PipelineStepsProps) {
   const generationStatus = generation?.status || '';
+  const steps = getStepsForGenerationType(generationType);
 
   // Бизнес-логика: определяем, какой шаг сейчас в работе
-  const firstIncompleteIndex = PIPELINE_STEPS.findIndex(
+  const firstIncompleteIndex = steps.findIndex(
     (step) => !isStepComplete(generation?.artifacts, step.artifactKeys),
   );
   const isActiveRun = ACTIVE_STATUSES.has(generationStatus);
@@ -50,6 +53,7 @@ export default function PipelineSteps({
     generation?.artifacts,
     generation?.progress,
     generationStatus,
+    generationType,
   );
 
   const handleForceClick = async (stepId: string) => {
@@ -59,7 +63,7 @@ export default function PipelineSteps({
 
   return (
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3" data-domain-id={domainId}>
-      {PIPELINE_STEPS.map((step, index) => {
+      {steps.map((step, index) => {
         const isDone = isStepComplete(generation?.artifacts, step.artifactKeys);
         const statusKey = isDone ? 'done' : runningIndex === index ? 'running' : 'pending';
         const statusLabel = STATUS_TEXT[statusKey];
@@ -109,7 +113,7 @@ export default function PipelineSteps({
               {/* Шапка карточки: Номер шага и Иконка */}
               <div className="flex items-center justify-between mb-3">
                 <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500">
-                  Шаг 0{index + 1}
+                  Шаг {String(index + 1).padStart(2, '0')}
                 </span>
                 <Icon
                   className={`w-5 h-5 ${statusKey === 'running' ? 'animate-spin' : ''} ${iconStyle}`}

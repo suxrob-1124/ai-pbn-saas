@@ -19,6 +19,10 @@ func (f *fakeLLMForJS) GenerateImage(ctx context.Context, prompt, model string) 
 	return nil, nil
 }
 
+func (f *fakeLLMForJS) GenerateMultiTurn(ctx context.Context, stage, systemInstruction string, turns []string, model string) (string, error) {
+	return "", nil
+}
+
 type fakePromptManagerForJS struct{}
 
 func (f *fakePromptManagerForJS) GetPromptByStage(ctx context.Context, stage string) (string, string, string, error) {
@@ -171,4 +175,8 @@ func (f *fakeLLMForJSWithResponse) Generate(ctx context.Context, stage, prompt, 
 
 func (f *fakeLLMForJSWithResponse) GenerateImage(ctx context.Context, prompt, model string) ([]byte, error) {
 	return nil, nil
+}
+
+func (f *fakeLLMForJSWithResponse) GenerateMultiTurn(ctx context.Context, stage, systemInstruction string, turns []string, model string) (string, error) {
+	return "", nil
 }

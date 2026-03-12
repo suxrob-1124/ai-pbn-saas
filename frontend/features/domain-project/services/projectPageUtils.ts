@@ -74,7 +74,8 @@ export const createDefaultScheduleForm = (): ScheduleFormValue => ({
   weeklyLimit: "3",
   weeklyDay: "mon",
   weeklyTime: "09:00",
-  customCron: "0 9 * * *"
+  customCron: "0 9 * * *",
+  delayMinutes: "5",
 });
 
 export const deriveScheduleStrategy = (config: Record<string, unknown> | undefined) => {

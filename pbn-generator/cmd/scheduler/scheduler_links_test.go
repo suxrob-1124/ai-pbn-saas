@@ -134,7 +134,7 @@ func TestApplyLinkSchedulesUpsertByLimitAndEligibility(t *testing.T) {
 		CreatedAt:    now.Add(-time.Hour),
 	}
 
-	if err := applyLinkSchedulesAt(context.Background(), scheduleStore, linkTaskStore, domainStore, nil, now); err != nil {
+	if err := applyLinkSchedulesAt(context.Background(), scheduleStore, linkTaskStore, domainStore, nil, nil, now); err != nil {
 		t.Fatalf("apply link schedules: %v", err)
 	}
 
@@ -219,7 +219,7 @@ func TestApplyLinkSchedulesNeedsRelinkRunsWithoutDue(t *testing.T) {
 		domainToProject: map[string]string{"domain-x": "project-2"},
 	}
 
-	if err := applyLinkSchedulesAt(context.Background(), scheduleStore, linkTaskStore, domainStore, nil, now); err != nil {
+	if err := applyLinkSchedulesAt(context.Background(), scheduleStore, linkTaskStore, domainStore, nil, nil, now); err != nil {
 		t.Fatalf("apply link schedules: %v", err)
 	}
 
@@ -270,7 +270,7 @@ func TestApplyLinkSchedulesHonorsEffectiveReadyAt(t *testing.T) {
 		domainToProject: map[string]string{"domain-z": "project-3"},
 	}
 
-	if err := applyLinkSchedulesAt(context.Background(), scheduleStore, linkTaskStore, domainStore, nil, now); err != nil {
+	if err := applyLinkSchedulesAt(context.Background(), scheduleStore, linkTaskStore, domainStore, nil, nil, now); err != nil {
 		t.Fatalf("apply link schedules: %v", err)
 	}
 
@@ -337,7 +337,7 @@ func TestApplyLinkSchedulesPublishedAfterScheduleTime(t *testing.T) {
 		domainToProject: map[string]string{"domain-late": "project-4"},
 	}
 
-	if err := applyLinkSchedulesAt(context.Background(), scheduleStore, linkTaskStore, domainStore, nil, now); err != nil {
+	if err := applyLinkSchedulesAt(context.Background(), scheduleStore, linkTaskStore, domainStore, nil, nil, now); err != nil {
 		t.Fatalf("apply link schedules: %v", err)
 	}
 
@@ -405,7 +405,7 @@ func TestApplyLinkSchedulesDoesNotFailActiveTaskWithTemporaryIneligibleStatus(t 
 		},
 	}
 
-	if err := applyLinkSchedulesAt(context.Background(), scheduleStore, linkTaskStore, domainStore, nil, now); err != nil {
+	if err := applyLinkSchedulesAt(context.Background(), scheduleStore, linkTaskStore, domainStore, nil, nil, now); err != nil {
 		t.Fatalf("apply link schedules: %v", err)
 	}
 

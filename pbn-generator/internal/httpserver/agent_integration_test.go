@@ -138,7 +138,7 @@ func TestAgentTool_WriteFile_Creates(t *testing.T) {
 		"path":    "about.html",
 		"content": "<html><body>About</body></html>",
 	})
-	result := env.srv.agentToolWriteFile(context.Background(), env.domain, "tu-write-1", input)
+	result := env.srv.agentToolWriteFile(context.Background(), env.domain, "test@example.com", "tu-write-1", input)
 
 	if result.IsError {
 		t.Fatalf("expected no error writing file, got: %s", result.Content)
@@ -178,7 +178,7 @@ func TestAgentTool_WriteFile_Updates(t *testing.T) {
 		"path":    "page.html",
 		"content": "<html>new content</html>",
 	})
-	result := env.srv.agentToolWriteFile(context.Background(), env.domain, "tu-write-2", input)
+	result := env.srv.agentToolWriteFile(context.Background(), env.domain, "test@example.com", "tu-write-2", input)
 
 	if result.IsError {
 		t.Fatalf("expected no error: %s", result.Content)
@@ -193,7 +193,7 @@ func TestAgentTool_WriteFile_DisallowedExtension(t *testing.T) {
 
 	for _, ext := range []string{"script.php", "run.sh", "hack.py", "virus.exe"} {
 		input, _ := json.Marshal(map[string]string{"path": ext, "content": "bad"})
-		result := env.srv.agentToolWriteFile(context.Background(), env.domain, "tu-ext", input)
+		result := env.srv.agentToolWriteFile(context.Background(), env.domain, "test@example.com", "tu-ext", input)
 		if !result.IsError {
 			t.Errorf("expected error for disallowed extension %q", ext)
 		}
@@ -205,7 +205,7 @@ func TestAgentTool_WriteFile_TooBig(t *testing.T) {
 
 	big := strings.Repeat("x", agentMaxFileSizeBytes+1)
 	input, _ := json.Marshal(map[string]string{"path": "big.html", "content": big})
-	result := env.srv.agentToolWriteFile(context.Background(), env.domain, "tu-big", input)
+	result := env.srv.agentToolWriteFile(context.Background(), env.domain, "test@example.com", "tu-big", input)
 
 	if !result.IsError {
 		t.Errorf("expected error for file exceeding size limit")

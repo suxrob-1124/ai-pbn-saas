@@ -14,9 +14,10 @@ import {
   FiTrash2,
   FiX,
 } from 'react-icons/fi';
-import { ChevronRight, ListFilter, Database, AlertCircle } from 'lucide-react';
+import { ChevronRight, ListFilter, Database, AlertCircle, Layers, Link2, Zap } from 'lucide-react';
 
 import { authFetch } from '@/lib/http';
+import { getGlobalUnifiedQueue, type UnifiedQueueItem } from '@/lib/unifiedQueueApi';
 import { useAuthGuard } from '@/lib/useAuth';
 import { deleteLinkTask, listLinkTasks, retryLinkTask } from '@/lib/linkTasksApi';
 import { showToast } from '@/lib/toastStore';
@@ -92,6 +93,7 @@ function QueuePageContent() {
   const [genPage, setGenPage] = useState(1);
   const genPageSize = 20;
 
+  const [genActiveOnly, setGenActiveOnly] = useState(true);
   const [linkTasks, setLinkTasks] = useState<LinkTaskDTO[]>([]);
   const [linkLoading, setLinkLoading] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
@@ -100,7 +102,19 @@ function QueuePageContent() {
   const [linkSearch, setLinkSearch] = useState('');
   const [linkPage, setLinkPage] = useState(1);
   const linkPageSize = 20;
+  const [linkActiveOnly, setLinkActiveOnly] = useState(true);
   const [linkDomains, setLinkDomains] = useState<Record<string, string>>({});
+
+  // Unified queue state
+  const [unifiedItems, setUnifiedItems] = useState<UnifiedQueueItem[]>([]);
+  const [unifiedLoading, setUnifiedLoading] = useState(false);
+  const [unifiedError, setUnifiedError] = useState<string | null>(null);
+  const [unifiedTypeFilter, setUnifiedTypeFilter] = useState<'all' | 'generation' | 'link'>('all');
+  const [unifiedStatusFilter, setUnifiedStatusFilter] = useState<'all' | 'pending' | 'processing' | 'completed' | 'failed'>('all');
+  const [unifiedSearch, setUnifiedSearch] = useState('');
+  const [unifiedPage, setUnifiedPage] = useState(1);
+  const unifiedPageSize = 50;
+
   const searchParams = useSearchParams();
   const activeTab = resolveQueueTab(searchParams.get('tab'));
   const { isLocked, lockReason, runLocked } = useActionLocks();
@@ -111,15 +125,59 @@ function QueuePageContent() {
   const linkRetryLockKey = (taskId: string) => `queue:global:link:${taskId}:retry`;
   const linkDeleteLockKey = (taskId: string) => `queue:global:link:${taskId}:delete`;
 
+  const loadUnified = useCallback(async () => {
+    setUnifiedLoading(true);
+    setUnifiedError(null);
+    try {
+      const data = await getGlobalUnifiedQueue({
+        type: unifiedTypeFilter,
+        status: unifiedStatusFilter,
+        limit: unifiedPageSize + 1,
+        page: unifiedPage,
+      });
+      setUnifiedItems(Array.isArray(data) ? data : []);
+    } catch (e: any) {
+      setUnifiedError(e?.message || 'Не удалось загрузить очередь');
+    } finally {
+      setUnifiedLoading(false);
+    }
+  }, [unifiedTypeFilter, unifiedStatusFilter, unifiedPage]);
+
+  useEffect(() => {
+    if (activeTab === 'unified') void loadUnified();
+  }, [activeTab, loadUnified]);
+
+  useEffect(() => {
+    setUnifiedPage(1);
+  }, [unifiedTypeFilter, unifiedStatusFilter, unifiedSearch]);
+
+  const visibleUnifiedItems = useMemo(() => {
+    const s = unifiedSearch.trim().toLowerCase();
+    let list = unifiedItems.slice(0, unifiedPageSize);
+    if (s) list = list.filter((i) => (i.domain_url || '').toLowerCase().includes(s));
+    return list;
+  }, [unifiedItems, unifiedSearch]);
+
+  const unifiedHasNext = unifiedItems.length > unifiedPageSize;
+
+  useEffect(() => {
+    if (activeTab !== 'unified') return;
+    const hasActive = unifiedItems.some((i) => i.status === 'pending' || i.status === 'processing');
+    if (!hasActive) return;
+    const id = window.setInterval(() => void loadUnified(), 5000);
+    return () => window.clearInterval(id);
+  }, [activeTab, unifiedItems, loadUnified]);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     setErrorDiagnostics(null);
     try {
       const params = new URLSearchParams();
-      params.set('limit', String(genPageSize));
-      params.set('page', String(genPage));
+      params.set('limit', genActiveOnly ? '200' : String(genPageSize));
+      params.set('page', genActiveOnly ? '1' : String(genPage));
       params.set('lite', '1');
+      if (genActiveOnly) params.set('active', '1');
       if (search.trim()) {
         params.set('search', search.trim());
       }
@@ -131,7 +189,7 @@ function QueuePageContent() {
     } finally {
       setLoading(false);
     }
-  }, [genPage, genPageSize, search]);
+  }, [genPage, genPageSize, search, genActiveOnly]);
 
   const loadLinks = useCallback(async () => {
     setLinkLoading(true);
@@ -264,14 +322,17 @@ function QueuePageContent() {
     return c;
   }, [items]);
 
+  const LINK_ACTIVE_STATUSES = new Set(['pending', 'searching', 'removing']);
+
   const filteredLinks = useMemo(() => {
     return linkTasks.filter((task) => {
       const normalizedStatus =
         normalizeLinkQueueStatus(task.status) || (task.status || '').trim().toLowerCase();
+      if (linkActiveOnly && !LINK_ACTIVE_STATUSES.has(normalizedStatus)) return false;
       if (linkFilter !== 'all' && normalizedStatus !== linkFilter) return false;
       return matchesSearch(linkDomains[task.domain_id], linkSearch);
     });
-  }, [linkFilter, linkTasks, linkSearch, linkDomains]);
+  }, [linkFilter, linkTasks, linkSearch, linkDomains, linkActiveOnly]);
 
   const linkCounts = useMemo(() => {
     const c: Record<string, number> = {};
@@ -402,15 +463,21 @@ function QueuePageContent() {
         <div className="max-w-7xl mx-auto mt-6 flex items-center gap-6 border-b border-slate-200 dark:border-slate-800">
           <TabLink
             href={{ pathname: '/queue', query: { tab: 'domains' } } as LinkHref}
-            label={`Генерация сайтов (${items.length})`}
+            label={genActiveOnly ? `Генерация (${items.length} активных)` : `Генерация (${items.length})`}
             icon={<ListFilter />}
             active={activeTab === 'domains'}
           />
           <TabLink
             href={{ pathname: '/queue', query: { tab: 'links' } } as LinkHref}
-            label={`Очередь ссылок (${linkTasks.length})`}
+            label={linkActiveOnly ? `Ссылки (${filteredLinks.length} активных)` : `Ссылки (${linkTasks.length})`}
             icon={<Database />}
             active={activeTab === 'links'}
+          />
+          <TabLink
+            href={{ pathname: '/queue', query: { tab: 'unified' } } as LinkHref}
+            label="Единая очередь"
+            icon={<Layers />}
+            active={activeTab === 'unified'}
           />
         </div>
       </header>
@@ -464,6 +531,11 @@ function QueuePageContent() {
                   </div>
 
                   <div className="flex flex-wrap items-center gap-3">
+                    <button
+                      onClick={() => setGenActiveOnly((v) => !v)}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${genActiveOnly ? 'bg-emerald-50 border-emerald-200 text-emerald-700 dark:bg-emerald-500/20 dark:border-emerald-500/40 dark:text-emerald-300' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50 dark:bg-[#060d18] dark:border-slate-700 dark:text-slate-400'}`}>
+                      {genActiveOnly ? 'Только активные' : 'Показать все'}
+                    </button>
                     <FilterSearchInput
                       value={search}
                       onChange={setSearch}
@@ -489,7 +561,7 @@ function QueuePageContent() {
               <TableState
                 loading={loading}
                 empty={!loading && filtered.length === 0}
-                emptyText="Запусков пока нет."
+                emptyText={genActiveOnly ? 'Очередь пуста — нет активных генераций.' : 'Запусков пока нет.'}
               />
 
               {!loading && filtered.length > 0 && (
@@ -583,6 +655,11 @@ function QueuePageContent() {
                   </div>
 
                   <div className="flex flex-wrap items-center gap-3">
+                    <button
+                      onClick={() => setLinkActiveOnly((v) => !v)}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${linkActiveOnly ? 'bg-emerald-50 border-emerald-200 text-emerald-700 dark:bg-emerald-500/20 dark:border-emerald-500/40 dark:text-emerald-300' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50 dark:bg-[#060d18] dark:border-slate-700 dark:text-slate-400'}`}>
+                      {linkActiveOnly ? 'Активные задачи' : 'Все задачи'}
+                    </button>
                     <FilterSearchInput
                       value={linkSearch}
                       onChange={setLinkSearch}
@@ -622,7 +699,7 @@ function QueuePageContent() {
                 loading={linkLoading}
                 error={linkError}
                 empty={!linkLoading && !linkError && filteredLinks.length === 0}
-                emptyText="Задач ссылок нет."
+                emptyText={linkActiveOnly ? 'Нет активных задач ссылок.' : 'Задач ссылок нет.'}
               />
 
               {!linkLoading && !linkError && filteredLinks.length > 0 && (
@@ -744,11 +821,147 @@ function QueuePageContent() {
               )}
             </div>
           )}
+
+          {/* ========================================= */}
+          {/* ВКЛАДКА: ЕДИНАЯ ОЧЕРЕДЬ                  */}
+          {/* ========================================= */}
+          {activeTab === 'unified' && (
+            <div className={`${tableWrapperClass} flex flex-col animate-in fade-in duration-300`}>
+              <div className="p-5 border-b border-slate-100 dark:border-slate-800/60 bg-slate-50/50 dark:bg-slate-800/20">
+                <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                      Единая глобальная очередь
+                    </h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                      Генерации и задачи ссылок всех проектов в одной таблице.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      value={unifiedTypeFilter}
+                      onChange={(e) => setUnifiedTypeFilter(e.target.value as typeof unifiedTypeFilter)}
+                      className="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#060d18] text-slate-700 dark:text-slate-300 outline-none focus:ring-1 focus:ring-indigo-500">
+                      <option value="all">Все типы</option>
+                      <option value="generation">Генерация</option>
+                      <option value="link">Ссылки</option>
+                    </select>
+                    <select
+                      value={unifiedStatusFilter}
+                      onChange={(e) => setUnifiedStatusFilter(e.target.value as typeof unifiedStatusFilter)}
+                      className="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#060d18] text-slate-700 dark:text-slate-300 outline-none focus:ring-1 focus:ring-indigo-500">
+                      <option value="all">Все статусы</option>
+                      <option value="pending">Ожидание</option>
+                      <option value="processing">В работе</option>
+                      <option value="completed">Завершено</option>
+                      <option value="failed">Ошибка</option>
+                    </select>
+                    <FilterSearchInput value={unifiedSearch} onChange={setUnifiedSearch} placeholder="Поиск по URL" />
+                    <button
+                      onClick={loadUnified}
+                      disabled={unifiedLoading}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 dark:bg-indigo-900/30 dark:text-indigo-300 disabled:opacity-50 transition-colors">
+                      <FiRefreshCw className={`w-3.5 h-3.5 ${unifiedLoading ? 'animate-spin' : ''}`} />
+                      Обновить
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {unifiedError && (
+                <div className="p-4 text-red-600 text-sm border-b border-red-100 dark:border-red-900/30 bg-red-50/50 dark:bg-red-950/20">
+                  {unifiedError}
+                </div>
+              )}
+
+              <TableState
+                loading={unifiedLoading}
+                error={unifiedError}
+                empty={!unifiedLoading && !unifiedError && visibleUnifiedItems.length === 0}
+                emptyText="Очередь пуста."
+              />
+
+              {!unifiedLoading && !unifiedError && visibleUnifiedItems.length > 0 && (
+                <div className="overflow-x-auto flex-1">
+                  <table className="min-w-full text-sm">
+                    <thead>
+                      <tr className={tableHeaderClass}>
+                        <th className="py-3 px-5 w-8">Тип</th>
+                        <th className="py-3 px-5">Домен</th>
+                        <th className="py-3 px-5">Статус</th>
+                        <th className="py-3 px-5">Запланировано</th>
+                        <th className="py-3 px-5">Детали</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800/40 bg-white dark:bg-[#0f1117]">
+                      {visibleUnifiedItems.map((item) => {
+                        const isLink = item.type === 'link';
+                        const statusMeta = UNIFIED_STATUS_LABELS[item.status] || { label: item.status, tone: 'slate' as const };
+                        const detail = item.error_message || (isLink && item.anchor_text ? `Анкор: ${item.anchor_text}` : '');
+                        return (
+                          <tr key={item.id} className={tableRowClass}>
+                            <td className="py-3 px-5">
+                              {isLink ? (
+                                <span title="Ссылка"><Link2 className="w-4 h-4 text-indigo-500" /></span>
+                              ) : (
+                                <span title="Генерация"><Zap className="w-4 h-4 text-emerald-500" /></span>
+                              )}
+                            </td>
+                            <td className="py-3 px-5 font-semibold">
+                              <Link
+                                href={`/domains/${item.domain_id}`}
+                                className="text-indigo-600 dark:text-indigo-400 hover:underline">
+                                {item.domain_url || item.domain_id}
+                              </Link>
+                              <span className="ml-2 text-[10px] text-slate-400">{item.status_detail}</span>
+                            </td>
+                            <td className="py-3 px-5">
+                              <Badge label={statusMeta.label} tone={statusMeta.tone} />
+                            </td>
+                            <td className="py-3 px-5 text-slate-500 text-xs">
+                              {new Date(item.scheduled_for).toLocaleString('ru-RU', {
+                                day: '2-digit', month: 'short',
+                                hour: '2-digit', minute: '2-digit',
+                              })}
+                            </td>
+                            <td className="py-3 px-5 text-xs max-w-[250px] truncate text-slate-500" title={detail}>
+                              {detail || '—'}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {visibleUnifiedItems.length > 0 && (
+                <div className="p-4 border-t border-slate-200 dark:border-slate-800/80 bg-slate-50/50 dark:bg-[#0a1020] flex items-center justify-between">
+                  <span className="text-xs text-slate-500">Показано {visibleUnifiedItems.length} записей</span>
+                  <PaginationControls
+                    page={unifiedPage}
+                    hasNext={unifiedHasNext}
+                    onPrev={() => setUnifiedPage((p) => Math.max(1, p - 1))}
+                    onNext={() => setUnifiedPage((p) => p + 1)}
+                  />
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </main>
     </div>
   );
 }
+
+const UNIFIED_STATUS_LABELS: Record<string, { label: string; tone: 'amber' | 'blue' | 'green' | 'red' | 'slate' }> = {
+  pending:    { label: 'Ожидание',  tone: 'amber' },
+  processing: { label: 'В работе',  tone: 'blue'  },
+  completed:  { label: 'Завершено', tone: 'green' },
+  failed:     { label: 'Ошибка',    tone: 'red'   },
+};
+
+const tableRowClass =
+  'border-b border-slate-100 dark:border-slate-800/40 hover:bg-slate-50/50 dark:hover:bg-white/[0.02] transition-colors';
 
 // --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 

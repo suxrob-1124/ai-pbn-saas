@@ -64,6 +64,10 @@ func (s *stubLinkTaskStore) Create(ctx context.Context, task sqlstore.LinkTask) 
 	return nil
 }
 
+func (s *stubLinkTaskStore) ListStuck(ctx context.Context, olderThan time.Duration, limit int) ([]sqlstore.LinkTask, error) {
+	return nil, nil
+}
+
 func (s *stubLinkTaskStore) Update(ctx context.Context, taskID string, updates sqlstore.LinkTaskUpdates) error {
 	task, ok := s.tasks[taskID]
 	if !ok {

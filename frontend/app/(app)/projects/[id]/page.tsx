@@ -307,8 +307,27 @@ export default function ProjectDetailPage() {
       );
       const normalized = Array.isArray(list) ? list : [];
       const domainIDs = new Set(domains.map((d) => d.id));
+
+      // Для каждого домена найти самую последнюю генерацию
+      const latestByDomain = new Map<string, Generation>();
+      normalized.forEach((g) => {
+        if (!g.domain_id) return;
+        const existing = latestByDomain.get(g.domain_id);
+        const gTime = new Date((g.created_at || '') as string).getTime();
+        const eTime = existing ? new Date((existing.created_at || '') as string).getTime() : 0;
+        if (gTime > eTime) latestByDomain.set(g.domain_id, g);
+      });
+
+      // Показываем ошибку только если она является ПОСЛЕДНЕЙ генерацией домена:
+      // если домен уже перезапустили (новая генерация есть) — старая ошибка скрыта
       const errors = normalized
-        .filter((g) => g.status === 'error' && g.domain_id && domainIDs.has(g.domain_id))
+        .filter(
+          (g) =>
+            g.status === 'error' &&
+            g.domain_id &&
+            domainIDs.has(g.domain_id) &&
+            latestByDomain.get(g.domain_id)?.id === g.id,
+        )
         .sort(
           (a, b) =>
             new Date((b.updated_at || b.created_at || '') as string).getTime() -
@@ -588,6 +607,8 @@ export default function ProjectDetailPage() {
     handleToggleLinkSchedule,
     handleEditLinkSchedule,
     handleDeleteLinkSchedule,
+    linkEligibility,
+    linkEligibilityLoading,
   } = useProjectSchedules({ projectId, activeTab, setTab: setActiveTab, resolvedProjectTimezone });
 
   const filteredDomains = useMemo(() => {
@@ -818,6 +839,7 @@ export default function ProjectDetailPage() {
           {uiView === 'schedules' && hasExtendedAccess && (
             <div className="animate-in fade-in duration-300">
               <ProjectSchedulesSection
+                projectId={projectId}
                 schedulesMultiple={schedulesMultiple}
                 scheduleForm={scheduleForm}
                 schedulesLoading={schedulesLoading}
@@ -846,6 +868,8 @@ export default function ProjectDetailPage() {
                 onToggleLinkSchedule={handleToggleLinkSchedule}
                 onEditLinkSchedule={handleEditLinkSchedule}
                 onDeleteLinkSchedule={handleDeleteLinkSchedule}
+                linkEligibility={linkEligibility}
+                linkEligibilityLoading={linkEligibilityLoading}
               />
             </div>
           )}

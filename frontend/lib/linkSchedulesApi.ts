@@ -1,5 +1,6 @@
 import { authFetch } from "./http";
 import type {
+  LinkEligibilityDTO,
   ScheduleCreateInput,
   ScheduleDTO,
   ScheduleTriggerResponse,
@@ -104,4 +105,30 @@ export async function triggerLinkSchedule(
   return authFetch<ScheduleTriggerResponse>(`${base(projectId)}/trigger`, {
     method: "POST"
   });
+}
+
+/** Получить информацию о пригодности доменов для следующего запуска. */
+export async function getLinkScheduleEligibility(
+  projectId: string
+): Promise<LinkEligibilityDTO> {
+  return authFetch<LinkEligibilityDTO>(`${base(projectId)}/eligibility`);
+}
+
+/** Получить историю запусков расписаний проекта. */
+export async function getScheduleRunLogs(
+  projectId: string,
+  scheduleId?: string
+): Promise<import('../types/schedules').ScheduleRunLog[]> {
+  const baseUrl = `/api/projects/${encodeProjectId(projectId)}/schedule-runs`;
+  const url = scheduleId ? `${baseUrl}?schedule_id=${encodeURIComponent(scheduleId)}` : baseUrl;
+  return authFetch<import('../types/schedules').ScheduleRunLog[]>(url);
+}
+
+/** Получить превью следующего запуска расписаний. */
+export async function getSchedulesPreview(
+  projectId: string
+): Promise<import('../types/schedules').SchedulePreviewResponse> {
+  return authFetch<import('../types/schedules').SchedulePreviewResponse>(
+    `/api/projects/${encodeProjectId(projectId)}/schedules/preview`
+  );
 }

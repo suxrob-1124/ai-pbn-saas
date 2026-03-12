@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"obzornik-pbn-generator/internal/scheduler"
 	"obzornik-pbn-generator/internal/store/sqlstore"
 )
 
@@ -725,5 +726,221 @@ func (s *Server) handleProjectLinkScheduleTrigger(w http.ResponseWriter, r *http
 		"created":  created,
 		"updated":  updated,
 		"eligible": len(eligible),
+	})
+}
+
+// scheduleRunLogDTO is the API representation of a ScheduleRunLog record.
+type scheduleRunLogDTO struct {
+	ID            string              `json:"id"`
+	ScheduleID    string              `json:"schedule_id"`
+	ScheduleType  string              `json:"schedule_type"`
+	ProjectID     string              `json:"project_id"`
+	RunAt         string              `json:"run_at"`
+	TotalDomains  int                 `json:"total_domains"`
+	EligibleCount int                 `json:"eligible_count"`
+	EnqueuedCount int                 `json:"enqueued_count"`
+	SkippedCount  int                 `json:"skipped_count"`
+	SkipDetails   []sqlstore.SkipDetail `json:"skip_details"`
+	ErrorMessage  *string             `json:"error_message,omitempty"`
+	NextRunAt     *string             `json:"next_run_at,omitempty"`
+	CreatedAt     string              `json:"created_at"`
+}
+
+func toScheduleRunLogDTO(log sqlstore.ScheduleRunLog) scheduleRunLogDTO {
+	dto := scheduleRunLogDTO{
+		ID:            log.ID,
+		ScheduleID:    log.ScheduleID,
+		ScheduleType:  log.ScheduleType,
+		ProjectID:     log.ProjectID,
+		RunAt:         log.RunAt.UTC().Format(time.RFC3339),
+		TotalDomains:  log.TotalDomains,
+		EligibleCount: log.EligibleCount,
+		EnqueuedCount: log.EnqueuedCount,
+		SkippedCount:  log.SkippedCount,
+		SkipDetails:   log.SkipDetails,
+		CreatedAt:     log.CreatedAt.UTC().Format(time.RFC3339),
+	}
+	if log.ErrorMessage.Valid && log.ErrorMessage.String != "" {
+		dto.ErrorMessage = &log.ErrorMessage.String
+	}
+	if log.NextRunAt.Valid {
+		s := log.NextRunAt.Time.UTC().Format(time.RFC3339)
+		dto.NextRunAt = &s
+	}
+	if dto.SkipDetails == nil {
+		dto.SkipDetails = []sqlstore.SkipDetail{}
+	}
+	return dto
+}
+
+func (s *Server) handleProjectScheduleRuns(w http.ResponseWriter, r *http.Request, projectID string) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	user, ok := currentUserFromContext(r.Context())
+	if !ok || user.Email == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if s.scheduleRunLogs == nil {
+		writeError(w, http.StatusInternalServerError, "schedule run logs not configured")
+		return
+	}
+
+	if _, err := s.authorizeProject(r.Context(), projectID); err != nil {
+		respondAuthzError(w, err, "project not found")
+		return
+	}
+
+	memberRole := ""
+	if !strings.EqualFold(user.Role, "admin") {
+		role, err := s.getProjectMemberRole(r.Context(), projectID, user.Email)
+		if err != nil {
+			writeError(w, http.StatusForbidden, "access denied")
+			return
+		}
+		memberRole = role
+	}
+	if !hasProjectPermission(user.Role, memberRole, "viewer") {
+		writeError(w, http.StatusForbidden, "insufficient permissions: viewer role required")
+		return
+	}
+
+	limit := parseLimitParam(r, 20, 100)
+	page := parsePageParam(r, 1)
+	offset := (page - 1) * limit
+
+	scheduleID := strings.TrimSpace(r.URL.Query().Get("schedule_id"))
+
+	var (
+		logs []sqlstore.ScheduleRunLog
+		err  error
+	)
+	if scheduleID != "" {
+		logs, err = s.scheduleRunLogs.ListBySchedule(r.Context(), scheduleID, limit, offset)
+	} else {
+		logs, err = s.scheduleRunLogs.ListByProject(r.Context(), projectID, limit, offset)
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not load schedule run logs")
+		return
+	}
+
+	resp := make([]scheduleRunLogDTO, 0, len(logs))
+	for _, l := range logs {
+		resp = append(resp, toScheduleRunLogDTO(l))
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// schedulePreviewDomainDTO is a minimal domain reference used in preview responses.
+type schedulePreviewDomainDTO struct {
+	ID  string `json:"id"`
+	URL string `json:"url"`
+}
+
+// schedulePreviewSectionDTO describes one half (generation or link) of the preview.
+type schedulePreviewSectionDTO struct {
+	HasSchedule     bool                       `json:"has_schedule"`
+	IsActive        bool                       `json:"is_active"`
+	NextRunAt       *string                    `json:"next_run_at,omitempty"`
+	EligibleDomains []schedulePreviewDomainDTO `json:"eligible_domains"`
+	WouldSkip       []sqlstore.SkipDetail      `json:"would_skip"`
+	WouldEnqueue    int                        `json:"would_enqueue"`
+}
+
+func (s *Server) handleProjectSchedulesPreview(w http.ResponseWriter, r *http.Request, projectID string) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	user, ok := currentUserFromContext(r.Context())
+	if !ok || user.Email == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	if _, err := s.authorizeProject(r.Context(), projectID); err != nil {
+		respondAuthzError(w, err, "project not found")
+		return
+	}
+
+	memberRole := ""
+	if !strings.EqualFold(user.Role, "admin") {
+		role, err := s.getProjectMemberRole(r.Context(), projectID, user.Email)
+		if err != nil {
+			writeError(w, http.StatusForbidden, "access denied")
+			return
+		}
+		memberRole = role
+	}
+	if !hasProjectPermission(user.Role, memberRole, "viewer") {
+		writeError(w, http.StatusForbidden, "insufficient permissions: viewer role required")
+		return
+	}
+
+	domains, err := s.domains.ListByProject(r.Context(), projectID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not list domains")
+		return
+	}
+
+	now := time.Now().UTC()
+
+	// --- Generation section ---
+	genSection := schedulePreviewSectionDTO{
+		EligibleDomains: []schedulePreviewDomainDTO{},
+		WouldSkip:       []sqlstore.SkipDetail{},
+	}
+	if s.schedules != nil {
+		schedList, err := s.schedules.List(r.Context(), projectID)
+		if err == nil && len(schedList) > 0 {
+			sched := schedList[0]
+			genSection.HasSchedule = true
+			genSection.IsActive = sched.IsActive
+			if sched.NextRunAt.Valid {
+				s := sched.NextRunAt.Time.UTC().Format(time.RFC3339)
+				genSection.NextRunAt = &s
+			}
+			eligible, skipped := scheduler.FilterGenerationDomainsWithReasons(domains)
+			for _, d := range eligible {
+				genSection.EligibleDomains = append(genSection.EligibleDomains, schedulePreviewDomainDTO{ID: d.ID, URL: d.URL})
+			}
+			genSection.WouldSkip = skipped
+			genSection.WouldEnqueue = len(eligible)
+		}
+	}
+
+	// --- Link section ---
+	linkSection := schedulePreviewSectionDTO{
+		EligibleDomains: []schedulePreviewDomainDTO{},
+		WouldSkip:       []sqlstore.SkipDetail{},
+	}
+	if s.linkSchedules != nil {
+		linkSched, err := s.linkSchedules.GetByProject(r.Context(), projectID)
+		if err == nil && linkSched != nil {
+			linkSection.HasSchedule = true
+			linkSection.IsActive = linkSched.IsActive
+			scheduleRunAt := now
+			if linkSched.NextRunAt.Valid && !linkSched.NextRunAt.Time.IsZero() {
+				scheduleRunAt = linkSched.NextRunAt.Time.UTC()
+			}
+			if linkSched.NextRunAt.Valid {
+				s := linkSched.NextRunAt.Time.UTC().Format(time.RFC3339)
+				linkSection.NextRunAt = &s
+			}
+			eligible, skipped := scheduler.FilterLinkDomainsWithReasons(domains, now, scheduleRunAt)
+			for _, d := range eligible {
+				linkSection.EligibleDomains = append(linkSection.EligibleDomains, schedulePreviewDomainDTO{ID: d.ID, URL: d.URL})
+			}
+			linkSection.WouldSkip = skipped
+			linkSection.WouldEnqueue = len(eligible)
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"generation": genSection,
+		"link":       linkSection,
 	})
 }

@@ -55,11 +55,11 @@ func TestAgentSessionStoreGet(t *testing.T) {
 	rows := sqlmock.NewRows([]string{
 		"id", "domain_id", "created_by", "created_at",
 		"finished_at", "status", "summary", "files_changed",
-		"message_count", "snapshot_tag",
+		"message_count", "snapshot_tag", "messages_json", "chat_log_json",
 	}).AddRow(
 		"sess-1", "dom-1", "user@example.com", now,
 		nil, "done", "Created 2 files", filesChanged,
-		3, "agent_snapshot:sess-1",
+		3, "agent_snapshot:sess-1", nil, nil,
 	)
 
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT`)).
@@ -99,13 +99,13 @@ func TestAgentSessionStoreListByDomain(t *testing.T) {
 	rows := sqlmock.NewRows([]string{
 		"id", "domain_id", "created_by", "created_at",
 		"finished_at", "status", "summary", "files_changed",
-		"message_count", "snapshot_tag",
+		"message_count", "snapshot_tag", "messages_json", "chat_log_json",
 	}).AddRow(
 		"sess-1", "dom-1", "user@example.com", now,
-		nil, "running", nil, nil, 1, nil,
+		nil, "running", nil, nil, 1, nil, nil, nil,
 	).AddRow(
 		"sess-2", "dom-1", "user@example.com", now.Add(-time.Hour),
-		&now, "done", "Done", nil, 2, "agent_snapshot:sess-2",
+		&now, "done", "Done", nil, 2, "agent_snapshot:sess-2", nil, nil,
 	)
 
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT`)).

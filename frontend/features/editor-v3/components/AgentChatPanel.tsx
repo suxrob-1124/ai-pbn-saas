@@ -1,9 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+
+let msgCounter = 0;
 import { FiClock, FiSend, FiSquare, FiX } from "react-icons/fi";
-import type { AgentContextHint } from "../types/agent";
+import type { AgentChatMessage, AgentContextHint } from "../types/agent";
 import type { UseAgentSessionResult } from "../hooks/useAgentSession";
+import { authFetch } from "@/lib/http";
 import { AgentMessage } from "./AgentMessage";
 import { AgentSuggestedPrompts } from "./AgentSuggestedPrompts";
 import { AgentSessionRollback } from "./AgentSessionRollback";
@@ -20,7 +23,7 @@ type Props = {
 };
 
 export function AgentChatPanel({ domainId, currentFilePath, session, onClose, onFilesRefresh }: Props) {
-  const { status, messages, sessionId, snapshotId, sendMessage, stop, clearMessages } = session;
+  const { status, messages, sessionId, snapshotId, sendMessage, stop, clearMessages, reconnect, loadHistory, getSavedSession } = session;
 
   const [input, setInput] = useState("");
   const [includeFile, setIncludeFile] = useState(false);
@@ -28,6 +31,14 @@ export function AgentChatPanel({ domainId, currentFilePath, session, onClose, on
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const isRunning = status === "running";
+
+  // Auto-reconnect to active session on mount
+  useEffect(() => {
+    const saved = getSavedSession?.();
+    if (!saved || saved.domainId !== domainId || saved.status !== "running") return;
+    if (status !== "idle" || sessionId) return;
+    reconnect(saved.sessionId, domainId);
+  }, []); // only on mount
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
@@ -79,6 +90,41 @@ export function AgentChatPanel({ domainId, currentFilePath, session, onClose, on
     // small notification via console, toast is handled externally
     console.info(`[Agent] Rolled back ${restoredCount} file(s)`);
   };
+
+  const handleLoadSession = useCallback(async (loadSessionId: string) => {
+    const data = await authFetch<{ chat_log: any[]; status: string; snapshot_tag?: string; is_active?: boolean }>(
+      `/api/domains/${domainId}/agent/${loadSessionId}`
+    );
+    if (!data) return;
+
+    // If the session is still running, reconnect to it instead of loading static history
+    if (data.is_active) {
+      setTab("chat");
+      await reconnect(loadSessionId, domainId);
+      return;
+    }
+
+    if (data.chat_log) {
+      const msgs: AgentChatMessage[] = data.chat_log.map((entry: any) => ({
+        id: entry.id || String(++msgCounter),
+        role: entry.role,
+        text: entry.text || "",
+        toolCalls: (entry.tool_calls || []).map((tc: any) => ({
+          id: tc.id,
+          tool: tc.tool,
+          input: tc.input,
+          preview: tc.preview,
+          done: tc.done,
+          isError: tc.is_error,
+        })),
+        status: entry.status,
+        filesChanged: entry.files_changed,
+        error: entry.error,
+      }));
+      loadHistory(msgs, loadSessionId, data.snapshot_tag || null);
+      setTab("chat");
+    }
+  }, [domainId, loadHistory, reconnect]);
 
   const showRollback = Boolean(snapshotId && sessionId && !isRunning && status !== "idle");
 
@@ -139,7 +185,7 @@ export function AgentChatPanel({ domainId, currentFilePath, session, onClose, on
       {/* Body */}
       {tab === "history" ? (
         <div className="flex-1 overflow-y-auto p-4">
-          <AgentSessionHistory domainId={domainId} />
+          <AgentSessionHistory domainId={domainId} onLoadSession={handleLoadSession} />
         </div>
       ) : (
         <>

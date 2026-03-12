@@ -11,7 +11,8 @@ const base: ScheduleFormValue = {
   weeklyLimit: "3",
   weeklyDay: "mon",
   weeklyTime: "10:00",
-  customCron: "0 9 * * *"
+  customCron: "0 9 * * *",
+  delayMinutes: "5",
 };
 
 const daily = buildScheduleConfig({ ...base, strategy: "daily" });

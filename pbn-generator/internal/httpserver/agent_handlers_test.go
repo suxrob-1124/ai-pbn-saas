@@ -68,6 +68,10 @@ func (s *stubAgentSessionStore) MarkStaleRunning(_ context.Context, _ time.Durat
 	return 0, nil
 }
 
+func (s *stubAgentSessionStore) SaveMessages(_ context.Context, _ string, _, _ []byte) error {
+	return nil
+}
+
 // ─── Helper: build a server with agent session store ─────────────────────────
 
 func setupAgentTestServer(t *testing.T) (*Server, *stubDomainStore, *stubAgentSessionStore) {

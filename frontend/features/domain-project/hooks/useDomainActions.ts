@@ -4,6 +4,7 @@ import { showToast } from "../../../lib/toastStore";
 import { useActionLocks } from "../../editor-v3/hooks/useActionLocks";
 import { isLinkTaskInProgress } from "../../../lib/linkTaskStatus";
 import { useFlowState } from "./useFlowState";
+import { getStepsForGenerationType } from "../../../lib/pipelineProgress";
 
 type DomainLite = {
   url?: string;
@@ -118,12 +119,13 @@ export function useDomainActions({
         });
         setLatestAttempt((prev) => (prev ? { ...prev, status: "processing", progress: 0 } : prev));
         try {
-          const payload = forceStep ? { force_step: forceStep } : undefined;
-          const headers = payload ? { "Content-Type": "application/json" } : undefined;
+          const payload: Record<string, string> = {};
+          if (forceStep) payload.force_step = forceStep;
+          if (generationType) payload.generation_type = generationType;
           await authFetch(`/api/domains/${id}/generate`, {
             method: "POST",
-            headers,
-            body: payload ? JSON.stringify(payload) : undefined
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
           });
           await load(true);
           generationFlowState.done("Задача генерации отправлена в очередь");
@@ -143,6 +145,16 @@ export function useDomainActions({
   const handleMainAction = async () => {
     try {
       await triggerGeneration();
+    } catch {
+      // Ошибка уже показана
+    }
+  };
+
+  const handleRestartFromScratch = async () => {
+    if (!confirm("Запустить генерацию заново с самого начала? Прогресс текущей генерации будет потерян.")) return;
+    const firstStep = getStepsForGenerationType(generationType)[0]?.id ?? "serp_analysis";
+    try {
+      await triggerGeneration(firstStep);
     } catch {
       // Ошибка уже показана
     }
@@ -400,6 +412,7 @@ export function useDomainActions({
     removeLinkTask,
     refreshLinkTasks,
     handleMainAction,
+    handleRestartFromScratch,
     handleForceStep,
     deleteGeneration,
     pauseGeneration,

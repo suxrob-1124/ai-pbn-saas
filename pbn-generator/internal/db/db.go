@@ -359,9 +359,11 @@ func migrationStatements() []string {
 		);`,
 		`ALTER TABLE link_tasks ADD COLUMN IF NOT EXISTS action TEXT NOT NULL DEFAULT 'insert';`,
 		`ALTER TABLE link_tasks ADD COLUMN IF NOT EXISTS log_lines JSONB;`,
+		`ALTER TABLE link_tasks ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();`,
 		`CREATE INDEX IF NOT EXISTS idx_link_tasks_domain ON link_tasks(domain_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_link_tasks_status ON link_tasks(status);`,
 		`CREATE INDEX IF NOT EXISTS idx_link_tasks_scheduled ON link_tasks(scheduled_for, status);`,
+		`CREATE INDEX IF NOT EXISTS idx_link_tasks_updated ON link_tasks(updated_at);`,
 		`CREATE TABLE IF NOT EXISTS link_schedules (
 		  id TEXT PRIMARY KEY,
 		  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -545,6 +547,8 @@ func migrationStatements() []string {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_agent_sessions_domain ON agent_sessions(domain_id, created_at DESC);`,
 		`CREATE INDEX IF NOT EXISTS idx_agent_sessions_snapshot_tag ON agent_sessions(snapshot_tag) WHERE snapshot_tag IS NOT NULL;`,
+		`ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS messages_json JSONB;`,
+		`ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS chat_log_json JSONB;`,
 		// --- File locks ---
 		`CREATE TABLE IF NOT EXISTS file_locks (
     domain_id TEXT NOT NULL,
@@ -555,6 +559,24 @@ func migrationStatements() []string {
     PRIMARY KEY (domain_id, file_path)
 )`,
 		`CREATE INDEX IF NOT EXISTS idx_file_locks_expires ON file_locks(expires_at)`,
+		// --- Schedule run audit logs ---
+		`CREATE TABLE IF NOT EXISTS schedule_run_logs (
+			id TEXT PRIMARY KEY,
+			schedule_id TEXT NOT NULL,
+			schedule_type TEXT NOT NULL,
+			project_id TEXT NOT NULL,
+			run_at TIMESTAMPTZ NOT NULL,
+			total_domains INT NOT NULL DEFAULT 0,
+			eligible_count INT NOT NULL DEFAULT 0,
+			enqueued_count INT NOT NULL DEFAULT 0,
+			skipped_count INT NOT NULL DEFAULT 0,
+			skip_details JSONB,
+			error_message TEXT,
+			next_run_at TIMESTAMPTZ,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_schedule_run_logs_schedule ON schedule_run_logs(schedule_id, created_at DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_schedule_run_logs_project ON schedule_run_logs(project_id, created_at DESC);`,
 	}
 	return append(stmts, projectStmts...)
 }

@@ -192,12 +192,16 @@ func enqueueScheduleDomains(
 		if queuedDomains[d.ID] {
 			continue
 		}
+		scheduledFor := now
+		if cfg.DelayMinutes > 0 {
+			scheduledFor = now.Add(time.Duration(count) * time.Duration(cfg.DelayMinutes) * time.Minute)
+		}
 		item := sqlstore.QueueItem{
 			ID:           uuid.NewString(),
 			DomainID:     d.ID,
 			ScheduleID:   sql.NullString{String: sched.ID, Valid: true},
 			Priority:     0,
-			ScheduledFor: now,
+			ScheduledFor: scheduledFor,
 			Status:       "pending",
 		}
 		if err := genQueue.Enqueue(ctx, item); err != nil {

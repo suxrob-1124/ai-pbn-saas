@@ -153,7 +153,7 @@ func TestApplySchedulesImmediateEnqueue(t *testing.T) {
 	}
 
 	logger := zap.NewNop().Sugar()
-	if err := applySchedulesAt(context.Background(), scheduleStore, queueStore, domainStore, logger, now); err != nil {
+	if err := applySchedulesAt(context.Background(), scheduleStore, queueStore, domainStore, nil, logger, now); err != nil {
 		t.Fatalf("apply schedules: %v", err)
 	}
 	if len(queueStore.items) != 1 {
@@ -203,7 +203,7 @@ func TestApplySchedulesDailySkipsSameDay(t *testing.T) {
 	}
 
 	logger := zap.NewNop().Sugar()
-	if err := applySchedulesAt(context.Background(), scheduleStore, queueStore, domainStore, logger, now); err != nil {
+	if err := applySchedulesAt(context.Background(), scheduleStore, queueStore, domainStore, nil, logger, now); err != nil {
 		t.Fatalf("apply schedules: %v", err)
 	}
 	if len(queueStore.items) != 1 {
@@ -239,7 +239,7 @@ func TestApplySchedulesCustomEnqueue(t *testing.T) {
 	}
 
 	logger := zap.NewNop().Sugar()
-	if err := applySchedulesAt(context.Background(), scheduleStore, queueStore, domainStore, logger, now); err != nil {
+	if err := applySchedulesAt(context.Background(), scheduleStore, queueStore, domainStore, nil, logger, now); err != nil {
 		t.Fatalf("apply schedules: %v", err)
 	}
 	if len(queueStore.items) != 1 {

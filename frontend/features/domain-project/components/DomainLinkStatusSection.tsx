@@ -55,6 +55,8 @@ type DomainLinkStatusSectionProps = {
   onRefreshLinkTasks: () => Promise<void>;
   onRunLinkTask: () => Promise<void>;
   onRemoveLinkTask: () => Promise<void>;
+  onRetryLinkTask?: (taskId: string) => Promise<void>;
+  onResetLinkStatus?: () => Promise<void>;
 };
 
 export function DomainLinkStatusSection({
@@ -72,6 +74,8 @@ export function DomainLinkStatusSection({
   onRefreshLinkTasks,
   onRunLinkTask,
   onRemoveLinkTask,
+  onRetryLinkTask,
+  onResetLinkStatus,
 }: DomainLinkStatusSectionProps) {
   const [linkTab, setLinkTab] = useState<'summary' | 'logs'>('summary');
   const [showAllLinkTasks, setShowAllLinkTasks] = useState(false);
@@ -151,15 +155,28 @@ export function DomainLinkStatusSection({
     if (!loc) return;
     try {
       const fileResp = await authFetch<{ content: string }>(buildFileUrl(loc.filePath));
-      const lines = (fileResp?.content ?? '').split('\n');
-      const idx = Math.max(0, loc.line - 1);
-      const afterSnippet = computeSnippet(lines, idx, 2);
+      const content = fileResp?.content ?? '';
+      const lines = content.split('\n');
+      // Try to find the anchor text in the current file first (file may have been regenerated).
+      let lineIdx = Math.max(0, loc.line - 1);
+      if (task.anchor_text) {
+        const lower = content.toLowerCase();
+        const anchorLower = task.anchor_text.toLowerCase();
+        const charIdx = lower.indexOf(`href="${task.target_url?.toLowerCase()}"`.toLowerCase()) !== -1
+          ? lower.indexOf(anchorLower)
+          : lower.indexOf(anchorLower);
+        if (charIdx !== -1) {
+          const lineNum = content.substring(0, charIdx).split('\n').length - 1;
+          lineIdx = lineNum;
+        }
+      }
+      const afterSnippet = computeSnippet(lines, lineIdx, 3);
       const beforeSnippet = stripAnchorTag(afterSnippet, task.anchor_text, task.target_url);
       setLinkDiffs((prev) => ({
         ...prev,
         [task.id]: {
           filePath: loc.filePath,
-          line: loc.line,
+          line: lineIdx + 1,
           before: beforeSnippet,
           after: afterSnippet,
         },
@@ -169,6 +186,25 @@ export function DomainLinkStatusSection({
 
   // Короткий лейбл для кнопки запуска (чтобы влезало)
   const shortActionLabel = linkActionLabel.includes('Обновить') ? 'Обновить' : 'Запустить';
+
+  // Stuck task detection
+  const activeTask = linkTasks.find((t) =>
+    ['pending', 'searching', 'removing'].includes(normalizeLinkTaskStatus(t.status) || t.status),
+  );
+  const stuckMinutes = useMemo(() => {
+    if (!activeTask) return 0;
+    const ageMs = Date.now() - new Date(activeTask.created_at).getTime();
+    const ageMin = Math.floor(ageMs / 60000);
+    const status = normalizeLinkTaskStatus(activeTask.status) || activeTask.status;
+    if (status === 'pending' && ageMin >= 5) return ageMin;
+    if ((status === 'searching' || status === 'removing') && ageMin >= 20) return ageMin;
+    return 0;
+  }, [activeTask]);
+
+  const linkStatusEffective =
+    domain?.link_status_effective || domain?.link_status || '';
+  const isAlreadyInserted =
+    linkStatusEffective === 'inserted' || linkStatusEffective === 'generated';
 
   return (
     <div className="flex flex-col space-y-5 animate-in fade-in">
@@ -223,6 +259,48 @@ export function DomainLinkStatusSection({
           </button>
         </div>
       </div>
+
+      {/* Предупреждение: задача зависла */}
+      {stuckMinutes > 0 && activeTask && (
+        <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs dark:bg-amber-900/20 dark:border-amber-700/50 flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <span className="font-semibold text-amber-700 dark:text-amber-400">
+              Задача зависла — ожидает {stuckMinutes} мин.
+            </span>
+            <span className="block text-amber-600 dark:text-amber-500">
+              Возможно, воркер не запущен или задача не была подхвачена.
+            </span>
+          </div>
+          {onRetryLinkTask && (
+            <button
+              onClick={() => onRetryLinkTask(activeTask.id)}
+              disabled={linkTasksLoading}
+              className="ml-auto px-2.5 py-1 text-xs font-semibold bg-amber-600 text-white hover:bg-amber-500 rounded-lg transition-colors disabled:opacity-50 flex-shrink-0">
+              Повторить
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Примечание: ссылка уже вставлена — домен будет пропущен при следующем запуске */}
+      {isAlreadyInserted && (
+        <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs dark:bg-blue-900/20 dark:border-blue-700/50 flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
+          <div className="flex-1 text-blue-700 dark:text-blue-400">
+            Ссылка была вставлена. При следующем запуске расписания этот домен будет пропущен.
+            Для повторной вставки нажмите «Сбросить».
+          </div>
+          {onResetLinkStatus && (
+            <button
+              onClick={onResetLinkStatus}
+              disabled={linkTasksLoading}
+              className="ml-auto px-2.5 py-1 text-xs font-semibold bg-blue-600 text-white hover:bg-blue-500 rounded-lg transition-colors disabled:opacity-50 flex-shrink-0">
+              Сбросить
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Алерты */}
       {linkNotice && (

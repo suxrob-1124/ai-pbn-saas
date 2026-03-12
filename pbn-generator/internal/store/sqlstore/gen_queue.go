@@ -171,7 +171,7 @@ func (s *GenQueueSQLStore) ListByProjectPage(ctx context.Context, projectID stri
 		query += fmt.Sprintf(" AND (LOWER(COALESCE(d.url, '')) LIKE $%d OR LOWER(q.domain_id) LIKE $%d)", len(args)+1, len(args)+1)
 		args = append(args, "%"+strings.ToLower(term)+"%")
 	}
-	query += " ORDER BY q.created_at DESC"
+	query += " ORDER BY q.scheduled_for ASC, q.priority DESC, q.created_at ASC"
 	if limit > 0 {
 		query += fmt.Sprintf(" LIMIT $%d", len(args)+1)
 		args = append(args, limit)
@@ -259,4 +259,15 @@ func (s *GenQueueSQLStore) ListHistoryByProjectPage(
 func (s *GenQueueSQLStore) Delete(ctx context.Context, itemID string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM generation_queue WHERE id=$1`, itemID)
 	return err
+}
+
+// PurgeProcessed удаляет обработанные элементы очереди старше retentionDays дней.
+func (s *GenQueueSQLStore) PurgeProcessed(ctx context.Context, retentionDays int) (int64, error) {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM generation_queue WHERE status IN ('done','error','skipped') AND processed_at IS NOT NULL AND processed_at < NOW() - make_interval(days => $1)`,
+		retentionDays)
+	if err != nil {
+		return 0, fmt.Errorf("purge generation_queue: %w", err)
+	}
+	return res.RowsAffected()
 }

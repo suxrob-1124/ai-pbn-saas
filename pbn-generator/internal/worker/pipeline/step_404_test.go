@@ -19,6 +19,10 @@ func (f *fakeLLMFor404) GenerateImage(ctx context.Context, prompt, model string)
 	return nil, nil
 }
 
+func (f *fakeLLMFor404) GenerateMultiTurn(ctx context.Context, stage, systemInstruction string, turns []string, model string) (string, error) {
+	return "", nil
+}
+
 type fakeLLMFor404WithResponse struct {
 	response string
 }
@@ -32,6 +36,10 @@ func (f *fakeLLMFor404WithResponse) Generate(ctx context.Context, stage, prompt,
 
 func (f *fakeLLMFor404WithResponse) GenerateImage(ctx context.Context, prompt, model string) ([]byte, error) {
 	return nil, nil
+}
+
+func (f *fakeLLMFor404WithResponse) GenerateMultiTurn(ctx context.Context, stage, systemInstruction string, turns []string, model string) (string, error) {
+	return "", nil
 }
 
 type fakePromptManagerFor404 struct{}

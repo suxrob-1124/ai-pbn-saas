@@ -22,6 +22,23 @@ export const PIPELINE_STEPS: PipelineStepDefinition[] = [
   { id: "publish", label: "Publish", progress: 99, artifactKeys: ["published_path"], forceable: true },
 ];
 
+const WEBARCHIVE_PREFIX_STEPS: PipelineStepDefinition[] = [
+  { id: "wayback_fetch", label: "Wayback Fetch", progress: 3, artifactKeys: ["wayback_data"] },
+  { id: "keyword_generation", label: "Keyword Generation", progress: 6, artifactKeys: ["generated_keyword"] },
+];
+
+const WEBARCHIVE_STEPS: PipelineStepDefinition[] = [
+  ...WEBARCHIVE_PREFIX_STEPS,
+  ...PIPELINE_STEPS,
+];
+
+export function getStepsForGenerationType(generationType?: string): PipelineStepDefinition[] {
+  if (generationType === "webarchive_single" || generationType === "webarchive_multi" || generationType === "webarchive_eeat") {
+    return WEBARCHIVE_STEPS;
+  }
+  return PIPELINE_STEPS;
+}
+
 export function hasArtifactValue(value: any): boolean {
   if (value == null) return false;
   if (typeof value === "string") return value.trim().length > 0;
@@ -38,12 +55,14 @@ export function isStepComplete(artifacts: Record<string, any> | undefined, keys:
 export function computeDisplayProgress(
   artifacts: Record<string, any> | undefined,
   progress: number | undefined,
-  status?: string
+  status?: string,
+  generationType?: string
 ): number {
   if (status === "success") return 100;
 
-  const totalSteps = PIPELINE_STEPS.length;
-  const completedSteps = PIPELINE_STEPS.filter((step) => isStepComplete(artifacts, step.artifactKeys)).length;
+  const steps = getStepsForGenerationType(generationType);
+  const totalSteps = steps.length;
+  const completedSteps = steps.filter((step) => isStepComplete(artifacts, step.artifactKeys)).length;
   const artifactProgress = Math.round((completedSteps / totalSteps) * 100);
   const backendProgress = clampInt(typeof progress === "number" ? progress : 0, 0, 99);
 

@@ -225,8 +225,9 @@ func (s *SiteFileSQLStore) UpdateHash(ctx context.Context, fileID, hash string) 
 	return err
 }
 
-// ClearHistory удаляет все file_revisions и file_edits для файлов домена и сбрасывает версии.
-// Вызывается при перегенерации сайта, чтобы не оставлять историю от предыдущей генерации.
+// ClearHistory удаляет все file_revisions, file_edits и soft-deleted записи для домена,
+// сбрасывает версии активных файлов. Вызывается при перегенерации сайта — новый сайт
+// означает, что корзина предыдущей версии уже неактуальна.
 func (s *SiteFileSQLStore) ClearHistory(ctx context.Context, domainID string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM file_revisions WHERE file_id IN (SELECT id FROM site_files WHERE domain_id = $1)`, domainID)
 	if err != nil {
@@ -236,11 +237,28 @@ func (s *SiteFileSQLStore) ClearHistory(ctx context.Context, domainID string) er
 	if err != nil {
 		return fmt.Errorf("failed to clear file edits for domain %s: %w", domainID, err)
 	}
+	// Удаляем записи в корзине — перегенерация заменяет весь сайт, старые удалённые файлы неактуальны.
+	_, err = s.db.ExecContext(ctx, `DELETE FROM site_files WHERE domain_id = $1 AND deleted_at IS NOT NULL`, domainID)
+	if err != nil {
+		return fmt.Errorf("failed to clear soft-deleted site files for domain %s: %w", domainID, err)
+	}
 	_, err = s.db.ExecContext(ctx, `UPDATE site_files SET version = 1, updated_at = NOW() WHERE domain_id = $1`, domainID)
 	if err != nil {
 		return fmt.Errorf("failed to reset file versions for domain %s: %w", domainID, err)
 	}
 	return nil
+}
+
+// PurgeDeletedOlderThan жёстко удаляет soft-deleted файлы старше retentionDays дней.
+// Используется периодической очисткой для предотвращения раздувания таблицы.
+func (s *SiteFileSQLStore) PurgeDeletedOlderThan(ctx context.Context, retentionDays int) (int64, error) {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM site_files WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - make_interval(days => $1)`,
+		retentionDays)
+	if err != nil {
+		return 0, fmt.Errorf("purge deleted site files: %w", err)
+	}
+	return res.RowsAffected()
 }
 
 func detectMimeType(path string, content []byte) string {

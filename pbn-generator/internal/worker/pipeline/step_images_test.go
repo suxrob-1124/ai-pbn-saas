@@ -29,6 +29,10 @@ func (f *fakeLLM) GenerateImage(ctx context.Context, prompt, model string) ([]by
 	return raw, nil
 }
 
+func (f *fakeLLM) GenerateMultiTurn(ctx context.Context, stage, systemInstruction string, turns []string, model string) (string, error) {
+	return "", nil
+}
+
 type fakePromptManager struct{}
 
 func (f *fakePromptManager) GetPromptByStage(ctx context.Context, stage string) (string, string, string, error) {

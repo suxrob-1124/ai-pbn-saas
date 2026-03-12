@@ -23,6 +23,8 @@ type CheckHistory struct {
 type CheckHistoryStore interface {
 	Create(ctx context.Context, history CheckHistory) error
 	ListByCheck(ctx context.Context, checkID string, limit int) ([]CheckHistory, error)
+	// PrunePerCheck удаляет старые попытки, оставляя последние keepLast для каждого check_id.
+	PrunePerCheck(ctx context.Context, keepLast int) (int64, error)
 }
 
 // CheckHistorySQLStore реализует CheckHistoryStore поверх SQL БД.
@@ -94,6 +96,25 @@ func scanCheckHistory(rows *sql.Rows) ([]CheckHistory, error) {
 		res = append(res, history)
 	}
 	return res, rows.Err()
+}
+
+// PrunePerCheck удаляет старые попытки, оставляя последние keepLast для каждого check_id.
+func (s *CheckHistorySQLStore) PrunePerCheck(ctx context.Context, keepLast int) (int64, error) {
+	if keepLast <= 0 {
+		keepLast = 5
+	}
+	res, err := s.db.ExecContext(ctx, `
+		DELETE FROM index_check_history
+		WHERE id IN (
+			SELECT id FROM (
+				SELECT id, ROW_NUMBER() OVER (PARTITION BY check_id ORDER BY created_at DESC) AS rn
+				FROM index_check_history
+			) ranked WHERE rn > $1
+		)`, keepLast)
+	if err != nil {
+		return 0, fmt.Errorf("prune index_check_history: %w", err)
+	}
+	return res.RowsAffected()
 }
 
 func nullableInt64(n sql.NullInt64) interface{} {

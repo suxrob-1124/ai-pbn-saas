@@ -3894,6 +3894,14 @@ func (s *stubLinkTaskStore) Update(ctx context.Context, taskID string, updates s
 	return nil
 }
 
+func (s *stubLinkTaskStore) ListStuck(ctx context.Context, olderThan time.Duration, limit int) ([]sqlstore.LinkTask, error) {
+	return nil, nil
+}
+
+func (s *stubLinkTaskStore) PurgeCompleted(ctx context.Context, retentionDays int) (int64, error) {
+	return 0, nil
+}
+
 func (s *stubLinkTaskStore) Delete(ctx context.Context, taskID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

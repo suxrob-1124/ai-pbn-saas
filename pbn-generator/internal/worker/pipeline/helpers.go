@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -33,6 +34,14 @@ func splitExcludeList(raw string) []string {
 // PtrTime возвращает указатель на time.Time
 func PtrTime(t time.Time) *time.Time {
 	return &t
+}
+
+// NullTimePtr converts sql.NullTime to *time.Time, returning nil if not valid.
+func NullTimePtr(t sql.NullTime) *time.Time {
+	if !t.Valid {
+		return nil
+	}
+	return &t.Time
 }
 
 // formatPromptForArtifact форматирует промпт для удобного чтения в artifacts

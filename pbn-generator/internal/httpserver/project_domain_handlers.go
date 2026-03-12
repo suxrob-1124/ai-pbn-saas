@@ -146,6 +146,14 @@ func (s *Server) handleProjectByID(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if len(parts) > 1 && parts[1] == "schedule-runs" {
+		s.handleProjectScheduleRuns(w, r, projectID)
+		return
+	}
+	if len(parts) > 1 && parts[1] == "schedules" && len(parts) > 2 && parts[2] == "preview" {
+		s.handleProjectSchedulesPreview(w, r, projectID)
+		return
+	}
 	if len(parts) > 1 && parts[1] == "schedules" {
 		if len(parts) > 2 {
 			scheduleID, err := url.PathUnescape(parts[2])
@@ -176,6 +184,10 @@ func (s *Server) handleProjectByID(w http.ResponseWriter, r *http.Request) {
 			s.handleProjectLinkScheduleTrigger(w, r, projectID)
 			return
 		}
+		if action == "eligibility" {
+			s.handleLinkScheduleEligibility(w, r, projectID)
+			return
+		}
 		s.handleProjectLinkSchedule(w, r, projectID)
 		return
 	}
@@ -190,6 +202,10 @@ func (s *Server) handleProjectByID(w http.ResponseWriter, r *http.Request) {
 		}
 		if action == "history" {
 			s.handleProjectQueueHistory(w, r, projectID)
+			return
+		}
+		if action == "unified" {
+			s.handleProjectUnifiedQueue(w, r, projectID)
 			return
 		}
 		s.handleProjectQueue(w, r, projectID)
@@ -1449,12 +1465,24 @@ func (s *Server) handleDomainGenerate(w http.ResponseWriter, r *http.Request, do
 	}
 	genID := uuid.NewString()
 
-	// Попытка скопировать артефакты из последней успешной генерации, если делаем force rerun
+	// Копируем артефакты из предыдущей генерации:
+	// - при force_step — из последней (или последней успешной) для перезапуска шага
+	// - при обычном запуске после error/paused — из последней упавшей для продолжения с места остановки
 	var baseArtifacts []byte
 	if forceStep != "" {
 		if last, err := s.generations.GetLastByDomain(r.Context(), domainID); err == nil && len(last.Artifacts) > 0 {
 			baseArtifacts = last.Artifacts
 		} else if last, err := s.generations.GetLastSuccessfulByDomain(r.Context(), domainID); err == nil && len(last.Artifacts) > 0 {
+			baseArtifacts = last.Artifacts
+		}
+	} else {
+		// Если последняя генерация упала или была на паузе — наследуем её артефакты,
+		// чтобы пайплайн мог пропустить уже завершённые шаги.
+		// Наследуем только если тип генерации совпадает — иначе артефакты несовместимы.
+		if last, err := s.generations.GetLastByDomain(r.Context(), domainID); err == nil &&
+			(last.Status == "error" || last.Status == "paused" || last.Status == "cancelled") &&
+			len(last.Artifacts) > 0 &&
+			last.GenerationType == effectiveGenType {
 			baseArtifacts = last.Artifacts
 		}
 	}

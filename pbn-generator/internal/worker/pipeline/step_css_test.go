@@ -19,6 +19,10 @@ func (f *fakeLLMForCSS) GenerateImage(ctx context.Context, prompt, model string)
 	return nil, nil
 }
 
+func (f *fakeLLMForCSS) GenerateMultiTurn(ctx context.Context, stage, systemInstruction string, turns []string, model string) (string, error) {
+	return "", nil
+}
+
 type fakePromptManagerForCSS struct{}
 
 func (f *fakePromptManagerForCSS) GetPromptByStage(ctx context.Context, stage string) (string, string, string, error) {
@@ -171,4 +175,8 @@ func (f *fakeLLMForCSSWithResponse) Generate(ctx context.Context, stage, prompt,
 
 func (f *fakeLLMForCSSWithResponse) GenerateImage(ctx context.Context, prompt, model string) ([]byte, error) {
 	return nil, nil
+}
+
+func (f *fakeLLMForCSSWithResponse) GenerateMultiTurn(ctx context.Context, stage, systemInstruction string, turns []string, model string) (string, error) {
+	return "", nil
 }

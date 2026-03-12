@@ -153,8 +153,10 @@ type LinkTaskStore interface {
 	ListAll(ctx context.Context, filters sqlstore.LinkTaskFilters) ([]sqlstore.LinkTask, error)
 	ListPending(ctx context.Context, limit int) ([]sqlstore.LinkTask, error)
 	ListActiveByDomainIDs(ctx context.Context, domainIDs []string) (map[string]sqlstore.LinkTask, error)
+	ListStuck(ctx context.Context, olderThan time.Duration, limit int) ([]sqlstore.LinkTask, error)
 	Update(ctx context.Context, taskID string, updates sqlstore.LinkTaskUpdates) error
 	Delete(ctx context.Context, taskID string) error
+	PurgeCompleted(ctx context.Context, retentionDays int) (int64, error)
 }
 
 type IndexCheckStore interface {
@@ -202,6 +204,11 @@ type AppSettingsStore interface {
 	SetBool(ctx context.Context, key string, val bool) error
 }
 
+type ScheduleRunLogStore interface {
+	ListByProject(ctx context.Context, projectID string, limit, offset int) ([]sqlstore.ScheduleRunLog, error)
+	ListBySchedule(ctx context.Context, scheduleID string, limit, offset int) ([]sqlstore.ScheduleRunLog, error)
+}
+
 type LegacyImportStore interface {
 	CreateJob(ctx context.Context, job sqlstore.LegacyImportJob) error
 	GetJob(ctx context.Context, id string) (sqlstore.LegacyImportJob, error)
@@ -218,6 +225,7 @@ type AgentSessionStore interface {
 	Finish(ctx context.Context, id, status, summary string, filesChanged []string, messageCount int) error
 	SetSnapshotTag(ctx context.Context, id, tag string) error
 	MarkStaleRunning(ctx context.Context, olderThan time.Duration) (int64, error)
+	SaveMessages(ctx context.Context, id string, messagesJSON, chatLogJSON []byte) error
 }
 
 type FileLockStore interface {
@@ -252,6 +260,7 @@ type Server struct {
 	modelPricing     ModelPricingStore
 	legacyImports    LegacyImportStore
 	appSettings      AppSettingsStore
+	scheduleRunLogs  ScheduleRunLogStore
 	tasks            tasks.Enqueuer
 	reqDuration      *prometheus.HistogramVec
 	reqCounter       *prometheus.CounterVec

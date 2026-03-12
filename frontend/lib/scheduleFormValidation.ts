@@ -13,6 +13,7 @@ export type ScheduleFormValue = {
   weeklyDay: string;
   weeklyTime: string;
   customCron: string;
+  delayMinutes: string;
 };
 
 export type ScheduleValidationResult =
@@ -43,7 +44,8 @@ export const buildScheduleConfig = (value: ScheduleFormValue): ScheduleValidatio
       if (!validateTime(value.dailyTime)) {
         return { ok: false, error: "Некорректное время для ежедневного расписания" };
       }
-      return { ok: true, config: { limit, time: value.dailyTime } };
+      const delayMinutes = parseLimit(value.delayMinutes) ?? 5;
+      return { ok: true, config: { limit, time: value.dailyTime, delay_minutes: delayMinutes } };
     }
     case "weekly": {
       const limit = parseLimit(value.weeklyLimit);
@@ -57,7 +59,8 @@ export const buildScheduleConfig = (value: ScheduleFormValue): ScheduleValidatio
       if (!validateTime(value.weeklyTime)) {
         return { ok: false, error: "Некорректное время для еженедельного расписания" };
       }
-      return { ok: true, config: { limit, weekday: day, time: value.weeklyTime } };
+      const delayMinutes = parseLimit(value.delayMinutes) ?? 5;
+      return { ok: true, config: { limit, weekday: day, time: value.weeklyTime, delay_minutes: delayMinutes } };
     }
     case "custom": {
       const cron = value.customCron.trim();
@@ -69,7 +72,8 @@ export const buildScheduleConfig = (value: ScheduleFormValue): ScheduleValidatio
       } catch {
         return { ok: false, error: "Некорректное CRON выражение" };
       }
-      return { ok: true, config: { cron } };
+      const delayMinutes = parseLimit(value.delayMinutes) ?? 5;
+      return { ok: true, config: { cron, delay_minutes: delayMinutes } };
     }
     case "immediate":
     default:

@@ -13,11 +13,12 @@ import {
 import {
   deleteLinkSchedule,
   getLinkSchedule,
+  getLinkScheduleEligibility,
   triggerLinkSchedule,
   upsertLinkSchedule,
 } from "../../../lib/linkSchedulesApi";
 import type { ScheduleFormValue } from "../../../lib/scheduleFormValidation";
-import type { ScheduleDTO } from "../../../types/schedules";
+import type { LinkEligibilityDTO, ScheduleDTO } from "../../../types/schedules";
 import {
   createDefaultScheduleForm,
   deriveScheduleStrategy,
@@ -56,6 +57,8 @@ export function useProjectSchedules({
   const [linkScheduleLoading, setLinkScheduleLoading] = useState(false);
   const [linkScheduleError, setLinkScheduleError] = useState<string | null>(null);
   const [linkSchedulePermission, setLinkSchedulePermission] = useState(false);
+  const [linkEligibility, setLinkEligibility] = useState<LinkEligibilityDTO | null>(null);
+  const [linkEligibilityLoading, setLinkEligibilityLoading] = useState(false);
 
   const resetScheduleForm = () => {
     setScheduleForm(createDefaultScheduleForm());
@@ -87,6 +90,7 @@ export function useProjectSchedules({
       weeklyDay,
       weeklyTime: typeof config.time === "string" ? config.time : "09:00",
       customCron: typeof config.cron === "string" ? config.cron : "0 9 * * *",
+      delayMinutes: typeof (config as any).delay_minutes === "number" ? String((config as any).delay_minutes) : "5",
     });
     setEditingSchedule(schedule);
   };
@@ -111,6 +115,7 @@ export function useProjectSchedules({
       weeklyDay,
       weeklyTime: typeof config.time === "string" ? config.time : "09:00",
       customCron: typeof config.cron === "string" ? config.cron : "0 9 * * *",
+      delayMinutes: typeof (config as any).delay_minutes === "number" ? String((config as any).delay_minutes) : "5",
     });
     setEditingLinkSchedule(schedule);
   };
@@ -405,10 +410,24 @@ export function useProjectSchedules({
     }
   };
 
+  const loadLinkEligibility = async () => {
+    if (!projectId) return;
+    setLinkEligibilityLoading(true);
+    try {
+      const data = await getLinkScheduleEligibility(projectId);
+      setLinkEligibility(data);
+    } catch {
+      setLinkEligibility(null);
+    } finally {
+      setLinkEligibilityLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (activeTab === "schedules") {
       void loadSchedules();
       void loadLinkSchedule();
+      void loadLinkEligibility();
     }
   }, [activeTab, projectId]);
 
@@ -440,6 +459,9 @@ export function useProjectSchedules({
     handleToggleLinkSchedule,
     handleEditLinkSchedule,
     handleDeleteLinkSchedule,
+    linkEligibility,
+    linkEligibilityLoading,
+    loadLinkEligibility,
   };
 }
 

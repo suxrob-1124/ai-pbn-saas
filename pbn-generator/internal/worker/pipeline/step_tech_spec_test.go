@@ -37,6 +37,10 @@ func (f *fakeLLMForTechSpec) GenerateImage(ctx context.Context, prompt, model st
 	return nil, nil
 }
 
+func (f *fakeLLMForTechSpec) GenerateMultiTurn(ctx context.Context, stage, systemInstruction string, turns []string, model string) (string, error) {
+	return "", nil
+}
+
 type fakePromptManagerForTechSpec struct{}
 
 func (f *fakePromptManagerForTechSpec) GetPromptByStage(ctx context.Context, stage string) (string, string, string, error) {
@@ -97,12 +101,14 @@ func TestTechnicalSpecStep_MissingLLMAnalysis(t *testing.T) {
 		AppendLog:     func(s string) {},
 	}
 
-	_, err := step.Execute(context.Background(), state)
-	if err == nil {
-		t.Fatalf("expected error for missing llm_analysis, got nil")
+	artifacts, err := step.Execute(context.Background(), state)
+	// При отсутствии llm_analysis шаг продолжает работу с пустым анализом
+	if err != nil {
+		t.Fatalf("expected no error for missing llm_analysis (graceful degradation), got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "llm_analysis not found") {
-		t.Errorf("expected error about llm_analysis, got: %v", err)
+	// technical_spec должен быть сгенерирован (LLM вернёт непустой ответ)
+	if artifacts["technical_spec"] == "" {
+		t.Errorf("expected technical_spec to be generated even without llm_analysis")
 	}
 }
 

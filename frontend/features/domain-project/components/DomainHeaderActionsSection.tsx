@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Play, Pause, X, RefreshCw, Loader2 } from 'lucide-react';
+import { Play, Pause, X, RefreshCw, Loader2, RotateCcw } from 'lucide-react';
 import { DOMAIN_PROJECT_CTA } from '../services/statusCta';
 import { ActionFlowBanner } from './ActionFlowBanner';
 import type { FlowState } from '../hooks/useFlowState';
@@ -36,6 +36,8 @@ type DomainHeaderActionsSectionProps = {
   linkFlow: FlowState;
   renderStatusBadge: (status: string) => ReactNode;
   onMainAction: () => void;
+  onRestartFromScratch: () => void;
+  showRestartButton: boolean;
   onResumeGeneration: (generationId: string) => void;
   onPauseGeneration: (generationId: string) => void;
   onCancelGeneration: (generationId: string) => void;
@@ -50,6 +52,8 @@ export function DomainHeaderActionsSection({
   generationFlow,
   linkFlow,
   onMainAction,
+  onRestartFromScratch,
+  showRestartButton,
   onResumeGeneration,
   onPauseGeneration,
   onCancelGeneration,
@@ -68,6 +72,17 @@ export function DomainHeaderActionsSection({
         className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50 transition-all shadow-sm active:scale-95">
         <Play className="w-4 h-4 fill-current" /> {mainButtonText}
       </button>
+
+      {/* КНОПКА НАЧАТЬ ЗАНОВО */}
+      {showRestartButton && (
+        <button
+          onClick={onRestartFromScratch}
+          disabled={loading}
+          title="Начать генерацию заново с первого шага"
+          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-[#060d18] dark:text-slate-300 dark:hover:bg-slate-800 disabled:opacity-50 transition-all shadow-sm active:scale-95">
+          <RotateCcw className="w-4 h-4" /> Заново
+        </button>
+      )}
 
       {/* КНОПКИ УПРАВЛЕНИЯ ПАЙПЛАЙНОМ */}
       {currentAttempt && (

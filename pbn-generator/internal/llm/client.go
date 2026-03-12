@@ -45,10 +45,19 @@ func (c *Client) Generate(ctx context.Context, stage, prompt, model string) (str
 
 	for attempt := 0; attempt <= c.config.MaxRetries; attempt++ {
 		if attempt > 0 {
+			delay := c.config.RetryDelay * time.Duration(attempt)
+			// 429 rate-limit: wait much longer (Gemini free tier resets in ~60s)
+			if err != nil && (strings.Contains(err.Error(), "status 429") || strings.Contains(err.Error(), "RESOURCE_EXHAUSTED")) {
+				delay = 65 * time.Second
+			}
+			// unexpected EOF / connection reset: Gemini dropped connection under load, wait before retry
+			if err != nil && (strings.Contains(err.Error(), "unexpected EOF") || strings.Contains(err.Error(), "connection reset")) {
+				delay = 30 * time.Second
+			}
 			select {
 			case <-ctx.Done():
 				return "", ctx.Err()
-			case <-time.After(c.config.RetryDelay * time.Duration(attempt)):
+			case <-time.After(delay):
 			}
 		}
 
@@ -95,10 +104,19 @@ func (c *Client) GenerateImage(ctx context.Context, prompt, model string) ([]byt
 
 	for attempt := 0; attempt <= c.config.MaxRetries; attempt++ {
 		if attempt > 0 {
+			delay := c.config.RetryDelay * time.Duration(attempt)
+			// 429 rate-limit: wait much longer (Gemini free tier resets in ~60s)
+			if err != nil && (strings.Contains(err.Error(), "status 429") || strings.Contains(err.Error(), "RESOURCE_EXHAUSTED")) {
+				delay = 65 * time.Second
+			}
+			// unexpected EOF / connection reset: Gemini dropped connection under load, wait before retry
+			if err != nil && (strings.Contains(err.Error(), "unexpected EOF") || strings.Contains(err.Error(), "connection reset")) {
+				delay = 30 * time.Second
+			}
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
-			case <-time.After(c.config.RetryDelay * time.Duration(attempt)):
+			case <-time.After(delay):
 			}
 		}
 
@@ -301,6 +319,169 @@ func (c *Client) callGeminiImage(ctx context.Context, prompt, model string) ([]b
 	}
 
 	return nil, usage, fmt.Errorf("no inlineData in image response")
+}
+
+// chatMessage представляет одно сообщение в multi-turn разговоре.
+type chatMessage struct {
+	Role  string                   `json:"role"`
+	Parts []map[string]interface{} `json:"parts"`
+}
+
+// GenerateMultiTurn отправляет данные в несколько turns в рамках одной chat-сессии Gemini.
+// systemInstruction задаётся как Gemini system_instruction (инструкции без данных).
+// turns — последовательные пользовательские сообщения (данные по частям + финальный запрос).
+// Возвращает ответ модели на последний turn.
+func (c *Client) GenerateMultiTurn(ctx context.Context, stage, systemInstruction string, turns []string, model string) (string, error) {
+	if model == "" {
+		model = c.config.DefaultModel
+	}
+	if len(turns) == 0 {
+		return "", fmt.Errorf("no turns provided")
+	}
+	// Один turn без system instruction — обычный Generate
+	if len(turns) == 1 && systemInstruction == "" {
+		return c.Generate(ctx, stage, turns[0], model)
+	}
+
+	start := time.Now()
+
+	var history []chatMessage
+	var finalResponse string
+	var totalUsage usageTotals
+
+	for i, userMsg := range turns {
+		history = append(history, chatMessage{
+			Role:  "user",
+			Parts: []map[string]interface{}{{"text": userMsg}},
+		})
+
+		var resp string
+		var usage usageTotals
+		var err error
+
+		for attempt := 0; attempt <= c.config.MaxRetries; attempt++ {
+			if attempt > 0 {
+				delay := c.config.RetryDelay * time.Duration(attempt)
+				if err != nil && (strings.Contains(err.Error(), "status 429") || strings.Contains(err.Error(), "RESOURCE_EXHAUSTED")) {
+					delay = 65 * time.Second
+				}
+				if err != nil && (strings.Contains(err.Error(), "unexpected EOF") || strings.Contains(err.Error(), "connection reset")) {
+					delay = 30 * time.Second
+				}
+				select {
+				case <-ctx.Done():
+					return "", ctx.Err()
+				case <-time.After(delay):
+				}
+			}
+			resp, usage, err = c.callGeminiChat(ctx, systemInstruction, history, model)
+			if err == nil {
+				break
+			}
+		}
+		if err != nil {
+			return "", fmt.Errorf("multi-turn turn %d/%d failed after %d attempts: %w", i+1, len(turns), c.config.MaxRetries+1, err)
+		}
+
+		history = append(history, chatMessage{
+			Role:  "model",
+			Parts: []map[string]interface{}{{"text": resp}},
+		})
+		totalUsage.PromptTokens += usage.PromptTokens
+		totalUsage.CompletionTokens += usage.CompletionTokens
+		totalUsage.TotalTokens += usage.TotalTokens
+		finalResponse = resp
+	}
+
+	c.mu.Lock()
+	c.requests = append(c.requests, LLMRequest{
+		Stage:            stage,
+		Prompt:           fmt.Sprintf("Режим multi-turn (%d запросов к модели). Системный промпт: %d символов.", len(turns), len(systemInstruction)),
+		Response:         finalResponse,
+		Model:            model,
+		PromptTokens:     totalUsage.PromptTokens,
+		CompletionTokens: totalUsage.CompletionTokens,
+		TotalTokens:      totalUsage.TotalTokens,
+		TokensUsed:       totalUsage.TotalTokens,
+		TokenSource:      "provider",
+		Timestamp:        start,
+	})
+	c.mu.Unlock()
+
+	return finalResponse, nil
+}
+
+// callGeminiChat выполняет один запрос в рамках multi-turn сессии с переданной историей.
+func (c *Client) callGeminiChat(ctx context.Context, systemInstruction string, history []chatMessage, model string) (string, usageTotals, error) {
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", model, c.config.APIKey)
+
+	reqBody := map[string]interface{}{
+		"contents": history,
+	}
+	if systemInstruction != "" {
+		reqBody["system_instruction"] = map[string]interface{}{
+			"parts": []map[string]interface{}{{"text": systemInstruction}},
+		}
+	}
+
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", usageTotals{}, fmt.Errorf("failed to marshal chat request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(string(bodyBytes)))
+	if err != nil {
+		return "", usageTotals{}, fmt.Errorf("failed to create chat request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return "", usageTotals{}, fmt.Errorf("failed to execute chat request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", usageTotals{}, SanitizeError(fmt.Errorf("gemini API returned status %d: %s", resp.StatusCode, string(body)))
+	}
+
+	var geminiResp struct {
+		Candidates []struct {
+			Content struct {
+				Parts []struct {
+					Text string `json:"text"`
+				} `json:"parts"`
+			} `json:"content"`
+		} `json:"candidates"`
+		UsageMetadata struct {
+			PromptTokenCount     int64 `json:"promptTokenCount"`
+			CandidatesTokenCount int64 `json:"candidatesTokenCount"`
+			TotalTokenCount      int64 `json:"totalTokenCount"`
+		} `json:"usageMetadata"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&geminiResp); err != nil {
+		return "", usageTotals{}, fmt.Errorf("failed to decode chat response: %w", err)
+	}
+	if len(geminiResp.Candidates) == 0 {
+		return "", usageTotals{}, fmt.Errorf("no candidates in chat response")
+	}
+
+	var textParts []string
+	for _, part := range geminiResp.Candidates[0].Content.Parts {
+		textParts = append(textParts, part.Text)
+	}
+	response := strings.Join(textParts, "\n")
+
+	usage := normalizeUsage(
+		"",
+		response,
+		geminiResp.UsageMetadata.PromptTokenCount,
+		geminiResp.UsageMetadata.CandidatesTokenCount,
+		geminiResp.UsageMetadata.TotalTokenCount,
+	)
+	return response, usage, nil
 }
 
 // GetRequests возвращает все накопленные запросы

@@ -27,10 +27,10 @@ func (s *TechnicalSpecStep) Progress() int {
 func (s *TechnicalSpecStep) Execute(ctx context.Context, state *PipelineState) (map[string]any, error) {
 	state.AppendLog("Начало разработки технического задания")
 
-	// Проверяем, что есть LLM анализ
-	llmAnalysis, ok := state.Context["llm_analysis"].(string)
-	if !ok || llmAnalysis == "" {
-		return nil, fmt.Errorf("llm_analysis not found in context, cannot generate technical spec")
+	// Берём LLM анализ конкурентов; если отсутствует — продолжаем без него (используем пустую строку)
+	llmAnalysis, _ := state.Context["llm_analysis"].(string)
+	if llmAnalysis == "" {
+		state.AppendLog("Предупреждение: llm_analysis отсутствует, техническое задание будет сгенерировано без анализа конкурентов")
 	}
 
 	keyword := state.Domain.MainKeyword

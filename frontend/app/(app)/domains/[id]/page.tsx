@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { authFetch, authFetchCached, patch } from '@/lib/http';
+import { retryLinkTask } from '@/lib/linkTasksApi';
 import { useAuthGuard } from '@/lib/useAuth';
 import { showToast } from '@/lib/toastStore';
 import { FiPlay, FiRefreshCw } from 'react-icons/fi';
@@ -21,7 +22,7 @@ import Link from 'next/link';
 
 import PipelineSteps from '@/components/PipelineSteps';
 import { computeDisplayProgress } from '@/lib/pipelineProgress';
-import { getLinkActionLabel } from '@/features/domain-project/services/statusCta';
+import { getLinkActionLabel, DOMAIN_PROJECT_CTA } from '@/features/domain-project/services/statusCta';
 import {
   canEditPromptOverrides,
   canOpenDomainEditor,
@@ -262,10 +263,18 @@ export default function DomainPage() {
     }
   };
 
-  const { currentAttempt, isRegenerate, mainButtonText } = deriveMainGenerationMeta(
+  const { currentAttempt, isRegenerate: isRegenerateBase, mainButtonText: mainButtonTextBase } = deriveMainGenerationMeta(
     latestAttempt,
     gens,
   );
+  // Если тип домена изменился по сравнению с последней генерацией — предлагаем перегенерировать с нуля
+  const typeMismatch = Boolean(
+    currentAttempt?.generation_type &&
+    currentAttempt.generation_type !== generationType &&
+    currentAttempt.status !== 'success',
+  );
+  const isRegenerate = isRegenerateBase || typeMismatch;
+  const mainButtonText = typeMismatch ? DOMAIN_PROJECT_CTA.generationRerunAll : mainButtonTextBase;
   const latestAttemptDetail = currentAttempt?.id ? generationDetails[currentAttempt.id] : undefined;
   const latestSuccessDetail = latestSuccess?.id ? generationDetails[latestSuccess.id] : undefined;
   const latestDisplayProgress = currentAttempt
@@ -273,6 +282,7 @@ export default function DomainPage() {
         latestAttemptDetail?.artifacts,
         currentAttempt.progress,
         currentAttempt.status,
+        currentAttempt.generation_type,
       )
     : 0;
   const mainButtonIcon = isRegenerate ? <FiRefreshCw /> : <FiPlay />;
@@ -288,6 +298,7 @@ export default function DomainPage() {
     removeLinkTask,
     refreshLinkTasks,
     handleMainAction,
+    handleRestartFromScratch,
     handleForceStep,
     deleteGeneration,
     pauseGeneration,
@@ -394,6 +405,16 @@ export default function DomainPage() {
     setVisibleGens(2);
   }, [gens.length]);
 
+  const activeGenerationStatuses = ['pending', 'processing', 'cancelling', 'pause_requested'];
+  const isGenerationActive = activeGenerationStatuses.includes(latestAttempt?.status ?? '');
+  useEffect(() => {
+    if (!isGenerationActive) return;
+    const timer = setInterval(() => {
+      load(true);
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [isGenerationActive, id]);
+
   const editorHref = { pathname: `/domains/${id}/editor` } as any;
 
   if (!domain && loading) {
@@ -492,6 +513,8 @@ export default function DomainPage() {
               linkFlow={linkFlow}
               renderStatusBadge={(status) => <DomainStatusBadge status={status} />}
               onMainAction={handleMainAction}
+              onRestartFromScratch={handleRestartFromScratch}
+              showRestartButton={Boolean(currentAttempt) && !isRegenerate && !isGenerationActive}
               onResumeGeneration={resumeGeneration}
               onPauseGeneration={pauseGeneration}
               onCancelGeneration={cancelGeneration}
@@ -537,6 +560,7 @@ export default function DomainPage() {
                         ? ({ ...currentAttempt, artifacts: latestAttemptDetail.artifacts } as any)
                         : (currentAttempt as any) || undefined
                     }
+                    generationType={currentAttempt?.generation_type || domain?.generation_type}
                     disabled={loading}
                     activeStep={pipelineStepInFlight}
                     onForceStep={handleForceStep}
@@ -587,7 +611,7 @@ export default function DomainPage() {
                       loading={loading}
                       renderStatusBadge={(status) => <DomainStatusBadge status={status} />}
                       computeProgress={(g) =>
-                        computeDisplayProgress(g.artifacts, g.progress, g.status)
+                        computeDisplayProgress(g.artifacts, g.progress, g.status, g.generation_type)
                       }
                       onResumeGeneration={resumeGeneration}
                       onPauseGeneration={pauseGeneration}
@@ -671,6 +695,24 @@ export default function DomainPage() {
                     onRefreshLinkTasks={refreshLinkTasks}
                     onRunLinkTask={runLinkTask}
                     onRemoveLinkTask={removeLinkTask}
+                    onRetryLinkTask={async (taskId) => {
+                      try {
+                        await retryLinkTask(taskId);
+                        showToast({ type: 'success', title: 'Повтор поставлен в очередь' });
+                        await refreshLinkTasks();
+                      } catch (err: any) {
+                        showToast({ type: 'error', title: 'Ошибка повтора', message: err?.message });
+                      }
+                    }}
+                    onResetLinkStatus={async () => {
+                      try {
+                        await patch(`/api/domains/${id}`, { link_status: 'ready' });
+                        showToast({ type: 'success', title: 'Статус ссылки сброшен' });
+                        await refreshLinkTasks();
+                      } catch (err: any) {
+                        showToast({ type: 'error', title: 'Ошибка сброса', message: err?.message });
+                      }
+                    }}
                   />
                 </div>
               </div>

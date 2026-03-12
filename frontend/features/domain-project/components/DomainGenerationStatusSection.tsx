@@ -8,6 +8,7 @@ type GenerationRow = {
   progress: number;
   updated_at?: string;
   artifacts?: Record<string, unknown>;
+  generation_type?: string;
 };
 
 type DomainGenerationStatusSectionProps = {

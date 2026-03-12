@@ -2,12 +2,17 @@ package httpserver
 
 import (
 	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"path"
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/google/uuid"
 	"obzornik-pbn-generator/internal/store/sqlstore"
 )
 
@@ -276,13 +281,13 @@ func (s *Server) executeAgentTool(
 	case "read_file":
 		return s.agentToolReadFile(ctx, domain, toolUseID, inputRaw)
 	case "write_file":
-		return s.agentToolWriteFile(ctx, domain, toolUseID, inputRaw)
+		return s.agentToolWriteFile(ctx, domain, requesterEmail, toolUseID, inputRaw)
 	case "delete_file":
 		return s.agentToolDeleteFile(ctx, domain, toolUseID, inputRaw)
 	case "generate_image":
 		return s.agentToolGenerateImage(ctx, domain, requesterEmail, toolUseID, inputRaw)
 	case "patch_file":
-		return s.agentToolPatchFile(ctx, domain, toolUseID, inputRaw)
+		return s.agentToolPatchFile(ctx, domain, requesterEmail, toolUseID, inputRaw)
 	case "search_in_files":
 		return s.agentToolSearchInFiles(ctx, domain, toolUseID, inputRaw)
 	default:
@@ -292,6 +297,51 @@ func (s *Server) executeAgentTool(
 			IsError:   true,
 		}
 	}
+}
+
+// agentUpsertSiteFile writes content to the backend AND creates/updates the
+// siteFiles DB record so the file is accessible via the API.
+func (s *Server) agentUpsertSiteFile(ctx context.Context, domain sqlstore.Domain, relPath string, content []byte, editedBy string) error {
+	mimeType := http.DetectContentType(content)
+	if mimeType == "application/octet-stream" || mimeType == "" {
+		mimeType = detectMimeType(relPath, content)
+	}
+
+	existing, _ := s.siteFiles.GetByPath(ctx, domain.ID, relPath)
+	if err := s.writeDomainFileBytesToBackend(ctx, domain, relPath, content); err != nil {
+		return err
+	}
+
+	hash := sha256.Sum256(content)
+	hashStr := hex.EncodeToString(hash[:])
+
+	if existing == nil {
+		file := sqlstore.SiteFile{
+			ID:           uuid.NewString(),
+			DomainID:     domain.ID,
+			Path:         relPath,
+			ContentHash:  sql.NullString{String: hashStr, Valid: true},
+			SizeBytes:    int64(len(content)),
+			MimeType:     mimeType,
+			Version:      1,
+			LastEditedBy: sqlstore.NullableString(editedBy),
+		}
+		if err := s.siteFiles.Create(ctx, file); err != nil {
+			return err
+		}
+		_ = s.fileEdits.CreateRevision(ctx, buildRevision(&file, content, "agent", editedBy, "created by agent"))
+	} else {
+		if err := s.siteFiles.Update(ctx, existing.ID, content); err != nil {
+			return err
+		}
+		_ = s.siteFiles.SetLastEditedBy(ctx, existing.ID, sqlstore.NullableString(editedBy))
+		updated, _ := s.siteFiles.Get(ctx, existing.ID)
+		if updated != nil {
+			_ = s.fileEdits.CreateRevision(ctx, buildRevision(updated, content, "agent", editedBy, "updated by agent"))
+		}
+	}
+	s.invalidateDomainFilesCache(ctx, domain.ID)
+	return nil
 }
 
 func (s *Server) agentToolListFiles(ctx context.Context, domain sqlstore.Domain, toolUseID string, inputRaw json.RawMessage) agentToolResult {
@@ -362,7 +412,7 @@ func (s *Server) agentToolReadFile(ctx context.Context, domain sqlstore.Domain, 
 	return agentToolResult{ToolUseID: toolUseID, Content: result}
 }
 
-func (s *Server) agentToolWriteFile(ctx context.Context, domain sqlstore.Domain, toolUseID string, inputRaw json.RawMessage) agentToolResult {
+func (s *Server) agentToolWriteFile(ctx context.Context, domain sqlstore.Domain, requesterEmail, toolUseID string, inputRaw json.RawMessage) agentToolResult {
 	var input struct {
 		Path    string `json:"path"`
 		Content string `json:"content"`
@@ -382,14 +432,14 @@ func (s *Server) agentToolWriteFile(ctx context.Context, domain sqlstore.Domain,
 		return agentToolResult{ToolUseID: toolUseID, Content: fmt.Sprintf("file too large: %d bytes (max 2MB)", len(contentBytes)), IsError: true}
 	}
 
-	// Determine if file exists (for action type)
+	// Determine action type before upsert
 	existing, _ := s.siteFiles.GetByPath(ctx, domain.ID, cleaned)
 	action := "created"
 	if existing != nil {
 		action = "updated"
 	}
 
-	if err := s.writeDomainFileBytesToBackend(ctx, domain, cleaned, contentBytes); err != nil {
+	if err := s.agentUpsertSiteFile(ctx, domain, cleaned, contentBytes, requesterEmail); err != nil {
 		return agentToolResult{ToolUseID: toolUseID, Content: fmt.Sprintf("error writing file: %v", err), IsError: true}
 	}
 
@@ -403,7 +453,7 @@ func (s *Server) agentToolWriteFile(ctx context.Context, domain sqlstore.Domain,
 	}
 }
 
-func (s *Server) agentToolPatchFile(ctx context.Context, domain sqlstore.Domain, toolUseID string, inputRaw json.RawMessage) agentToolResult {
+func (s *Server) agentToolPatchFile(ctx context.Context, domain sqlstore.Domain, requesterEmail, toolUseID string, inputRaw json.RawMessage) agentToolResult {
 	var input struct {
 		Path    string `json:"path"`
 		OldText string `json:"old_text"`
@@ -431,7 +481,7 @@ func (s *Server) agentToolPatchFile(ctx context.Context, domain sqlstore.Domain,
 	}
 
 	patched := strings.Replace(original, input.OldText, input.NewText, 1)
-	if err := s.writeDomainFileBytesToBackend(ctx, domain, cleaned, []byte(patched)); err != nil {
+	if err := s.agentUpsertSiteFile(ctx, domain, cleaned, []byte(patched), requesterEmail); err != nil {
 		return agentToolResult{ToolUseID: toolUseID, Content: fmt.Sprintf("error writing patched file: %v", err), IsError: true}
 	}
 
@@ -511,11 +561,24 @@ func (s *Server) agentToolGenerateImage(ctx context.Context, domain sqlstore.Dom
 	if err != nil {
 		return agentToolResult{ToolUseID: toolUseID, Content: fmt.Sprintf("image generation failed: %v", err), IsError: true}
 	}
+	if len(imageBytes) == 0 {
+		return agentToolResult{ToolUseID: toolUseID, Content: "image generation returned empty result (Gemini may have blocked this prompt due to safety filters — try rephrasing)", IsError: true}
+	}
+
+	// Convert to WebP if path ends with .webp and Gemini returned a different format
+	if strings.EqualFold(path.Ext(cleaned), ".webp") {
+		detectedMime := http.DetectContentType(imageBytes)
+		if !strings.Contains(strings.ToLower(detectedMime), "webp") {
+			if converted, err := convertToWebP(imageBytes); err == nil && len(converted) > 0 {
+				imageBytes = converted
+			}
+		}
+	}
 
 	// Ensure assets/ directory exists
 	_ = s.ensureDomainDirInBackend(ctx, domain, "assets")
 
-	if err := s.writeDomainFileBytesToBackend(ctx, domain, cleaned, imageBytes); err != nil {
+	if err := s.agentUpsertSiteFile(ctx, domain, cleaned, imageBytes, requesterEmail); err != nil {
 		return agentToolResult{ToolUseID: toolUseID, Content: fmt.Sprintf("error saving image: %v", err), IsError: true}
 	}
 

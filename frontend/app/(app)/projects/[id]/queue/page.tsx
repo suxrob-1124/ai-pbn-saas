@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, type ReactNode } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -15,9 +15,13 @@ import {
   Activity,
   Archive,
   Check,
+  Layers,
+  Link2,
+  Zap,
 } from 'lucide-react';
 import { useAuthGuard } from '@/lib/useAuth';
 import type { QueueItemDTO } from '@/types/queue';
+import { getProjectUnifiedQueue, type UnifiedQueueItem } from '@/lib/unifiedQueueApi';
 import { Badge } from '@/components/Badge';
 import {
   canRetryLinkTask,
@@ -151,6 +155,61 @@ function ProjectQueuePageContent() {
     lockReason,
   } = useProjectQueueData(projectId);
 
+  // Unified queue state
+  const [unifiedItems, setUnifiedItems] = useState<UnifiedQueueItem[]>([]);
+  const [unifiedLoading, setUnifiedLoading] = useState(false);
+  const [unifiedError, setUnifiedError] = useState<string | null>(null);
+  const [unifiedTypeFilter, setUnifiedTypeFilter] = useState<'all' | 'generation' | 'link'>('all');
+  const [unifiedStatusFilter, setUnifiedStatusFilter] = useState<'all' | 'pending' | 'processing' | 'completed' | 'failed'>('all');
+  const [unifiedSearch, setUnifiedSearch] = useState('');
+  const [unifiedPage, setUnifiedPage] = useState(1);
+  const unifiedPageSize = 50;
+
+  const loadUnified = useCallback(async () => {
+    if (!projectId) return;
+    setUnifiedLoading(true);
+    setUnifiedError(null);
+    try {
+      const data = await getProjectUnifiedQueue(projectId, {
+        type: unifiedTypeFilter,
+        status: unifiedStatusFilter,
+        limit: unifiedPageSize + 1,
+        page: unifiedPage,
+      });
+      setUnifiedItems(Array.isArray(data) ? data : []);
+    } catch (e: any) {
+      setUnifiedError(e?.message || 'Не удалось загрузить очередь');
+    } finally {
+      setUnifiedLoading(false);
+    }
+  }, [projectId, unifiedTypeFilter, unifiedStatusFilter, unifiedPage]);
+
+  useEffect(() => {
+    if (activeTab === 'unified') void loadUnified();
+  }, [activeTab, loadUnified]);
+
+  useEffect(() => {
+    setUnifiedPage(1);
+  }, [unifiedTypeFilter, unifiedStatusFilter, unifiedSearch]);
+
+  const visibleUnifiedItems = useMemo(() => {
+    const s = unifiedSearch.trim().toLowerCase();
+    let list = unifiedItems.slice(0, unifiedPageSize);
+    if (s) list = list.filter((i) => (i.domain_url || '').toLowerCase().includes(s));
+    return list;
+  }, [unifiedItems, unifiedSearch]);
+
+  const unifiedHasNext = unifiedItems.length > unifiedPageSize;
+
+  // Auto-refresh unified when there are active items
+  useEffect(() => {
+    if (activeTab !== 'unified') return;
+    const hasActive = unifiedItems.some((i) => i.status === 'pending' || i.status === 'processing');
+    if (!hasActive) return;
+    const id = window.setInterval(() => void loadUnified(), 5000);
+    return () => window.clearInterval(id);
+  }, [activeTab, unifiedItems, loadUnified]);
+
   // Стили для таблиц в едином дизайне проекта
   const tableWrapperClass =
     'bg-white dark:bg-[#0f1117] border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden animate-in fade-in';
@@ -223,6 +282,12 @@ function ProjectQueuePageContent() {
             label="Очередь ссылок"
             icon={<Database />}
             active={activeTab === 'links'}
+          />
+          <TabLink
+            href={projectId ? `/projects/${projectId}/queue?tab=unified` : '/projects'}
+            label="Единая очередь"
+            icon={<Layers />}
+            active={activeTab === 'unified'}
           />
         </div>
       </header>
@@ -318,24 +383,42 @@ function ProjectQueuePageContent() {
                         </tr>
                       </thead>
                       <tbody>
-                        {visibleItems.map((item) => {
+                        {visibleItems.map((item, idx) => {
                           const domain = domains[item.domain_id];
                           const domainLabel = item.domain_url || domain?.url || 'Домен';
                           const removeGuard = canDelete({
                             busy: loading || isLocked(removeQueueItemLockKey(item.id)),
                             allowed: true,
                           });
+                          const scheduledAt = new Date(item.scheduled_for);
+                          const isUpcoming = scheduledAt > new Date();
+                          const isNext = idx === 0 && isUpcoming;
+                          const minutesUntil = isUpcoming
+                            ? Math.ceil((scheduledAt.getTime() - Date.now()) / 60000)
+                            : null;
                           return (
-                            <tr key={item.id} className={tableRowClass}>
+                            <tr key={item.id} className={`${tableRowClass} ${isNext ? 'bg-indigo-50/40 dark:bg-indigo-900/10' : ''}`}>
                               <td className="py-3 px-5 font-semibold">
-                                <Link
-                                  href={`/domains/${domain?.id || item.domain_id}`}
-                                  className="text-indigo-600 dark:text-indigo-400 hover:underline">
-                                  {domainLabel}
-                                </Link>
+                                <div className="flex items-center gap-2">
+                                  {isNext && (
+                                    <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 bg-indigo-100 dark:bg-indigo-900/40 px-1.5 py-0.5 rounded">
+                                      Следующий
+                                    </span>
+                                  )}
+                                  <Link
+                                    href={`/domains/${domain?.id || item.domain_id}`}
+                                    className="text-indigo-600 dark:text-indigo-400 hover:underline">
+                                    {domainLabel}
+                                  </Link>
+                                </div>
                               </td>
                               <td className="py-3 px-5 text-slate-500 text-xs">
-                                <div>{new Date(item.scheduled_for).toLocaleString()}</div>
+                                <div>{scheduledAt.toLocaleString()}</div>
+                                {minutesUntil !== null && (
+                                  <div className="mt-0.5 text-indigo-500 font-medium">
+                                    через {minutesUntil} мин
+                                  </div>
+                                )}
                                 {item.processed_at && (
                                   <div className="mt-1 text-indigo-500">
                                     Запуск: {new Date(item.processed_at).toLocaleString()}
@@ -650,6 +733,101 @@ function ProjectQueuePageContent() {
               )}
             </div>
           )}
+
+          {/* ========================================= */}
+          {/* ВКЛАДКА: ЕДИНАЯ ОЧЕРЕДЬ                  */}
+          {/* ========================================= */}
+          {activeTab === 'unified' && (
+            <div className={`${tableWrapperClass} animate-in fade-in duration-300`}>
+              <div className="p-5 border-b border-slate-100 dark:border-slate-800/60 bg-slate-50/50 dark:bg-slate-800/20 flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-indigo-50 dark:bg-indigo-900/30 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
+                    <Layers className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                      Единая очередь <Badge label={visibleUnifiedItems.length.toString()} tone="indigo" />
+                    </h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                      Генерации и задачи ссылок в одном представлении.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <select
+                    value={unifiedTypeFilter}
+                    onChange={(e) => setUnifiedTypeFilter(e.target.value as typeof unifiedTypeFilter)}
+                    className="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#060d18] text-slate-700 dark:text-slate-300 outline-none focus:ring-1 focus:ring-indigo-500">
+                    <option value="all">Все типы</option>
+                    <option value="generation">Генерация</option>
+                    <option value="link">Ссылки</option>
+                  </select>
+                  <select
+                    value={unifiedStatusFilter}
+                    onChange={(e) => setUnifiedStatusFilter(e.target.value as typeof unifiedStatusFilter)}
+                    className="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#060d18] text-slate-700 dark:text-slate-300 outline-none focus:ring-1 focus:ring-indigo-500">
+                    <option value="all">Все статусы</option>
+                    <option value="pending">Ожидание</option>
+                    <option value="processing">В работе</option>
+                    <option value="completed">Завершено</option>
+                    <option value="failed">Ошибка</option>
+                  </select>
+                  <FilterSearchInput value={unifiedSearch} onChange={setUnifiedSearch} placeholder="Поиск..." />
+                  <button
+                    onClick={loadUnified}
+                    disabled={unifiedLoading}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 dark:bg-indigo-900/30 dark:text-indigo-300 disabled:opacity-50 transition-colors">
+                    <RefreshCw className={`w-3.5 h-3.5 ${unifiedLoading ? 'animate-spin' : ''}`} />
+                    Обновить
+                  </button>
+                </div>
+              </div>
+
+              {unifiedError && (
+                <div className="p-4 text-red-600 text-sm border-b border-red-100 dark:border-red-900/30 bg-red-50 dark:bg-red-950/20">
+                  {unifiedError}
+                </div>
+              )}
+
+              <TableState
+                loading={unifiedLoading}
+                empty={!unifiedLoading && !unifiedError && visibleUnifiedItems.length === 0}
+                emptyText="Очередь пуста."
+                className="py-3 px-5"
+              />
+
+              {!unifiedLoading && !unifiedError && visibleUnifiedItems.length > 0 && (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm">
+                    <thead>
+                      <tr className={tableHeaderClass}>
+                        <th className="py-3 px-5 w-8">Тип</th>
+                        <th className="py-3 px-5">Домен</th>
+                        <th className="py-3 px-5">Статус</th>
+                        <th className="py-3 px-5">Запланировано</th>
+                        <th className="py-3 px-5">Детали</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visibleUnifiedItems.map((item) => (
+                        <UnifiedQueueRow key={item.id} item={item} />
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {visibleUnifiedItems.length > 0 && (
+                <div className="p-4 border-t border-slate-100 dark:border-slate-800/60 bg-slate-50/50 dark:bg-slate-800/10">
+                  <PaginationControls
+                    page={unifiedPage}
+                    hasNext={unifiedHasNext}
+                    onPrev={() => setUnifiedPage((p) => Math.max(1, p - 1))}
+                    onNext={() => setUnifiedPage((p) => p + 1)}
+                  />
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </main>
     </div>
@@ -657,6 +835,51 @@ function ProjectQueuePageContent() {
 }
 
 // --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
+
+const UNIFIED_STATUS_LABELS: Record<string, { label: string; tone: 'amber' | 'blue' | 'green' | 'red' | 'slate' }> = {
+  pending:    { label: 'Ожидание',  tone: 'amber' },
+  processing: { label: 'В работе',  tone: 'blue'  },
+  completed:  { label: 'Завершено', tone: 'green' },
+  failed:     { label: 'Ошибка',    tone: 'red'   },
+};
+
+function UnifiedQueueRow({ item }: { item: UnifiedQueueItem }) {
+  const tableRowClass =
+    'border-b border-slate-100 dark:border-slate-800/40 hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors';
+  const statusMeta = UNIFIED_STATUS_LABELS[item.status] || { label: item.status, tone: 'slate' as const };
+  const isLink = item.type === 'link';
+  const detail = item.error_message ||
+    (isLink && item.anchor_text ? `Анкор: ${item.anchor_text}` : '');
+
+  return (
+    <tr className={tableRowClass}>
+      <td className="py-3 px-5">
+        {isLink ? (
+          <span title="Ссылка"><Link2 className="w-4 h-4 text-indigo-500" /></span>
+        ) : (
+          <span title="Генерация"><Zap className="w-4 h-4 text-emerald-500" /></span>
+        )}
+      </td>
+      <td className="py-3 px-5 font-semibold">
+        <Link
+          href={`/domains/${item.domain_id}`}
+          className="text-indigo-600 dark:text-indigo-400 hover:underline">
+          {item.domain_url || item.domain_id}
+        </Link>
+        <span className="ml-2 text-[10px] text-slate-400">{item.status_detail}</span>
+      </td>
+      <td className="py-3 px-5">
+        <Badge label={statusMeta.label} tone={statusMeta.tone} />
+      </td>
+      <td className="py-3 px-5 text-slate-500 text-xs">
+        {new Date(item.scheduled_for).toLocaleString()}
+      </td>
+      <td className="py-3 px-5 text-xs max-w-[220px] truncate text-slate-500" title={detail}>
+        {detail || '—'}
+      </td>
+    </tr>
+  );
+}
 
 function formatQueueHistoryDetails(item: QueueItemDTO): string {
   const text = (item.error_message || '').trim();

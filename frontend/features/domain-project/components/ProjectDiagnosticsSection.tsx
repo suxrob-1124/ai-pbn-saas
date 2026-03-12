@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   RefreshCw,
@@ -12,7 +12,12 @@ import {
   ChevronUp,
   RotateCw,
   Globe,
+  CheckCheck,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
+
+const DISMISSED_KEY = 'project_diagnostics_dismissed';
 
 type Generation = {
   id: string;
@@ -58,17 +63,51 @@ export function ProjectDiagnosticsSection({
   onRefresh,
   onRetry,
 }: ProjectDiagnosticsSectionProps) {
+  // Dismissed generation IDs (localStorage)
+  const [dismissedIds, setDismissedIds] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(DISMISSED_KEY);
+      return new Set(raw ? JSON.parse(raw) : []);
+    } catch {
+      return new Set();
+    }
+  });
+  const [showDismissed, setShowDismissed] = useState(false);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(DISMISSED_KEY, JSON.stringify([...dismissedIds]));
+    } catch {}
+  }, [dismissedIds]);
+
+  const dismissItems = (ids: string[]) => {
+    setDismissedIds((prev) => new Set([...prev, ...ids]));
+  };
+
+  const restoreItems = (ids: string[]) => {
+    setDismissedIds((prev) => {
+      const next = new Set(prev);
+      ids.forEach((id) => next.delete(id));
+      return next;
+    });
+  };
+
+  // Разделяем на активные и закрытые
+  const activeItems = useMemo(() => items.filter((i) => !dismissedIds.has(i.id)), [items, dismissedIds]);
+  const dismissedItems = useMemo(() => items.filter((i) => dismissedIds.has(i.id)), [items, dismissedIds]);
+
   // Группировка ошибок
   const groupedErrors = useMemo(() => {
+    const source = showDismissed ? dismissedItems : activeItems;
     const groups: Record<string, Generation[]> = {};
-    items.forEach((item) => {
+    source.forEach((item) => {
       const msg = normalizeErrorMsg(item.error || 'Неизвестная ошибка');
       if (!groups[msg]) groups[msg] = [];
       groups[msg].push(item);
     });
     // Сортируем группы по количеству упавших доменов
     return Object.entries(groups).sort((a, b) => b[1].length - a[1].length);
-  }, [items]);
+  }, [activeItems, dismissedItems, showDismissed]);
 
   // Стейт для раскрытия/закрытия групп (по умолчанию открываем первую, если она есть)
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(() => {
@@ -91,6 +130,10 @@ export function ProjectDiagnosticsSection({
     }
   };
 
+  const handleDismissGroup = (groupItems: Generation[]) => {
+    dismissItems(groupItems.map((i) => i.id));
+  };
+
   return (
     <div className="bg-white dark:bg-[#0f1523] border border-slate-200 dark:border-slate-700 rounded-2xl shadow-sm animate-in fade-in duration-300 overflow-hidden">
       {/* HEADER */}
@@ -103,13 +146,23 @@ export function ProjectDiagnosticsSection({
             Ошибки сгруппированы по типу. Вы можете перезапустить сайты прямо отсюда.
           </p>
         </div>
-        <button
-          onClick={onRefresh}
-          disabled={loading}
-          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-slate-200 bg-white text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-[#060d18] dark:text-slate-300 dark:hover:bg-slate-800 transition-all shadow-sm active:scale-95">
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          Обновить лог
-        </button>
+        <div className="flex items-center gap-2">
+          {dismissedItems.length > 0 && (
+            <button
+              onClick={() => setShowDismissed((v) => !v)}
+              className="inline-flex items-center gap-2 px-3 py-2.5 rounded-xl border border-slate-200 bg-white text-sm font-medium text-slate-500 hover:bg-slate-50 dark:border-slate-600 dark:bg-[#060d18] dark:text-slate-400 dark:hover:bg-slate-800 transition-all shadow-sm active:scale-95">
+              {showDismissed ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              {showDismissed ? 'Скрыть закрытые' : `Закрытые (${dismissedItems.length})`}
+            </button>
+          )}
+          <button
+            onClick={onRefresh}
+            disabled={loading}
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-slate-200 bg-white text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-[#060d18] dark:text-slate-300 dark:hover:bg-slate-800 transition-all shadow-sm active:scale-95">
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            Обновить лог
+          </button>
+        </div>
       </div>
 
       {/* СОСТОЯНИЯ */}
@@ -125,7 +178,7 @@ export function ProjectDiagnosticsSection({
         </div>
       )}
 
-      {!loading && !error && items.length === 0 && (
+      {!loading && !error && activeItems.length === 0 && !showDismissed && (
         <div className="p-20 text-center flex flex-col items-center justify-center bg-slate-50/50 dark:bg-[#0a1020]">
           <div className="w-16 h-16 bg-emerald-50 border border-emerald-100 dark:border-emerald-900/50 dark:bg-emerald-900/20 text-emerald-500 rounded-full flex items-center justify-center mb-5 shadow-inner">
             <ShieldAlert className="w-8 h-8" />
@@ -184,17 +237,30 @@ export function ProjectDiagnosticsSection({
                   </div>
 
                   {/* Массовые действия для группы */}
-                  {onRetry && (
-                    <div
-                      className="flex-shrink-0 ml-9 lg:ml-0"
-                      onClick={(e) => e.stopPropagation()}>
+                  <div
+                    className="flex items-center gap-2 flex-shrink-0 ml-9 lg:ml-0"
+                    onClick={(e) => e.stopPropagation()}>
+                    {onRetry && !showDismissed && (
                       <button
                         onClick={() => handleRetryAll(groupItems)}
                         className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-200 dark:bg-[#060d18] dark:border-slate-700 dark:text-slate-300 dark:hover:bg-indigo-900/30 dark:hover:text-indigo-300 dark:hover:border-indigo-800 transition-all text-sm font-semibold shadow-sm">
                         <RotateCw className="w-4 h-4" /> Перезапустить все
                       </button>
-                    </div>
-                  )}
+                    )}
+                    {!showDismissed ? (
+                      <button
+                        onClick={() => handleDismissGroup(groupItems)}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white border border-slate-200 text-slate-500 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-200 dark:bg-[#060d18] dark:border-slate-700 dark:text-slate-400 dark:hover:bg-emerald-900/30 dark:hover:text-emerald-300 dark:hover:border-emerald-800 transition-all text-sm font-semibold shadow-sm">
+                        <CheckCheck className="w-4 h-4" /> Закрыть
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => restoreItems(groupItems.map((i) => i.id))}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white border border-slate-200 text-slate-500 hover:bg-amber-50 hover:text-amber-700 hover:border-amber-200 dark:bg-[#060d18] dark:border-slate-700 dark:text-slate-400 transition-all text-sm font-semibold shadow-sm">
+                        <RotateCw className="w-4 h-4" /> Восстановить
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {/* РАСКРЫТЫЙ СПИСОК (Детали по доменам) */}
@@ -232,15 +298,28 @@ export function ProjectDiagnosticsSection({
                               </div>
                             </div>
 
-                            {onRetry && item.domain_id && (
-                              <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800/60">
+                            <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800/60 flex gap-2">
+                              {onRetry && item.domain_id && !showDismissed && (
                                 <button
                                   onClick={() => onRetry(item.domain_id!)}
-                                  className="w-full inline-flex items-center justify-center gap-2 py-1.5 rounded-lg text-xs font-semibold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-500/10 dark:text-indigo-400 dark:hover:bg-indigo-500/20 transition-colors">
+                                  className="flex-1 inline-flex items-center justify-center gap-2 py-1.5 rounded-lg text-xs font-semibold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-500/10 dark:text-indigo-400 dark:hover:bg-indigo-500/20 transition-colors">
                                   <RotateCw className="w-3.5 h-3.5" /> Запустить заново
                                 </button>
-                              </div>
-                            )}
+                              )}
+                              {!showDismissed ? (
+                                <button
+                                  onClick={() => dismissItems([item.id])}
+                                  className="flex-1 inline-flex items-center justify-center gap-2 py-1.5 rounded-lg text-xs font-semibold text-slate-500 bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-emerald-900/20 dark:hover:text-emerald-400 transition-colors">
+                                  <CheckCheck className="w-3.5 h-3.5" /> Закрыть
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => restoreItems([item.id])}
+                                  className="flex-1 inline-flex items-center justify-center gap-2 py-1.5 rounded-lg text-xs font-semibold text-slate-500 bg-slate-100 hover:bg-amber-50 hover:text-amber-700 dark:bg-slate-800 dark:text-slate-400 transition-colors">
+                                  <RotateCw className="w-3.5 h-3.5" /> Восстановить
+                                </button>
+                              )}
+                            </div>
                           </div>
                         );
                       })}

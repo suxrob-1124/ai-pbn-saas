@@ -11,6 +11,9 @@ import (
 type LLMClient interface {
 	Generate(ctx context.Context, stage string, prompt string, model string) (string, error)
 	GenerateImage(ctx context.Context, prompt string, model string) ([]byte, error)
+	// GenerateMultiTurn отправляет данные в несколько turns, сохраняя контекст сессии.
+	// systemInstruction — инструкции для модели (без данных). turns — последовательные сообщения с данными.
+	GenerateMultiTurn(ctx context.Context, stage, systemInstruction string, turns []string, model string) (string, error)
 }
 
 // PromptManager интерфейс для работы с промптами
@@ -43,6 +46,10 @@ func (c *llmClientImpl) Generate(ctx context.Context, stage string, prompt strin
 
 func (c *llmClientImpl) GenerateImage(ctx context.Context, prompt string, model string) ([]byte, error) {
 	return c.client.GenerateImage(ctx, prompt, model)
+}
+
+func (c *llmClientImpl) GenerateMultiTurn(ctx context.Context, stage, systemInstruction string, turns []string, model string) (string, error) {
+	return c.client.GenerateMultiTurn(ctx, stage, systemInstruction, turns, model)
 }
 
 type promptManagerImpl struct {

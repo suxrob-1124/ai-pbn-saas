@@ -36,9 +36,10 @@ const STATUS_COLORS: Record<string, string> = {
 
 type Props = {
   domainId: string;
+  onLoadSession?: (sessionId: string) => void;
 };
 
-export function AgentSessionHistory({ domainId }: Props) {
+export function AgentSessionHistory({ domainId, onLoadSession }: Props) {
   const [sessions, setSessions] = useState<SessionDTO[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -99,7 +100,7 @@ export function AgentSessionHistory({ domainId }: Props) {
           const statusColor = STATUS_COLORS[sess.status] || STATUS_COLORS.stopped;
           const hasSnapshot = Boolean(sess.snapshot_tag);
           const isExpanded = expandedId === sess.id;
-          const hasDetails = Boolean(sess.summary || (sess.files_changed && sess.files_changed.length > 0));
+          const hasDetails = Boolean(sess.status === "running" || sess.summary || (sess.files_changed && sess.files_changed.length > 0));
 
           return (
             <div
@@ -165,6 +166,24 @@ export function AgentSessionHistory({ domainId }: Props) {
                       sessionId={sess.id}
                       onRolledBack={() => load()}
                     />
+                  )}
+                  {sess.status === "running" && (
+                    <button
+                      type="button"
+                      onClick={() => onLoadSession?.(sess.id)}
+                      className="text-[10px] font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+                    >
+                      Подключиться к сессии
+                    </button>
+                  )}
+                  {(sess.status === "done" || sess.status === "stopped" || sess.status === "error") && (
+                    <button
+                      type="button"
+                      onClick={() => onLoadSession?.(sess.id)}
+                      className="text-[10px] text-indigo-500 hover:underline"
+                    >
+                      Загрузить переписку
+                    </button>
                   )}
                 </div>
               )}

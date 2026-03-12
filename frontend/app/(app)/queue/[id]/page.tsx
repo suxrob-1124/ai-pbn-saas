@@ -270,7 +270,7 @@ export default function QueueItemPage() {
           {item && (
             <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-6 items-start">
               {/* LEFT COLUMN */}
-              <div className="space-y-6">
+              <div className="space-y-6 min-w-0">
                 {/* Progress card (only for active tasks) */}
                 {isActive && (
                   <div className="bg-white dark:bg-[#0f1523] border border-slate-200 dark:border-slate-700/60 rounded-2xl shadow-sm overflow-hidden animate-in fade-in">

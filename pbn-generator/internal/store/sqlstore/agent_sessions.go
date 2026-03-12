@@ -20,6 +20,8 @@ type AgentSession struct {
 	FilesChanged []string
 	MessageCount int
 	SnapshotTag  sql.NullString
+	MessagesJSON []byte // Anthropic conversation history (for agent resume)
+	ChatLogJSON  []byte // UI chat log (AgentChatMessage[] format)
 }
 
 // AgentSessionStore defines persistence operations for agent sessions.
@@ -32,6 +34,9 @@ type AgentSessionStore interface {
 	// MarkStaleRunning marks sessions stuck in "running" state older than the
 	// given threshold as "stopped". Returns the number of sessions updated.
 	MarkStaleRunning(ctx context.Context, olderThan time.Duration) (int64, error)
+	SaveMessages(ctx context.Context, id string, messagesJSON, chatLogJSON []byte) error
+	// PurgeOlderThan hard-deletes finished sessions older than retentionDays days.
+	PurgeOlderThan(ctx context.Context, retentionDays int) (int64, error)
 }
 
 type agentSessionSQLStore struct {
@@ -61,12 +66,12 @@ func (s *agentSessionSQLStore) Get(ctx context.Context, id string) (AgentSession
 	err := s.db.QueryRowContext(ctx,
 		`SELECT id, domain_id, created_by, created_at,
 		        finished_at, status, summary, files_changed,
-		        message_count, snapshot_tag
+		        message_count, snapshot_tag, messages_json, chat_log_json
 		 FROM agent_sessions WHERE id=$1`, id).
 		Scan(
 			&sess.ID, &sess.DomainID, &sess.CreatedBy, &sess.CreatedAt,
 			&sess.FinishedAt, &sess.Status, &sess.Summary, &filesRaw,
-			&sess.MessageCount, &sess.SnapshotTag,
+			&sess.MessageCount, &sess.SnapshotTag, &sess.MessagesJSON, &sess.ChatLogJSON,
 		)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -87,7 +92,7 @@ func (s *agentSessionSQLStore) ListByDomain(ctx context.Context, domainID string
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, domain_id, created_by, created_at,
 		        finished_at, status, summary, files_changed,
-		        message_count, snapshot_tag
+		        message_count, snapshot_tag, messages_json, chat_log_json
 		 FROM agent_sessions
 		 WHERE domain_id=$1
 		 ORDER BY created_at DESC
@@ -103,7 +108,7 @@ func (s *agentSessionSQLStore) ListByDomain(ctx context.Context, domainID string
 		if err := rows.Scan(
 			&sess.ID, &sess.DomainID, &sess.CreatedBy, &sess.CreatedAt,
 			&sess.FinishedAt, &sess.Status, &sess.Summary, &filesRaw,
-			&sess.MessageCount, &sess.SnapshotTag,
+			&sess.MessageCount, &sess.SnapshotTag, &sess.MessagesJSON, &sess.ChatLogJSON,
 		); err != nil {
 			return nil, err
 		}
@@ -155,4 +160,26 @@ func (s *agentSessionSQLStore) MarkStaleRunning(ctx context.Context, olderThan t
 	}
 	n, _ := res.RowsAffected()
 	return n, nil
+}
+
+func (s *agentSessionSQLStore) SaveMessages(ctx context.Context, id string, messagesJSON, chatLogJSON []byte) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE agent_sessions SET messages_json=$1, chat_log_json=$2 WHERE id=$3`,
+		messagesJSON, chatLogJSON, id,
+	)
+	if err != nil {
+		return fmt.Errorf("save agent session messages: %w", err)
+	}
+	return nil
+}
+
+func (s *agentSessionSQLStore) PurgeOlderThan(ctx context.Context, retentionDays int) (int64, error) {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM agent_sessions WHERE status != 'running' AND created_at < NOW() - make_interval(days => $1)`,
+		retentionDays,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("purge agent sessions: %w", err)
+	}
+	return res.RowsAffected()
 }

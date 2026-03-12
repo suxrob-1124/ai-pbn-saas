@@ -27,11 +27,18 @@ func (s *Server) handleGenerations(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
+	activeOnly := false
+	if v := r.URL.Query().Get("active"); v == "1" || strings.EqualFold(v, "true") {
+		activeOnly = true
+	}
 	limit := 50
 	if v := r.URL.Query().Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 200 {
 			limit = n
 		}
+	}
+	if activeOnly {
+		limit = 200
 	}
 	search := strings.TrimSpace(r.URL.Query().Get("search"))
 	page := 1
@@ -63,6 +70,22 @@ func (s *Server) handleGenerations(w http.ResponseWriter, r *http.Request) {
 		} else {
 			list, err = s.generations.ListRecentByUser(r.Context(), user.Email, limit, offset, search)
 		}
+	}
+	// Filter to active-only statuses when ?active=1.
+	if activeOnly && err == nil {
+		activeStatuses := map[string]bool{
+			"pending":         true,
+			"processing":      true,
+			"pause_requested": true,
+			"cancelling":      true,
+		}
+		filtered := list[:0]
+		for _, g := range list {
+			if activeStatuses[g.Status] {
+				filtered = append(filtered, g)
+			}
+		}
+		list = filtered
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not list generations")
@@ -673,4 +696,151 @@ func (s *Server) handleLinkByID(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+// linkDomainEligibilityDTO describes per-domain eligibility for the next schedule run.
+type linkDomainEligibilityDTO struct {
+	ID         string  `json:"id"`
+	URL        string  `json:"url"`
+	Eligible   bool    `json:"eligible"`
+	Reason     string  `json:"reason"`
+	LinkStatus *string `json:"link_status"`
+}
+
+type linkEligibilitySummaryDTO struct {
+	EligibleCount   int `json:"eligible_count"`
+	IneligibleCount int `json:"ineligible_count"`
+	ActiveTaskCount int `json:"active_task_count"`
+}
+
+type linkScheduleEligibilityDTO struct {
+	Schedule *linkScheduleSummaryDTO    `json:"schedule"`
+	Domains  []linkDomainEligibilityDTO `json:"domains"`
+	Summary  linkEligibilitySummaryDTO  `json:"summary"`
+}
+
+type linkScheduleSummaryDTO struct {
+	IsActive  bool    `json:"is_active"`
+	NextRunAt *string `json:"next_run_at"`
+	LastRunAt *string `json:"last_run_at"`
+}
+
+func (s *Server) handleLinkScheduleEligibility(w http.ResponseWriter, r *http.Request, projectID string) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	user, ok := currentUserFromContext(r.Context())
+	if !ok || user.Email == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	_, err := s.authorizeProject(r.Context(), projectID)
+	if err != nil {
+		respondAuthzError(w, err, "project not found")
+		return
+	}
+	if !strings.EqualFold(user.Role, "admin") {
+		memberRole, merr := s.getProjectMemberRole(r.Context(), projectID, user.Email)
+		if merr != nil {
+			writeError(w, http.StatusForbidden, "access denied")
+			return
+		}
+		if !hasProjectPermission(user.Role, memberRole, "viewer") {
+			writeError(w, http.StatusForbidden, "insufficient permissions")
+			return
+		}
+	}
+
+	domains, err := s.domains.ListByProject(r.Context(), projectID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not load domains")
+		return
+	}
+
+	domainIDs := make([]string, 0, len(domains))
+	for _, d := range domains {
+		domainIDs = append(domainIDs, d.ID)
+	}
+	activeTasks, err := s.linkTasks.ListActiveByDomainIDs(r.Context(), domainIDs)
+	if err != nil {
+		activeTasks = map[string]sqlstore.LinkTask{}
+	}
+
+	var schedDTO *linkScheduleSummaryDTO
+	if s.linkSchedules != nil {
+		if sched, err := s.linkSchedules.GetByProject(r.Context(), projectID); err == nil && sched != nil {
+			sd := &linkScheduleSummaryDTO{IsActive: sched.IsActive}
+			if sched.NextRunAt.Valid {
+				t := sched.NextRunAt.Time.UTC().Format(time.RFC3339)
+				sd.NextRunAt = &t
+			}
+			if sched.LastRunAt.Valid {
+				t := sched.LastRunAt.Time.UTC().Format(time.RFC3339)
+				sd.LastRunAt = &t
+			}
+			schedDTO = sd
+		}
+	}
+
+	now := time.Now().UTC()
+	result := make([]linkDomainEligibilityDTO, 0, len(domains))
+	eligibleCount := 0
+	ineligibleCount := 0
+
+	for _, d := range domains {
+		reason := linkDomainEligibilityReason(d, activeTasks, now)
+		eligible := reason == ""
+		dto := linkDomainEligibilityDTO{
+			ID:       d.ID,
+			URL:      strings.TrimSpace(d.URL),
+			Eligible: eligible,
+			Reason:   reason,
+		}
+		if d.LinkStatus.Valid {
+			ls := strings.TrimSpace(d.LinkStatus.String)
+			dto.LinkStatus = &ls
+		}
+		result = append(result, dto)
+		if eligible {
+			eligibleCount++
+		} else {
+			ineligibleCount++
+		}
+	}
+
+	writeJSON(w, http.StatusOK, linkScheduleEligibilityDTO{
+		Schedule: schedDTO,
+		Domains:  result,
+		Summary: linkEligibilitySummaryDTO{
+			EligibleCount:   eligibleCount,
+			IneligibleCount: ineligibleCount,
+			ActiveTaskCount: len(activeTasks),
+		},
+	})
+}
+
+// linkDomainEligibilityReason returns the skip reason for a domain, or "" if eligible.
+func linkDomainEligibilityReason(d sqlstore.Domain, activeTasks map[string]sqlstore.LinkTask, now time.Time) string {
+	if !d.PublishedAt.Valid && !strings.EqualFold(strings.TrimSpace(d.Status), "published") {
+		return "not_published"
+	}
+	if d.LinkStatus.Valid {
+		status := strings.ToLower(strings.TrimSpace(d.LinkStatus.String))
+		if status == "inserted" || status == "generated" {
+			return "already_inserted"
+		}
+	}
+	anchor := strings.TrimSpace(d.LinkAnchorText.String)
+	target := strings.TrimSpace(d.LinkAcceptorURL.String)
+	if !d.LinkAnchorText.Valid || !d.LinkAcceptorURL.Valid || anchor == "" || target == "" {
+		return "no_link_settings"
+	}
+	if _, hasActive := activeTasks[d.ID]; hasActive {
+		return "active_task_running"
+	}
+	if d.LinkReadyAt.Valid && d.LinkReadyAt.Time.After(now) {
+		return "link_ready_at_future"
+	}
+	return ""
 }

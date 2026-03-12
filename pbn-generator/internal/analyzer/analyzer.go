@@ -530,8 +530,10 @@ func buildCSV(keyword, country, lang string, serp []SerpItem, pages []PageRow) s
 }
 
 func buildContents(keyword string, serp []SerpItem, pages []PageRow) string {
+	maxCharsPerPage := envIntAnalyzer("SERP_MAX_CHARS_PER_PAGE", 6000)
+
 	var b strings.Builder
-	b.WriteString("# HTML-содержимое Top-20\n")
+	b.WriteString("# Текстовое содержимое Top-20\n")
 	b.WriteString("# Запрос: " + keyword + "\n")
 	b.WriteString("# Дата: " + time.Now().Format("2006-01-02") + "\n\n")
 	positions := make(map[string]int)
@@ -545,14 +547,44 @@ func buildContents(keyword string, serp []SerpItem, pages []PageRow) string {
 		if idx > 0 {
 			b.WriteString("\n\n")
 		}
-		b.WriteString(fmt.Sprintf("--- САЙТ %d (URL: %s) ---\n\n", idx+1, p.FinalURL))
-		if strings.TrimSpace(p.ContentHTML) == "" {
-			b.WriteString("[ОСНОВНОЙ HTML-КОНТЕНТ НЕ ИЗВЛЕЧЕН]\n")
+		b.WriteString(fmt.Sprintf("--- САЙТ %d (URL: %s) ---\n", idx+1, p.FinalURL))
+		if p.PageTitle != "" {
+			b.WriteString("Title: " + p.PageTitle + "\n")
+		}
+		if len(p.H1List) > 0 {
+			b.WriteString("H1: " + strings.Join(p.H1List, " | ") + "\n")
+		}
+		if len(p.H2List) > 0 {
+			h2 := p.H2List
+			if len(h2) > 10 {
+				h2 = h2[:10]
+			}
+			b.WriteString("H2: " + strings.Join(h2, " | ") + "\n")
+		}
+		text := strings.TrimSpace(p.ContentText)
+		if text == "" {
+			b.WriteString("[КОНТЕНТ НЕ ИЗВЛЕЧЕН]\n")
 		} else {
-			b.WriteString(p.ContentHTML)
+			runes := []rune(text)
+			if len(runes) > maxCharsPerPage {
+				runes = runes[:maxCharsPerPage]
+				text = string(runes) + "…"
+			}
+			b.WriteString(text + "\n")
 		}
 	}
 	return b.String()
+}
+
+func envIntAnalyzer(key string, fallback int) int {
+	val := strings.TrimSpace(os.Getenv(key))
+	if val == "" {
+		return fallback
+	}
+	if n, err := strconv.Atoi(val); err == nil && n > 0 {
+		return n
+	}
+	return fallback
 }
 
 func writeCSVRow(b *strings.Builder, fields []string) {

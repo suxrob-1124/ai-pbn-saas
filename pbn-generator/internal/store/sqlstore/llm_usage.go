@@ -286,6 +286,17 @@ func buildLLMUsageWhere(filters LLMUsageFilters) (string, []interface{}) {
 	return " WHERE " + strings.Join(conds, " AND "), args
 }
 
+// PurgeOlderThan удаляет записи об использовании LLM старше retentionDays дней.
+func (s *LLMUsageStore) PurgeOlderThan(ctx context.Context, retentionDays int) (int64, error) {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM llm_usage_events WHERE created_at < NOW() - make_interval(days => $1)`,
+		retentionDays)
+	if err != nil {
+		return 0, fmt.Errorf("purge llm_usage_events: %w", err)
+	}
+	return res.RowsAffected()
+}
+
 func nullableLLMInt64(v sql.NullInt64) interface{} {
 	if v.Valid {
 		return v.Int64

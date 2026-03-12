@@ -123,7 +123,7 @@ type scheduleConfig struct {
 
 func parseScheduleConfig(raw json.RawMessage) (scheduleConfig, error) {
 	if len(raw) == 0 {
-		return scheduleConfig{DelayMinutes: 60}, nil
+		return scheduleConfig{DelayMinutes: 5}, nil
 	}
 	var data map[string]any
 	if err := json.Unmarshal(raw, &data); err != nil {
@@ -179,7 +179,7 @@ func parseScheduleConfig(raw json.RawMessage) (scheduleConfig, error) {
 		}
 	}
 	if !delaySet {
-		cfg.DelayMinutes = 60
+		cfg.DelayMinutes = 5
 	}
 	return cfg, nil
 }

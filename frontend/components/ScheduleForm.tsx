@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Clock, Info } from 'lucide-react';
 import { buildScheduleConfig, ScheduleFormValue } from '../lib/scheduleFormValidation';
+import type { SchedulePreviewSection } from '../types/schedules';
 
 type ScheduleFormProps = {
   value: ScheduleFormValue;
@@ -15,6 +16,8 @@ type ScheduleFormProps = {
   onCancel?: () => void;
   onChange: (value: ScheduleFormValue) => void;
   onSubmit: (config: Record<string, unknown>) => void;
+  projectId?: string;
+  scheduleType?: 'generation' | 'link';
 };
 
 export function ScheduleForm({
@@ -28,9 +31,14 @@ export function ScheduleForm({
   onCancel,
   onChange,
   onSubmit,
+  projectId,
+  scheduleType,
 }: ScheduleFormProps) {
   const [localError, setLocalError] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
+  const [preview, setPreview] = useState<SchedulePreviewSection | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000);
@@ -80,6 +88,22 @@ export function ScheduleForm({
     onSubmit(result.config);
   };
 
+  const handlePreview = async () => {
+    if (!projectId) return;
+    setPreviewLoading(true);
+    setShowPreview(true);
+    setPreview(null);
+    try {
+      const { getSchedulesPreview } = await import('../lib/linkSchedulesApi');
+      const data = await getSchedulesPreview(projectId);
+      setPreview(scheduleType === 'link' ? data.link : data.generation);
+    } catch {
+      setPreview(null);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
   const showDaily = value.strategy === 'daily';
   const showWeekly = value.strategy === 'weekly';
   const showCustom = value.strategy === 'custom';
@@ -104,6 +128,56 @@ export function ScheduleForm({
         {localError && (
           <div className="p-3 bg-red-50 text-red-600 rounded-lg text-xs border border-red-100 dark:bg-red-950/30 dark:border-red-900/50">
             {localError}
+          </div>
+        )}
+
+        {projectId && (
+          <div>
+            <button
+              type="button"
+              onClick={handlePreview}
+              disabled={previewLoading}
+              className="text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline disabled:opacity-50">
+              {previewLoading ? 'Загрузка превью...' : 'Просмотреть следующий запуск →'}
+            </button>
+            {showPreview && preview && !previewLoading && (
+              <div className="mt-2 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden text-sm">
+                <div className="px-3 py-2 bg-slate-50 dark:bg-slate-800/50 flex items-center justify-between">
+                  <span className="font-semibold text-slate-700 dark:text-slate-300">
+                    Следующий запуск {preview.next_run_at ? `: ${new Date(preview.next_run_at).toLocaleString('ru-RU')}` : ''}
+                  </span>
+                  <button onClick={() => setShowPreview(false)} className="text-slate-400 hover:text-slate-600 text-xs">✕</button>
+                </div>
+                <div className="divide-y divide-slate-100 dark:divide-slate-800 max-h-48 overflow-y-auto">
+                  {preview.eligible_domains.map((d) => (
+                    <div key={d.id} className="flex items-center gap-2 px-3 py-1.5 text-xs">
+                      <span className="text-emerald-500">✓</span>
+                      <span className="text-slate-700 dark:text-slate-300 truncate">{d.url}</span>
+                    </div>
+                  ))}
+                  {preview.would_skip.map((s, i) => (
+                    <div key={i} className="flex items-start gap-2 px-3 py-1.5 text-xs bg-red-50/40 dark:bg-red-900/10">
+                      <span className="text-red-400 mt-0.5">✗</span>
+                      <div className="min-w-0">
+                        <span className="block text-slate-700 dark:text-slate-300 truncate">{s.domain_url}</span>
+                        <span className="text-red-500 dark:text-red-400">{s.reason}</span>
+                      </div>
+                    </div>
+                  ))}
+                  {preview.eligible_domains.length === 0 && preview.would_skip.length === 0 && (
+                    <div className="px-3 py-3 text-slate-400 text-center">Нет доменов</div>
+                  )}
+                </div>
+                {(preview.eligible_domains.length > 0 || preview.would_skip.length > 0) && (
+                  <div className="px-3 py-1.5 bg-slate-50 dark:bg-slate-800/50 text-xs text-slate-500 flex gap-3">
+                    <span className="text-emerald-600">✓ {preview.would_enqueue} запустятся</span>
+                    {preview.would_skip.length > 0 && (
+                      <span className="text-red-500">✗ {preview.would_skip.length} пропускаются</span>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -223,6 +297,21 @@ export function ScheduleForm({
                 </p>
               </div>
             )}
+
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                Задержка между запусками
+              </span>
+              <input
+                type="number"
+                min={1}
+                max={60}
+                className={`${inputBaseClass} w-20`}
+                value={value.delayMinutes}
+                onChange={(e) => onChange({ ...value, delayMinutes: e.target.value })}
+              />
+              <span className="text-sm font-medium text-slate-700 dark:text-slate-300">мин</span>
+            </div>
 
             <div className="mt-3 flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
               <Clock className="w-3 h-3" />

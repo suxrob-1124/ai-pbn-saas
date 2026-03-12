@@ -26,6 +26,10 @@ func (f *fakeLLMForCompetitors) GenerateImage(ctx context.Context, prompt, model
 	return nil, nil
 }
 
+func (f *fakeLLMForCompetitors) GenerateMultiTurn(ctx context.Context, stage, systemInstruction string, turns []string, model string) (string, error) {
+	return "", nil
+}
+
 type fakePromptManagerForCompetitors struct{}
 
 func (f *fakePromptManagerForCompetitors) GetPromptByStage(ctx context.Context, stage string) (string, string, string, error) {
@@ -175,15 +179,10 @@ func TestCompetitorAnalysisStep_LLMError(t *testing.T) {
 		AppendLog:     func(s string) {},
 	}
 
-	artifacts, err := step.Execute(context.Background(), state)
-	// Шаг не должен падать при ошибке LLM (возвращает пустой результат)
-	if err != nil {
-		t.Fatalf("expected no error even with LLM error, got: %v", err)
-	}
-
-	// Проверяем, что возвращен пустой результат
-	if len(artifacts) != 0 {
-		t.Errorf("expected empty artifacts on LLM error, got: %#v", artifacts)
+	_, err := step.Execute(context.Background(), state)
+	// Шаг должен вернуть ошибку при неудаче LLM
+	if err == nil {
+		t.Fatalf("expected error on LLM failure, got nil")
 	}
 }
 
@@ -222,6 +221,10 @@ func (f *fakeLLMForCompetitorsError) Generate(ctx context.Context, stage, prompt
 
 func (f *fakeLLMForCompetitorsError) GenerateImage(ctx context.Context, prompt, model string) ([]byte, error) {
 	return nil, nil
+}
+
+func (f *fakeLLMForCompetitorsError) GenerateMultiTurn(ctx context.Context, stage, systemInstruction string, turns []string, model string) (string, error) {
+	return "", nil
 }
 
 type fakePromptManagerForCompetitorsError struct{}

@@ -1,4 +1,4 @@
-export type QueueTab = "domains" | "links";
+export type QueueTab = "domains" | "links" | "unified";
 
 export function resolveQueueTab(value: string | null | undefined, fallback: QueueTab = "domains"): QueueTab {
   const normalized = (value || "").trim().toLowerCase();
@@ -7,6 +7,9 @@ export function resolveQueueTab(value: string | null | undefined, fallback: Queu
   }
   if (normalized === "domains") {
     return "domains";
+  }
+  if (normalized === "unified") {
+    return "unified";
   }
   return fallback;
 }

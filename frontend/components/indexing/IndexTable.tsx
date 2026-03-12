@@ -78,10 +78,10 @@ export function IndexTable({
               <SortableTh label="Статус" sort={sort} sortKey="status" onSort={handleSort} />
               <SortableTh label="Попытки" sort={sort} sortKey="attempts" onSort={handleSort} />
               <SortableTh label="В индексе" sort={sort} sortKey="is_indexed" onSort={handleSort} />
-              <th className="text-left py-2 pr-3 text-xs">Цитата</th>
+              <th className="text-left py-2 px-3 text-xs">Цитата</th>
               <SortableTh label="Последняя попытка" sort={sort} sortKey="last_attempt_at" onSort={handleSort} />
               <SortableTh label="Следующий ретрай" sort={sort} sortKey="next_retry_at" onSort={handleSort} />
-              <th className="text-left py-2 pr-3">Действия</th>
+              <th className="text-left py-2 px-3">Действия</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
@@ -103,7 +103,7 @@ export function IndexTable({
                 return (
                   <Fragment key={check.id}>
                     <tr className="align-top">
-                      <td className="py-2 pr-3">
+                      <td className="py-2 px-3">
                         <Link href={`/domains/${check.domain_id}`} className="text-indigo-600 hover:underline">
                           {check.domain_url || "Домен"}
                         </Link>
@@ -114,13 +114,13 @@ export function IndexTable({
                         )}
                       </td>
                       <td className="py-2 pr-3 whitespace-nowrap">{formatDate(check.check_date)}</td>
-                      <td className="py-2 pr-3">
+                      <td className="py-2 px-3">
                         <span title={String(check.status || "")}>
                           <Badge label={statusMeta.label} tone={statusMeta.tone} className="text-xs" />
                         </span>
                       </td>
-                      <td className="py-2 pr-3">{check.attempts}</td>
-                      <td className="py-2 pr-3">
+                      <td className="py-2 px-3">{check.attempts}</td>
+                      <td className="py-2 px-3">
                         {check.is_indexed === null || check.is_indexed === undefined
                           ? "—"
                           : check.is_indexed
@@ -235,7 +235,7 @@ function SortableTh({
   const active = sort.key === sortKey;
   const arrow = !active ? "" : sort.dir === "asc" ? "↑" : "↓";
   return (
-    <th className="text-left py-2 pr-3">
+    <th className="text-left py-2 px-3">
       <button
         type="button"
         onClick={() => onSort(sortKey)}

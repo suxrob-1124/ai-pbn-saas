@@ -60,6 +60,7 @@ func main() {
 	legacyImportStore := sqlstore.NewLegacyImportStore(database)
 	appSettingsStore := sqlstore.NewAppSettingsStore(database)
 	agentSessionStore := sqlstore.NewAgentSessionStore(database)
+	runLogStore := sqlstore.NewScheduleRunLogStore(database)
 	mailer := buildMailer(cfg, logger)
 	taskClient, err := tasks.NewClient(cfg)
 	if err != nil {
@@ -113,6 +114,7 @@ func main() {
 		defer sshPool.Close()
 	}
 	srv.SetAgentSessions(agentSessionStore)
+	srv.SetScheduleRunLogs(runLogStore)
 	fileLockStore := sqlstore.NewFileLockStore(database)
 	srv.SetFileLocks(fileLockStore)
 	srv.SetContentBackend(contentBackend)
@@ -127,6 +129,20 @@ func main() {
 
 	go startSessionCleanup(svc, cfg.SessionCleanInterval)
 	go startSoftDeleteCleanup(projectStore, domainStore, cfg.SoftDeleteRetentionDays, logger)
+	go startDBCleanup(dbCleanupDeps{
+		siteFiles:                    siteFileStore,
+		llmUsage:                     llmUsageStore,
+		linkTasks:                    linkTaskStore,
+		genQueue:                     genQueueStore,
+		agentSessions:                agentSessionStore,
+		checkHistory:                 checkHistoryStore,
+		llmUsageRetentionDays:        cfg.LLMUsageRetentionDays,
+		linkTaskRetentionDays:        cfg.LinkTaskRetentionDays,
+		genQueueRetentionDays:        cfg.GenQueueRetentionDays,
+		agentSessionRetentionDays:    cfg.AgentSessionRetentionDays,
+		siteFileRetentionDays:        cfg.SoftDeleteRetentionDays,
+		indexCheckHistoryKeepPerCheck: cfg.IndexCheckHistoryKeepPerCheck,
+	}, logger)
 	go startAgentStaleCleanup(agentSessionStore, time.Duration(cfg.AgentTimeoutSec)*time.Second, logger)
 	go startFileLockCleanup(fileLockStore, logger)
 
@@ -225,6 +241,66 @@ func startFileLockCleanup(store sqlstore.FileLockStore, logger *zap.SugaredLogge
 		} else if n > 0 {
 			logger.Infof("file lock cleanup: purged %d expired locks", n)
 		}
+	}
+}
+
+type dbCleanupDeps struct {
+	siteFiles                     *sqlstore.SiteFileSQLStore
+	llmUsage                      *sqlstore.LLMUsageStore
+	linkTasks                     sqlstore.LinkTaskStore
+	genQueue                      *sqlstore.GenQueueSQLStore
+	agentSessions                 sqlstore.AgentSessionStore
+	checkHistory                  *sqlstore.CheckHistorySQLStore
+	llmUsageRetentionDays         int
+	linkTaskRetentionDays         int
+	genQueueRetentionDays         int
+	agentSessionRetentionDays     int
+	siteFileRetentionDays         int
+	indexCheckHistoryKeepPerCheck int
+}
+
+func startDBCleanup(deps dbCleanupDeps, logger *zap.SugaredLogger) {
+	// Run immediately on startup, then every 6 hours.
+	run := func() {
+		ctx := context.Background()
+		type job struct {
+			name string
+			fn   func() (int64, error)
+		}
+		jobs := []job{
+			{"llm_usage_events", func() (int64, error) {
+				return deps.llmUsage.PurgeOlderThan(ctx, deps.llmUsageRetentionDays)
+			}},
+			{"site_files (soft-deleted)", func() (int64, error) {
+				return deps.siteFiles.PurgeDeletedOlderThan(ctx, deps.siteFileRetentionDays)
+			}},
+			{"link_tasks (completed)", func() (int64, error) {
+				return deps.linkTasks.PurgeCompleted(ctx, deps.linkTaskRetentionDays)
+			}},
+			{"generation_queue (processed)", func() (int64, error) {
+				return deps.genQueue.PurgeProcessed(ctx, deps.genQueueRetentionDays)
+			}},
+			{"agent_sessions (finished)", func() (int64, error) {
+				return deps.agentSessions.PurgeOlderThan(ctx, deps.agentSessionRetentionDays)
+			}},
+			{"index_check_history (prune per check)", func() (int64, error) {
+				return deps.checkHistory.PrunePerCheck(ctx, deps.indexCheckHistoryKeepPerCheck)
+			}},
+		}
+		for _, j := range jobs {
+			n, err := j.fn()
+			if err != nil {
+				logger.Warnf("db cleanup [%s]: %v", j.name, err)
+			} else if n > 0 {
+				logger.Infof("db cleanup [%s]: removed %d rows", j.name, n)
+			}
+		}
+	}
+	run()
+	ticker := time.NewTicker(6 * time.Hour)
+	defer ticker.Stop()
+	for range ticker.C {
+		run()
 	}
 }
 

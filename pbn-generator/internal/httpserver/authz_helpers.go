@@ -95,7 +95,7 @@ func (s *Server) resolveProjectRole(ctx context.Context, project sqlstore.Projec
 		if err == nil {
 			role := strings.ToLower(strings.TrimSpace(member.Role))
 			switch role {
-			case "viewer", "editor", "manager", "owner":
+			case "viewer", "editor", "owner", "manager":
 				return role
 			}
 		}
