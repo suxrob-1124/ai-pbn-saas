@@ -505,7 +505,7 @@ func TestLinkWorkerReplaceFromFoundLocation(t *testing.T) {
 	}
 }
 
-func TestLinkWorkerRelinkFailsWhenSourceNotFound(t *testing.T) {
+func TestLinkWorkerRelinkFallsBackToFreshInsert(t *testing.T) {
 	baseDir := t.TempDir()
 	domainDir := filepath.Join(baseDir, "example.com")
 	if err := os.MkdirAll(domainDir, 0o755); err != nil {
@@ -563,15 +563,12 @@ func TestLinkWorkerRelinkFailsWhenSourceNotFound(t *testing.T) {
 	}
 
 	out, _ := os.ReadFile(htmlPath)
-	if strings.Contains(string(out), `<a href="https://new.example">new anchor</a>`) {
-		t.Fatalf("expected no fallback insertion for relink when source not found")
+	if !strings.Contains(string(out), `<a href="https://new.example">new anchor</a>`) {
+		t.Fatalf("expected fallback fresh insertion when old link source not found, got: %s", string(out))
 	}
 	updated := taskStore.tasks["task-new-2"]
-	if updated.Status != "failed" {
-		t.Fatalf("expected failed, got %s", updated.Status)
-	}
-	if !updated.ErrorMessage.Valid || !strings.Contains(strings.ToLower(updated.ErrorMessage.String), "relink source not found") {
-		t.Fatalf("expected relink source not found error, got: %v", updated.ErrorMessage)
+	if updated.Status != "inserted" && updated.Status != "completed" {
+		t.Fatalf("expected inserted or completed, got %s", updated.Status)
 	}
 }
 

@@ -157,17 +157,24 @@ export function DomainLinkStatusSection({
       const fileResp = await authFetch<{ content: string }>(buildFileUrl(loc.filePath));
       const content = fileResp?.content ?? '';
       const lines = content.split('\n');
-      // Try to find the anchor text in the current file first (file may have been regenerated).
+      // Try to find the actual <a> tag in the current file (more precise than plain anchor text).
       let lineIdx = Math.max(0, loc.line - 1);
-      if (task.anchor_text) {
+      if (task.anchor_text && task.target_url) {
         const lower = content.toLowerCase();
         const anchorLower = task.anchor_text.toLowerCase();
-        const charIdx = lower.indexOf(`href="${task.target_url?.toLowerCase()}"`.toLowerCase()) !== -1
-          ? lower.indexOf(anchorLower)
-          : lower.indexOf(anchorLower);
-        if (charIdx !== -1) {
-          const lineNum = content.substring(0, charIdx).split('\n').length - 1;
-          lineIdx = lineNum;
+        const targetLower = task.target_url.toLowerCase();
+        // Search for the full <a href="...">anchor</a> tag first
+        const linkPattern = `href="${targetLower}"`;
+        const hrefIdx = lower.indexOf(linkPattern);
+        if (hrefIdx !== -1) {
+          // Find the anchor text near this href
+          const nearbyStart = Math.max(0, hrefIdx - 50);
+          const nearbyEnd = Math.min(lower.length, hrefIdx + linkPattern.length + anchorLower.length + 50);
+          const nearbyIdx = lower.indexOf(anchorLower, nearbyStart);
+          if (nearbyIdx !== -1 && nearbyIdx < nearbyEnd) {
+            const lineNum = content.substring(0, hrefIdx).split('\n').length - 1;
+            lineIdx = lineNum;
+          }
         }
       }
       const afterSnippet = computeSnippet(lines, lineIdx, 3);

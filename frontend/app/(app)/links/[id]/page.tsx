@@ -201,7 +201,7 @@ export default function LinkTaskPage() {
               <Link
                 href={`/domains/${domain.id}`}
                 className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-500 transition-all shadow-sm active:scale-95">
-                <ExternalLink className="w-4 h-4" /> Перейти к домену
+                Перейти к домену
               </Link>
             )}
           </div>

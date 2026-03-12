@@ -178,7 +178,7 @@ export function ProjectDomainsSection({
                     <Link
                       href={`/domains/${domain.id}`}
                       className="text-base font-bold text-slate-900 dark:text-white hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors flex items-center gap-1.5">
-                      {domain.url} <ExternalLink className="w-4 h-4 opacity-50" />
+                      {domain.url}
                     </Link>
                     {renderStatusBadge(domain.status)}
                     {domain.generation_type && domain.generation_type !== 'single_page' && (

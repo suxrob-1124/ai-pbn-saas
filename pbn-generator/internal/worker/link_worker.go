@@ -96,7 +96,6 @@ var (
 	errAnchorTextRequired        = errors.New("anchor text is required")
 	errTargetURLRequired         = errors.New("target url is required")
 	errNoHTMLFiles               = errors.New("no html files found")
-	errRelinkSourceNotFound      = errors.New("relink source not found")
 	errUnsupportedLinkAction     = errors.New("unsupported link task action")
 )
 
@@ -199,10 +198,7 @@ func (w *LinkWorker) ProcessTask(ctx context.Context, taskID string) error {
 		} else if found {
 			return nil
 		}
-		if !skipDeepReplace {
-			return w.failTask(ctx, taskID, attempts, task.CreatedAt, &logLines, fmt.Errorf("%w: %s (prev_task=%s)", errRelinkSourceNotFound, domain.URL, prevTask.ID))
-		}
-		w.appendLog(ctx, taskID, &logLines, "старая ссылка не найдена после перегенерации — вставляем заново")
+		w.appendLog(ctx, taskID, &logLines, fmt.Sprintf("старая ссылка не найдена — вставляем заново (prev_task=%s)", prevTask.ID))
 	}
 
 	if found, err := w.completeIfLinkExists(ctx, task, domain, domainDir, htmlFiles, attempts, &logLines); err != nil {
@@ -221,9 +217,20 @@ func (w *LinkWorker) ProcessTask(ctx context.Context, taskID string) error {
 		if !found {
 			continue
 		}
+		line := lineNumber(string(content), pos)
+		// Log context around the found position for debugging
+		ctxStart := pos - 30
+		if ctxStart < 0 {
+			ctxStart = 0
+		}
+		ctxEnd := pos + len(task.AnchorText) + 30
+		if ctxEnd > len(string(content)) {
+			ctxEnd = len(string(content))
+		}
+		w.appendLog(ctx, taskID, &logLines, fmt.Sprintf("анкор %q найден в %s строка %d: ...%s...", task.AnchorText, rel, line, string(content)[ctxStart:ctxEnd]))
 		updated := builder.InsertLink(string(content), pos, task.AnchorText, task.TargetURL)
 		if updated == string(content) {
-			return w.failTask(ctx, taskID, attempts, task.CreatedAt, &logLines, errors.New("failed to insert link"))
+			return w.failTask(ctx, taskID, attempts, task.CreatedAt, &logLines, fmt.Errorf("не удалось вставить ссылку: анкор найден на позиции %d, но вставка не изменила контент", pos))
 		}
 		if err := os.WriteFile(full, []byte(updated), 0o644); err != nil {
 			return w.failTask(ctx, taskID, attempts, task.CreatedAt, &logLines, fmt.Errorf("save html failed: %w", err))
@@ -615,9 +622,7 @@ func isRetryableLinkError(cause error, msg string) bool {
 			return false
 		case errors.Is(cause, errNoHTMLFiles):
 			return false
-		case errors.Is(cause, errRelinkSourceNotFound):
-			return false
-		case errors.Is(cause, errUnsupportedLinkAction):
+case errors.Is(cause, errUnsupportedLinkAction):
 			return false
 		}
 	}
