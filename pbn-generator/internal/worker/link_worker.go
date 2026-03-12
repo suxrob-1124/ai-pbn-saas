@@ -199,7 +199,10 @@ func (w *LinkWorker) ProcessTask(ctx context.Context, taskID string) error {
 		} else if found {
 			return nil
 		}
-		return w.failTask(ctx, taskID, attempts, task.CreatedAt, &logLines, fmt.Errorf("%w: domain=%s prev_task=%s", errRelinkSourceNotFound, domain.ID, prevTask.ID))
+		if !skipDeepReplace {
+			return w.failTask(ctx, taskID, attempts, task.CreatedAt, &logLines, fmt.Errorf("%w: %s (prev_task=%s)", errRelinkSourceNotFound, domain.URL, prevTask.ID))
+		}
+		w.appendLog(ctx, taskID, &logLines, "старая ссылка не найдена после перегенерации — вставляем заново")
 	}
 
 	if found, err := w.completeIfLinkExists(ctx, task, domain, domainDir, htmlFiles, attempts, &logLines); err != nil {

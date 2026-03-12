@@ -75,24 +75,20 @@ func processGeneration(
 		return nil
 	}
 
-	// Если задача уже не в состоянии processing, не обрабатываем
-	if gen.Status != "processing" && gen.Status != "pending" {
+	// Если задача уже не в состоянии processing/pending/error, не обрабатываем
+	// error разрешён — asynq может повторить задачу после сбоя пайплайна
+	if gen.Status != "processing" && gen.Status != "pending" && gen.Status != "error" {
 		sugar.Warnf("generation %s is in status %s, skipping", payload.GenerationID, gen.Status)
 		return nil
 	}
 
 	now := time.Now()
-	if gen.Status == "pending" {
+	if gen.Status == "pending" || gen.Status == "error" {
 		startProgress := gen.Progress
 		if startProgress < 10 {
 			startProgress = 10
 		}
 		_ = genStore.UpdateFull(ctx, payload.GenerationID, "processing", startProgress, nil, nil, nil, &now, nil, nil)
-	}
-
-	// Debug: сырой artifacts из БД
-	if len(gen.Artifacts) > 0 {
-		sugar.Infow("loaded generation artifacts (raw)", "generation", payload.GenerationID, "raw", string(gen.Artifacts))
 	}
 
 	// Инициализация логирования с мгновенным сохранением
@@ -256,7 +252,7 @@ func processGeneration(
 				currentArtifacts["llm_requests"] = llmRequests
 				artBytes, _ := json.Marshal(currentArtifacts)
 				logBytes, _ := json.Marshal(logs)
-				genStore.UpdateFull(ctx, payload.GenerationID, gen.Status, gen.Progress, nil, logBytes, artBytes, nil, nil, nil)
+				genStore.UpdateFull(ctx, payload.GenerationID, gen.Status, gen.Progress, nil, logBytes, artBytes, pipeline.NullTimePtr(gen.StartedAt), pipeline.NullTimePtr(gen.FinishedAt), nil)
 
 				// Логируем использование API ключа
 				var totalTokens int64
@@ -344,13 +340,6 @@ func processGeneration(
 	existingArtifacts := make(map[string]any)
 	if len(gen.Artifacts) > 0 {
 		_ = json.Unmarshal(gen.Artifacts, &existingArtifacts)
-	}
-	if len(existingArtifacts) > 0 {
-		keys := make([]string, 0, len(existingArtifacts))
-		for k := range existingArtifacts {
-			keys = append(keys, k)
-		}
-		sugar.Infow("artifacts keys before pipeline", "generation", payload.GenerationID, "keys", keys)
 	}
 
 	// Determine effective generation type: payload > generation record > domain > default
