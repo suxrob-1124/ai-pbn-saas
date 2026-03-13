@@ -30,6 +30,14 @@ func (s *PublishStep) ArtifactKey() string { return "published_path" }
 func (s *PublishStep) Progress() int { return 100 }
 
 func (s *PublishStep) Execute(ctx context.Context, state *PipelineState) (map[string]any, error) {
+	// Gating: in autofix_strict mode, block publish if blocking issues remain
+	if blocked, _ := state.Artifacts["audit_fix_publish_blocked"].(bool); blocked {
+		if state.AppendLog != nil {
+			state.AppendLog("PublishStep: blocked by audit_fix_publish_blocked (autofix_strict mode)")
+		}
+		return nil, fmt.Errorf("publish: blocked by audit autofix — blocking issues remain after fix attempt")
+	}
+
 	const defaultDelayMinutes = 60
 	if state.Publisher == nil {
 		return nil, fmt.Errorf("publish: publisher is not configured")
@@ -85,6 +93,14 @@ func (s *PublishStep) Execute(ctx context.Context, state *PipelineState) (map[st
 			}
 		}
 		return nil, fmt.Errorf("publish: %w", err)
+	}
+	if state.DomainStore != nil {
+		if err := state.DomainStore.UpdateDeploymentMode(ctx, state.DomainID, deployMode); err != nil {
+			return nil, fmt.Errorf("publish: update deployment mode: %w", err)
+		}
+		if state.Domain != nil {
+			state.Domain.DeploymentMode = sqlstore.NullableString(deployMode)
+		}
 	}
 	if err := state.DomainStore.UpdateStatus(ctx, state.DomainID, "published"); err != nil {
 		return nil, fmt.Errorf("publish: update domain status: %w", err)

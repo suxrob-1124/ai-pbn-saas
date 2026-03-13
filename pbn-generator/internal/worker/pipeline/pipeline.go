@@ -61,6 +61,7 @@ type PipelineState struct {
 	// Config
 	DefaultModel   string // Дефолтная модель LLM
 	DeploymentMode string
+	AuditFixMode   string // disabled | report_only | autofix_soft | autofix_strict
 
 	// Domain data
 	Domain  *sqlstore.Domain

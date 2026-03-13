@@ -30,6 +30,47 @@ func (s *AuditStep) Execute(ctx context.Context, state *PipelineState) (map[stri
 		return nil, fmt.Errorf("audit: generated_files is empty")
 	}
 
+	report := runAudit(files)
+
+	if state.AppendLog != nil {
+		state.AppendLog(fmt.Sprintf("Audit completed: %d findings (errors=%d, warnings=%d)",
+			report.Summary.Total, report.Summary.Errors, report.Summary.Warnings))
+	}
+
+	if state.AuditStore != nil {
+		if err := state.AuditStore.UpsertRules(ctx, defaultAuditRules()); err != nil && state.AppendLog != nil {
+			state.AppendLog(fmt.Sprintf("Audit rules upsert failed: %v", err))
+		}
+		if err := state.AuditStore.ReplaceFindings(ctx, state.GenerationID, toStoreFindings(state, report.Findings)); err != nil && state.AppendLog != nil {
+			state.AppendLog(fmt.Sprintf("Audit findings save failed: %v", err))
+		}
+	}
+
+	return map[string]any{
+		"audit_report":     report,
+		"audit_status":     report.Status,
+		"audit_has_issues": report.Summary.Total > 0,
+	}, nil
+}
+
+// AuditReport holds the structured result of an audit run.
+type AuditReport struct {
+	Status   string       `json:"status"`
+	Summary  AuditSummary `json:"summary"`
+	Findings []auditFinding `json:"findings"`
+}
+
+// AuditSummary holds aggregate counts for an audit report.
+type AuditSummary struct {
+	Total    int `json:"total"`
+	Errors   int `json:"errors"`
+	Warnings int `json:"warnings"`
+}
+
+// runAudit performs a pure audit on the given generated files.
+// It returns an AuditReport without side-effects (no DB writes, no logging).
+// This helper is reusable by AuditStep and AuditFixStep.
+func runAudit(files []GeneratedFile) AuditReport {
 	fileMap := make(map[string]GeneratedFile)
 	for _, f := range files {
 		clean := normalizePath(f.Path)
@@ -41,18 +82,26 @@ func (s *AuditStep) Execute(ctx context.Context, state *PipelineState) (map[stri
 
 	findings := make([]auditFinding, 0)
 
+	// Check required files
+	// Only 404.html is safely autofixable; index.html is too critical to auto-generate.
+	autofixableRequired := map[string]bool{"404.html": true}
 	required := []string{"index.html", "404.html"}
 	for _, req := range required {
 		if _, ok := fileMap[req]; !ok {
 			findings = append(findings, auditFinding{
-				RuleCode: "missing_required_file",
-				Severity: "error",
-				Message:  fmt.Sprintf("missing required file: %s", req),
-				FilePath: req,
+				RuleCode:    "missing_required_file",
+				Severity:    "error",
+				Message:     fmt.Sprintf("missing required file: %s", req),
+				FilePath:    req,
+				Blocking:    true,
+				Autofixable: autofixableRequired[req],
+				TargetFiles: []string{req},
+				FixKind:     "missing_required_file",
 			})
 		}
 	}
 
+	// Check missing asset references
 	missing := map[string]map[string]bool{}
 	for _, f := range files {
 		ext := strings.ToLower(path.Ext(f.Path))
@@ -84,12 +133,19 @@ func (s *AuditStep) Execute(ctx context.Context, state *PipelineState) (map[stri
 			"ref":     ref,
 			"sources": srcList,
 		})
+		// Only text HTML/CSS local refs are autofixable in v1
+		refExt := strings.ToLower(path.Ext(ref))
+		isTextAsset := refExt == ".html" || refExt == ".css" || refExt == ".js" || refExt == ""
 		findings = append(findings, auditFinding{
-			RuleCode: "missing_asset",
-			Severity: "warn",
-			Message:  fmt.Sprintf("missing asset referenced: %s", ref),
-			FilePath: ref,
-			Details:  details,
+			RuleCode:    "missing_asset",
+			Severity:    "warn",
+			Message:     fmt.Sprintf("missing asset referenced: %s", ref),
+			FilePath:    ref,
+			Details:     details,
+			Blocking:    false,
+			Autofixable: isTextAsset,
+			TargetFiles: srcList,
+			FixKind:     "missing_asset_local_ref",
 		})
 	}
 
@@ -101,42 +157,27 @@ func (s *AuditStep) Execute(ctx context.Context, state *PipelineState) (map[stri
 		status = "warn"
 	}
 
-	if state.AppendLog != nil {
-		state.AppendLog(fmt.Sprintf("Audit completed: %d findings (errors=%d, warnings=%d)", len(findings), errorsCount, warningsCount))
-	}
-
-	if state.AuditStore != nil {
-		if err := state.AuditStore.UpsertRules(ctx, defaultAuditRules()); err != nil && state.AppendLog != nil {
-			state.AppendLog(fmt.Sprintf("Audit rules upsert failed: %v", err))
-		}
-		if err := state.AuditStore.ReplaceFindings(ctx, state.GenerationID, toStoreFindings(state, findings)); err != nil && state.AppendLog != nil {
-			state.AppendLog(fmt.Sprintf("Audit findings save failed: %v", err))
-		}
-	}
-
-	report := map[string]any{
-		"status": status,
-		"summary": map[string]int{
-			"total":    len(findings),
-			"errors":   errorsCount,
-			"warnings": warningsCount,
+	return AuditReport{
+		Status: status,
+		Summary: AuditSummary{
+			Total:    len(findings),
+			Errors:   errorsCount,
+			Warnings: warningsCount,
 		},
-		"findings": findings,
+		Findings: findings,
 	}
-
-	return map[string]any{
-		"audit_report":    report,
-		"audit_status":    status,
-		"audit_has_issues": len(findings) > 0,
-	}, nil
 }
 
 type auditFinding struct {
-	RuleCode string          `json:"rule_code"`
-	Severity string          `json:"severity"`
-	Message  string          `json:"message"`
-	FilePath string          `json:"file_path,omitempty"`
-	Details  json.RawMessage `json:"details,omitempty"`
+	RuleCode    string          `json:"rule_code"`
+	Severity    string          `json:"severity"`
+	Message     string          `json:"message"`
+	FilePath    string          `json:"file_path,omitempty"`
+	Details     json.RawMessage `json:"details,omitempty"`
+	Blocking    bool            `json:"blocking"`
+	Autofixable bool            `json:"autofixable"`
+	TargetFiles []string        `json:"target_files,omitempty"`
+	FixKind     string          `json:"fix_kind,omitempty"`
 }
 
 func defaultAuditRules() []sqlstore.AuditRule {

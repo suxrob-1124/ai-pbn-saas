@@ -15,6 +15,7 @@ const (
 	StepImageGeneration    = "image_generation"
 	StepAssembly           = "assembly"
 	StepAudit              = "audit"
+	StepAuditFix           = "audit_fix"
 	StepPublish            = "publish"
 	Step404Page            = "404_page"
 	StepSaving             = "saving"

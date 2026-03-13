@@ -374,6 +374,7 @@ func processGeneration(
 		Publisher:         currentPublisher,
 		DeploymentMode:    deployMode,
 		DefaultModel:      cfg.GeminiDefaultModel,
+		AuditFixMode:      cfg.AuditFixMode,
 		Domain:            &domain,
 		Project:           &project,
 		Artifacts:         existingArtifacts,
@@ -398,6 +399,7 @@ func processGeneration(
 		&pipeline.Page404GenerationStep{},
 		&pipeline.AssemblyStep{},
 		&pipeline.AuditStep{},
+		&pipeline.AuditFixStep{},
 		&pipeline.PublishStep{},
 	}
 
