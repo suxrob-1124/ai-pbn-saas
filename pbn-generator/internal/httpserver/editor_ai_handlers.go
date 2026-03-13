@@ -587,7 +587,7 @@ func (s *Server) handleDomainEditorAISuggest(w http.ResponseWriter, r *http.Requ
 			return
 		}
 		if s.logger != nil {
-			dctx := makeDomainFSContext(domain)
+			dctx := s.makeDomainFSContext(domain)
 			s.logger.Errorf(
 				"ai read file failed: domain_id=%s domain_url=%s mode=%s server_id=%s published_path=%s path=%s err=%v",
 				domain.ID,

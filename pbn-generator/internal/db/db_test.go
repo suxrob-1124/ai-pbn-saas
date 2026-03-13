@@ -196,6 +196,15 @@ func TestMigrationStatementsIncludeIndexCheckHistory(t *testing.T) {
 	expectContains(t, stmts, "CREATE INDEX IF NOT EXISTS idx_check_history_check ON index_check_history(check_id);")
 }
 
+func TestMigrationStatementsIncludeAgentSessionEventLog(t *testing.T) {
+	t.Parallel()
+
+	stmts := migrationStatements()
+	expectContains(t, stmts, "ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS diagnostics_json JSONB;")
+	expectContains(t, stmts, "CREATE TABLE IF NOT EXISTS agent_session_events")
+	expectContains(t, stmts, "CREATE INDEX IF NOT EXISTS idx_agent_session_events_session ON agent_session_events(session_id, seq);")
+}
+
 func expectContains(t *testing.T, stmts []string, needle string) {
 	t.Helper()
 	for _, stmt := range stmts {

@@ -102,8 +102,10 @@ type Config struct {
 	IndexCheckHistoryKeepPerCheck  int // Хранить последние N попыток на каждый check (default 5)
 	AnthropicAPIKey                 string
 	AnthropicModel                  string
+	AnthropicBaseURL                string // optional override (used in tests / private deployments)
 	AgentMaxTokens                  int
 	AgentTimeoutSec                 int
+	AuditFixMode                    string // disabled | report_only | autofix_soft | autofix_strict
 }
 
 func Load() Config {
@@ -198,7 +200,8 @@ func Load() Config {
 		AnthropicAPIKey:                 env("ANTHROPIC_API_KEY", ""),
 		AnthropicModel:                  env("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
 		AgentMaxTokens:                  envInt("AGENT_MAX_TOKENS", 8192),
-		AgentTimeoutSec:                 envInt("AGENT_TIMEOUT_SEC", 600),
+		AgentTimeoutSec:                 envInt("AGENT_TIMEOUT_SEC", 1200),
+		AuditFixMode:                    env("AUDIT_FIX_MODE", "disabled"),
 	}
 }
 

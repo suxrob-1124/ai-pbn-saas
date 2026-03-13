@@ -226,6 +226,11 @@ type AgentSessionStore interface {
 	SetSnapshotTag(ctx context.Context, id, tag string) error
 	MarkStaleRunning(ctx context.Context, olderThan time.Duration) (int64, error)
 	SaveMessages(ctx context.Context, id string, messagesJSON, chatLogJSON []byte) error
+	SavePreFileIDs(ctx context.Context, id string, fileIDs []string) error
+	AppendEvent(ctx context.Context, sessionID string, seq int, eventType string, payload []byte) error
+	ListEvents(ctx context.Context, sessionID string) ([]sqlstore.AgentSessionEvent, error)
+	NextEventSeq(ctx context.Context, sessionID string) (int, error)
+	SaveDiagnostics(ctx context.Context, id string, diagJSON []byte) error
 }
 
 type FileLockStore interface {

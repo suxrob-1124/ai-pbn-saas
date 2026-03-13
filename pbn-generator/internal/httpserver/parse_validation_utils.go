@@ -923,6 +923,10 @@ func normalizeRevisionSource(source string) string {
 	switch strings.ToLower(strings.TrimSpace(source)) {
 	case "ai":
 		return "ai"
+	case "agent":
+		return "agent"
+	case "agent_partial":
+		return "agent_partial"
 	case "revert":
 		return "revert"
 	default:

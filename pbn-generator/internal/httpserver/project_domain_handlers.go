@@ -1470,9 +1470,10 @@ func (s *Server) handleDomainGenerate(w http.ResponseWriter, r *http.Request, do
 	// - при обычном запуске после error/paused — из последней упавшей для продолжения с места остановки
 	var baseArtifacts []byte
 	if forceStep != "" {
-		if last, err := s.generations.GetLastByDomain(r.Context(), domainID); err == nil && len(last.Artifacts) > 0 {
+		// Наследуем артефакты только если тип генерации совпадает — иначе артефакты несовместимы.
+		if last, err := s.generations.GetLastByDomain(r.Context(), domainID); err == nil && len(last.Artifacts) > 0 && last.GenerationType == effectiveGenType {
 			baseArtifacts = last.Artifacts
-		} else if last, err := s.generations.GetLastSuccessfulByDomain(r.Context(), domainID); err == nil && len(last.Artifacts) > 0 {
+		} else if last, err := s.generations.GetLastSuccessfulByDomain(r.Context(), domainID); err == nil && len(last.Artifacts) > 0 && last.GenerationType == effectiveGenType {
 			baseArtifacts = last.Artifacts
 		}
 	} else {

@@ -1723,20 +1723,22 @@ func TestDomainGenerateForceStepUsesLatestArtifacts(t *testing.T) {
 	latestErrArtifacts := json.RawMessage(`{"from":"latest-error"}`)
 	olderSuccessArtifacts := json.RawMessage(`{"from":"older-success"}`)
 	s.generations.(*stubGenerationStore).generations["gen-success-old"] = sqlstore.Generation{
-		ID:        "gen-success-old",
-		DomainID:  domainID,
-		Status:    "success",
-		Artifacts: olderSuccessArtifacts,
-		CreatedAt: now.Add(-10 * time.Minute),
-		UpdatedAt: now.Add(-10 * time.Minute),
+		ID:             "gen-success-old",
+		DomainID:       domainID,
+		Status:         "success",
+		GenerationType: "single_page",
+		Artifacts:      olderSuccessArtifacts,
+		CreatedAt:      now.Add(-10 * time.Minute),
+		UpdatedAt:      now.Add(-10 * time.Minute),
 	}
 	s.generations.(*stubGenerationStore).generations["gen-error-latest"] = sqlstore.Generation{
-		ID:        "gen-error-latest",
-		DomainID:  domainID,
-		Status:    "error",
-		Artifacts: latestErrArtifacts,
-		CreatedAt: now.Add(-1 * time.Minute),
-		UpdatedAt: now.Add(-1 * time.Minute),
+		ID:             "gen-error-latest",
+		DomainID:       domainID,
+		Status:         "error",
+		GenerationType: "single_page",
+		Artifacts:      latestErrArtifacts,
+		CreatedAt:      now.Add(-1 * time.Minute),
+		UpdatedAt:      now.Add(-1 * time.Minute),
 	}
 
 	adminCtx := context.WithValue(context.Background(), currentUserContextKey, auth.User{

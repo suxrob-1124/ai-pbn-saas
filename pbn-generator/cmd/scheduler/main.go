@@ -60,7 +60,7 @@ func main() {
 	}
 
 	scheduler := asynq.NewScheduler(redisOpt, &asynq.SchedulerOpts{})
-	if _, err := scheduler.Register("@every 1m", tasks.NewSchedulerTickTask()); err != nil {
+	if _, err := scheduler.Register("@every 1m", tasks.NewSchedulerTickTask(), asynq.Queue(tasks.SchedulerQueueName())); err != nil {
 		sugar.Fatalf("failed to register scheduler tick: %v", err)
 	}
 	go func() {
@@ -69,7 +69,7 @@ func main() {
 		}
 	}()
 
-	server := tasks.NewServer(cfg, 1, false, false)
+	server := tasks.NewSchedulerServer(cfg, 1)
 	mux := asynq.NewServeMux()
 	mux.HandleFunc(tasks.TaskSchedulerTick, func(ctx context.Context, t *asynq.Task) error {
 		return runSchedulerTick(ctx, scheduleStore, linkScheduleStore, genQueueStore, linkTaskStore, domainStore, genStore, projectStore, runLogStore, taskClient, cfg.GenQueueShards, cfg.LinkQueueShards, sugar)

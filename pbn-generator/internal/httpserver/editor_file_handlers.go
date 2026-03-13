@@ -350,8 +350,12 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request, domain sq
 			writeError(w, http.StatusForbidden, "permission denied to read file")
 			return
 		}
+		if isRequestCanceled(err) {
+			// Client aborted the request — not a server error, no response needed.
+			return
+		}
 		if s.logger != nil {
-			dctx := makeDomainFSContext(domain)
+			dctx := s.makeDomainFSContext(domain)
 			s.logger.Errorf(
 				"read file failed: domain_id=%s domain_url=%s mode=%s server_id=%s published_path=%s path=%s err=%v",
 				domain.ID,
@@ -439,7 +443,7 @@ func (s *Server) handleCreateDomainFile(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 		if s.logger != nil {
-			dctx := makeDomainFSContext(domain)
+			dctx := s.makeDomainFSContext(domain)
 			s.logger.Errorf(
 				"write file failed (create): domain_id=%s domain_url=%s mode=%s server_id=%s published_path=%s path=%s err=%v",
 				domain.ID,
@@ -531,7 +535,7 @@ func (s *Server) handleUploadDomainFile(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 		if s.logger != nil {
-			dctx := makeDomainFSContext(domain)
+			dctx := s.makeDomainFSContext(domain)
 			s.logger.Errorf(
 				"write file failed (upload): domain_id=%s domain_url=%s mode=%s server_id=%s published_path=%s path=%s err=%v",
 				domain.ID,
@@ -682,7 +686,7 @@ func (s *Server) handleUpdateFile(w http.ResponseWriter, r *http.Request, domain
 			return
 		}
 		if s.logger != nil {
-			dctx := makeDomainFSContext(domain)
+			dctx := s.makeDomainFSContext(domain)
 			s.logger.Errorf(
 				"write file failed (update): domain_id=%s domain_url=%s mode=%s server_id=%s published_path=%s path=%s err=%v",
 				domain.ID,
@@ -1171,10 +1175,28 @@ func (s *Server) handleFileHistoryByPath(w http.ResponseWriter, r *http.Request,
 			limit = n
 		}
 	}
-	revisions, err := s.fileEdits.ListRevisionsByFile(r.Context(), file.ID, limit)
+	// Fetch more than requested to account for agent_snapshot:* revisions that
+	// will be filtered below — snapshot count is bounded by agent session count
+	// per file (typically ≤5), so 2× is a safe over-fetch.
+	fetchLimit := limit * 2
+	if fetchLimit > 500 {
+		fetchLimit = 500
+	}
+	allRevisions, err := s.fileEdits.ListRevisionsByFile(r.Context(), file.ID, fetchLimit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not list file revisions")
 		return
+	}
+	// Filter out internal rollback baseline revisions — they are implementation
+	// details, not user-visible edit history — then cap at the requested limit.
+	revisions := make([]sqlstore.FileRevision, 0, len(allRevisions))
+	for _, rev := range allRevisions {
+		if !strings.HasPrefix(rev.Source, "agent_snapshot:") {
+			revisions = append(revisions, rev)
+		}
+	}
+	if len(revisions) > limit {
+		revisions = revisions[:limit]
 	}
 	resp := make([]fileRevisionDTO, 0, len(revisions))
 	for _, rev := range revisions {

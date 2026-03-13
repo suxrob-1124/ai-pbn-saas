@@ -94,7 +94,7 @@ func baseMimeType(m string) string {
 }
 
 func (s *Server) listDomainDirs(ctx context.Context, domain sqlstore.Domain) ([]string, error) {
-	items, err := s.resolveContentBackend().ListTree(ctx, makeDomainFSContext(domain), "")
+	items, err := s.resolveContentBackend().ListTree(ctx, s.makeDomainFSContext(domain), "")
 	if err != nil {
 		return nil, err
 	}
@@ -163,6 +163,12 @@ func buildRevision(file *sqlstore.SiteFile, content []byte, source, editedBy, de
 		rev.Description = sqlstore.NullableString(strings.TrimSpace(description))
 	}
 	return rev
+}
+
+// isRequestCanceled returns true when err is a context cancellation or deadline
+// exceeded — i.e. the client aborted the request, not a server-side failure.
+func isRequestCanceled(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 func (s *Server) readDomainFileContent(ctx context.Context, domain sqlstore.Domain, relPath string) (string, string, error) {

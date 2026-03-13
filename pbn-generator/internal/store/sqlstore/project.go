@@ -887,7 +887,7 @@ func (s *GenerationStore) UpdateLogs(ctx context.Context, id string, logs []byte
 func (s *GenerationStore) GetLastSuccessfulByDomain(ctx context.Context, domainID string) (Generation, error) {
 	var g Generation
 	var logs, artifacts, summary, checkpoint sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT id, domain_id, requested_by, status, progress, error, logs, artifacts, artifacts_summary, checkpoint_data, attempts, retryable, next_retry_at, last_error_at, started_at, finished_at, prompt_id, created_at, updated_at
+	err := s.db.QueryRowContext(ctx, `SELECT id, domain_id, requested_by, status, progress, error, logs, artifacts, artifacts_summary, checkpoint_data, attempts, retryable, next_retry_at, last_error_at, started_at, finished_at, prompt_id, generation_type, created_at, updated_at
 		FROM generations WHERE domain_id=$1 AND status='success' ORDER BY created_at DESC LIMIT 1`, domainID).
 		Scan(&g.ID, &g.DomainID, &g.RequestedBy, &g.Status, &g.Progress, &g.Error, &logs, &artifacts, &summary, &checkpoint, &g.Attempts, &g.Retryable, &g.NextRetryAt, &g.LastErrorAt, &g.StartedAt, &g.FinishedAt, &g.PromptID, &g.GenerationType, &g.CreatedAt, &g.UpdatedAt)
 	if err != nil {
@@ -912,7 +912,7 @@ func (s *GenerationStore) GetLastSuccessfulByDomain(ctx context.Context, domainI
 func (s *GenerationStore) GetLastByDomain(ctx context.Context, domainID string) (Generation, error) {
 	var g Generation
 	var logs, artifacts, summary, checkpoint sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT id, domain_id, requested_by, status, progress, error, logs, artifacts, artifacts_summary, checkpoint_data, attempts, retryable, next_retry_at, last_error_at, started_at, finished_at, prompt_id, created_at, updated_at
+	err := s.db.QueryRowContext(ctx, `SELECT id, domain_id, requested_by, status, progress, error, logs, artifacts, artifacts_summary, checkpoint_data, attempts, retryable, next_retry_at, last_error_at, started_at, finished_at, prompt_id, generation_type, created_at, updated_at
 		FROM generations WHERE domain_id=$1 ORDER BY created_at DESC LIMIT 1`, domainID).
 		Scan(&g.ID, &g.DomainID, &g.RequestedBy, &g.Status, &g.Progress, &g.Error, &logs, &artifacts, &summary, &checkpoint, &g.Attempts, &g.Retryable, &g.NextRetryAt, &g.LastErrorAt, &g.StartedAt, &g.FinishedAt, &g.PromptID, &g.GenerationType, &g.CreatedAt, &g.UpdatedAt)
 	if err != nil {

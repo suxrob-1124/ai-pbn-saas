@@ -88,17 +88,18 @@ func main() {
 		)
 	})
 	linkWorker := &worker.LinkWorker{
-		BaseDir:   cfg.DeployBaseDir,
-		Config:    cfg,
-		Logger:    sugar,
-		Tasks:     linkTaskStore,
-		Domains:   domainStore,
-		Projects:  projectStore,
-		Users:     userStore,
-		SiteFiles: siteFileStore,
-		FileEdits: fileEditStore,
-		LLMUsage:  llmUsageStore,
-		Pricing:   modelPricingStore,
+		BaseDir:        cfg.DeployBaseDir,
+		Config:         cfg,
+		Logger:         sugar,
+		Tasks:          linkTaskStore,
+		Domains:        domainStore,
+		Projects:       projectStore,
+		Users:          userStore,
+		SiteFiles:      siteFileStore,
+		FileEdits:      fileEditStore,
+		LLMUsage:       llmUsageStore,
+		Pricing:        modelPricingStore,
+		ContentBackend: publishContentBackend,
 	}
 	mux.HandleFunc(tasks.TaskProcessLink, func(ctx context.Context, t *asynq.Task) error {
 		payload, err := tasks.ParseLinkTaskPayload(t)

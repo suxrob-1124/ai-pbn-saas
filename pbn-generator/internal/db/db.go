@@ -219,7 +219,7 @@ func migrationStatements() []string {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_file_revisions_file_created_at ON file_revisions(file_id, created_at DESC);`,
 		`CREATE INDEX IF NOT EXISTS idx_domains_project ON domains(project_id);`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_domains_url ON domains(url);`,
+		`CREATE INDEX IF NOT EXISTS idx_domains_url ON domains(url);`,
 		`CREATE TABLE IF NOT EXISTS system_prompts (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
@@ -549,6 +549,18 @@ func migrationStatements() []string {
 		`CREATE INDEX IF NOT EXISTS idx_agent_sessions_snapshot_tag ON agent_sessions(snapshot_tag) WHERE snapshot_tag IS NOT NULL;`,
 		`ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS messages_json JSONB;`,
 		`ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS chat_log_json JSONB;`,
+		`ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS pre_file_ids JSONB;`,
+		`ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS diagnostics_json JSONB;`,
+		`CREATE TABLE IF NOT EXISTS agent_session_events (
+			id           TEXT PRIMARY KEY,
+			session_id   TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
+			seq          INT NOT NULL,
+			event_type   TEXT NOT NULL,
+			payload_json JSONB NOT NULL,
+			created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			CONSTRAINT uniq_agent_session_events_seq UNIQUE (session_id, seq)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_agent_session_events_session ON agent_session_events(session_id, seq);`,
 		// --- File locks ---
 		`CREATE TABLE IF NOT EXISTS file_locks (
     domain_id TEXT NOT NULL,

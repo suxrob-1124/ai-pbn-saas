@@ -127,7 +127,7 @@ func (s *FileEditSQLStore) ListByUser(ctx context.Context, userEmail string, lim
 // CreateRevision сохраняет снапшот версии файла.
 // После вставки автоматически удаляет старые ревизии этого файла, если задан лимит.
 func (s *FileEditSQLStore) CreateRevision(ctx context.Context, rev FileRevision) error {
-	if rev.Version <= 0 {
+	if rev.Version < 0 {
 		return fmt.Errorf("failed to create file revision: invalid version")
 	}
 	if len(rev.Content) == 0 {

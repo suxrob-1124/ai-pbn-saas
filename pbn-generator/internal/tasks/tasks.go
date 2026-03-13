@@ -23,6 +23,7 @@ const (
 const (
 	genQueuePrefix  = "gen"
 	linkQueuePrefix = "link"
+	schedulerQueue  = "scheduler"
 	defaultQueue    = "default"
 )
 
@@ -59,7 +60,7 @@ func NewGenerateTask(genID, domainID string, forceStep string, generationType st
 }
 
 func NewSchedulerTickTask() *asynq.Task {
-	return asynq.NewTask(TaskSchedulerTick, nil, asynq.MaxRetry(0))
+	return asynq.NewTask(TaskSchedulerTick, nil, asynq.MaxRetry(0), asynq.Queue(schedulerQueue))
 }
 
 // NewLinkTaskTask создает задачу линкбилдинга.
@@ -136,6 +137,28 @@ func NewServer(cfg config.Config, concurrency int, includeGenQueues bool, includ
 			Queues:      queues,
 		},
 	)
+}
+
+// NewSchedulerServer returns a server that only consumes scheduler tick tasks.
+// This prevents the scheduler process from competing with the worker on the default queue.
+func NewSchedulerServer(cfg config.Config, concurrency int) *asynq.Server {
+	return asynq.NewServer(
+		asynq.RedisClientOpt{
+			Addr:     cfg.RedisAddr,
+			Password: cfg.RedisPassword,
+			DB:       cfg.RedisDB,
+		},
+		asynq.Config{
+			Concurrency: concurrency,
+			Queues: map[string]int{
+				schedulerQueue: 1,
+			},
+		},
+	)
+}
+
+func SchedulerQueueName() string {
+	return schedulerQueue
 }
 
 // GenerationQueueName возвращает имя очереди генерации по индексу.

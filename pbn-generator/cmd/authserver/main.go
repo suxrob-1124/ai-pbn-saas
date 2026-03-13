@@ -169,7 +169,8 @@ func main() {
 
 func buildContentBackend(cfg config.Config) (domainfs.SiteContentBackend, *domainfs.SSHPool, error) {
 	localBackend := domainfs.NewLocalFSBackend(cfg.DeployBaseDir)
-	if !strings.EqualFold(strings.TrimSpace(cfg.DeployMode), "ssh_remote") {
+	targetsRaw := strings.TrimSpace(cfg.DeployTargetsJSON)
+	if !strings.EqualFold(strings.TrimSpace(cfg.DeployMode), "ssh_remote") && targetsRaw == "" {
 		return localBackend, nil, nil
 	}
 
@@ -184,7 +185,10 @@ func buildContentBackend(cfg config.Config) (domainfs.SiteContentBackend, *domai
 		}
 	}
 	if len(targets) == 0 {
-		return nil, nil, fmt.Errorf("DEPLOY_TARGETS_JSON must contain at least one target for ssh_remote")
+		if strings.EqualFold(strings.TrimSpace(cfg.DeployMode), "ssh_remote") {
+			return nil, nil, fmt.Errorf("DEPLOY_TARGETS_JSON must contain at least one target for ssh_remote")
+		}
+		return localBackend, nil, nil
 	}
 
 	pool, err := domainfs.NewSSHPool(domainfs.SSHPoolConfig{
