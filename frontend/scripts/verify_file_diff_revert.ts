@@ -6,7 +6,7 @@ const root = process.cwd();
 const historyPath = path.join(root, "components", "FileHistory.tsx");
 const diffPath = path.join(root, "components", "MonacoDiffEditor.tsx");
 const modalPath = path.join(root, "components", "ConflictResolutionModal.tsx");
-const pagePath = path.join(root, "app", "domains", "[id]", "editor", "page.tsx");
+const pagePath = path.join(root, "app", "(app)", "domains", "[id]", "editor", "page.tsx");
 const apiPath = path.join(root, "lib", "fileApi.ts");
 
 assert.ok(existsSync(historyPath), "missing FileHistory component");

@@ -74,10 +74,13 @@ async function main() {
     assert.equal(params.get("page"), "2");
   }
 
-  const pagePath = path.join(root, "frontend/app/monitoring/indexing/page.tsx");
+  const pagePath = path.join(root, "frontend/app/(app)/monitoring/indexing/page.tsx");
   const page = fs.readFileSync(pagePath, "utf8");
-  assert.ok(page.includes("page * limit < totalChecks"), "page should use total for next page");
-  assert.ok(page.includes("setPage(totalPages)"), "page should clamp page when total shrinks");
+  assert.ok(
+    page.includes("hasNextPageByTotal(page, limit, totalChecks)"),
+    "page should use total-based helper for next page"
+  );
+  assert.ok(page.includes("setPage(total)"), "page should clamp page when total shrinks");
 
   const tablePath = path.join(root, "frontend/components/indexing/IndexTable.tsx");
   const table = fs.readFileSync(tablePath, "utf8");

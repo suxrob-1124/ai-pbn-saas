@@ -6,15 +6,15 @@ const root = path.resolve(__dirname, "..", "..");
 
 const read = (p: string) => fs.readFileSync(path.join(root, p), "utf8");
 
-const pagePath = "frontend/app/monitoring/indexing/page.tsx";
+const pagePath = "frontend/app/(app)/monitoring/indexing/page.tsx";
 const page = read(pagePath);
 
 const requiredComponents = [
   "IndexFiltersBar",
-  "IndexCalendar",
   "IndexTable",
-  "IndexStats",
-  "FailedChecksAlert"
+  "FailedChecksAlert",
+  "PaginationControls",
+  "useIndexCheckHistory"
 ];
 
 requiredComponents.forEach((name) => {
@@ -31,12 +31,9 @@ queryKeys.forEach((key) => {
 
 const componentFiles = [
   "frontend/components/IndexFiltersBar.tsx",
-  "frontend/components/IndexCalendar.tsx",
   "frontend/components/FailedChecksAlert.tsx",
   "frontend/components/indexing/IndexFiltersBar.tsx",
-  "frontend/components/indexing/IndexCalendar.tsx",
   "frontend/components/indexing/IndexTable.tsx",
-  "frontend/components/indexing/IndexStats.tsx",
   "frontend/components/indexing/FailedChecksAlert.tsx"
 ];
 

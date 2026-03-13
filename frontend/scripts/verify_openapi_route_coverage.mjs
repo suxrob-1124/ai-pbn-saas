@@ -8,7 +8,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const openApiPath = path.resolve(__dirname, "..", "openapi.yaml");
-const serverPath = path.resolve(__dirname, "..", "..", "pbn-generator", "internal", "httpserver", "server.go");
+const httpServerDir = path.resolve(__dirname, "..", "..", "pbn-generator", "internal", "httpserver");
 
 function fail(message) {
   console.error(`OPENAPI_ROUTE_COVERAGE: ${message}`);
@@ -20,6 +20,18 @@ function readText(filePath) {
     return fs.readFileSync(filePath, "utf8");
   } catch (error) {
     fail(`cannot read file: ${filePath}\n${String(error)}`);
+  }
+}
+
+function loadBackendSources(rootDir) {
+  try {
+    return fs
+      .readdirSync(rootDir, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".go") && !entry.name.endsWith("_test.go"))
+      .map((entry) => readText(path.join(rootDir, entry.name)))
+      .join("\n");
+  } catch (error) {
+    fail(`cannot list backend sources: ${rootDir}\n${String(error)}`);
   }
 }
 
@@ -86,7 +98,7 @@ function hasCoverageInBackend(openApiPath, backendRoutes) {
 }
 
 const openApiContent = readText(openApiPath);
-const serverContent = readText(serverPath);
+const serverContent = loadBackendSources(httpServerDir);
 
 const openApiPaths = parseOpenApiPaths(openApiContent);
 if (openApiPaths.size === 0) {
@@ -94,7 +106,7 @@ if (openApiPaths.size === 0) {
 }
 const backendRoutes = parseBackendRegisteredPaths(serverContent);
 if (backendRoutes.size === 0) {
-  fail("no `/api/*` routes parsed from server.go");
+  fail("no `/api/*` routes parsed from httpserver/*.go");
 }
 
 const backendMissingInOpenApi = [];

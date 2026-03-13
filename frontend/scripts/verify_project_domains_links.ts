@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-const pagePath = path.join(process.cwd(), "app", "projects", "[id]", "page.tsx");
+const pagePath = path.join(process.cwd(), "app", "(app)", "projects", "[id]", "page.tsx");
 const pageContent = readFileSync(pagePath, "utf8");
 
 const mustContain = (content: string, needle: string) => {

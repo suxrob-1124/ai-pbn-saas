@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-const pagePath = path.join(process.cwd(), "app", "domains", "[id]", "editor", "page.tsx");
+const pagePath = path.join(process.cwd(), "app", "(app)", "domains", "[id]", "editor", "page.tsx");
 const page = readFileSync(pagePath, "utf8");
 const actionsHookPath = path.join(process.cwd(), "features", "editor-v3", "hooks", "useEditorPageActions.ts");
 const actionsHook = readFileSync(actionsHookPath, "utf8");

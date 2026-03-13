@@ -4,22 +4,24 @@ import path from "node:path";
 
 const root = path.resolve(__dirname, "..", "..");
 
-const adminPagePath = path.join(root, "frontend/app/monitoring/llm-usage/page.tsx");
+const adminPagePath = path.join(root, "frontend/app/(app)/monitoring/llm-usage/page.tsx");
 const adminPage = fs.readFileSync(adminPagePath, "utf8");
+const usageCostValuePath = path.join(root, "frontend/features/llm-usage/components/UsageCostValue.tsx");
+const usageCostValue = fs.readFileSync(usageCostValuePath, "utf8");
 
-assert.ok(adminPage.includes("estimated"), "Admin LLM usage page must render estimated badge");
+assert.ok(adminPage.includes("UsageCostValue"), "Admin LLM usage page must render estimated badge");
 assert.ok(
-  adminPage.includes("нет активного тарифа модели на момент запроса"),
-  "Admin LLM usage page must explain n/a cost in tooltip"
+  usageCostValue.includes("нет активного тарифа модели на момент запроса"),
+  "UsageCostValue must explain n/a cost in tooltip"
 );
-assert.ok(adminPage.includes("item.token_source !== \"provider\""), "Estimated badge should depend on token source");
+assert.ok(adminPage.includes("UsageTokenSourceBadge"), "Admin page must render token source badge");
 
-const projectPagePath = path.join(root, "frontend/app/projects/[id]/usage/page.tsx");
+const projectPagePath = path.join(root, "frontend/app/(app)/projects/[id]/usage/page.tsx");
 const projectPage = fs.readFileSync(projectPagePath, "utf8");
 assert.ok(
-  projectPage.includes("Estimated cost (USD)") || projectPage.includes("Оценочная стоимость (USD)"),
+  projectPage.includes("UsageCostValue"),
   "Project usage page must include cost KPI"
 );
-assert.ok(projectPage.includes("item.estimated_cost_usd"), "Project usage table must display per-event cost");
+assert.ok(projectPage.includes("estimated_cost_usd"), "Project usage table must display per-event cost");
 
 console.log("OK");

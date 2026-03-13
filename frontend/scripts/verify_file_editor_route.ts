@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 const root = process.cwd();
-const pagePath = path.join(root, "app", "domains", "[id]", "editor", "page.tsx");
+const pagePath = path.join(root, "app", "(app)", "domains", "[id]", "editor", "page.tsx");
 const fileTreePath = path.join(root, "components", "FileTree.tsx");
 const monacoPath = path.join(root, "components", "MonacoEditor.tsx");
 const toolbarPath = path.join(root, "components", "EditorToolbar.tsx");

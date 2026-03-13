@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-const pagePath = path.join(process.cwd(), "app", "domains", "[id]", "page.tsx");
+const pagePath = path.join(process.cwd(), "app", "(app)", "domains", "[id]", "page.tsx");
 const pageContent = readFileSync(pagePath, "utf8");
 
 const mustContain = (content: string, needle: string) => {
@@ -20,7 +20,9 @@ const mustNotContain = (content: string, needle: string) => {
 mustNotContain(pageContent, "LinkTaskForm");
 mustNotContain(pageContent, "LinkTaskList");
 mustNotContain(pageContent, "CSVImport");
-mustNotContain(pageContent, "Ссылки");
+mustContain(pageContent, "DomainLinkStatusSection");
+mustContain(pageContent, "linkTasks");
+mustContain(pageContent, "linkNotice");
 
 const csvComponentPath = path.join(process.cwd(), "components", "CSVImport.tsx");
 const csvContent = readFileSync(csvComponentPath, "utf8");

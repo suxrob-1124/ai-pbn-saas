@@ -11,16 +11,29 @@ const assertContains = (content: string, needle: string, label: string) => {
 };
 
 const root = process.cwd();
-const projectPage = path.join(root, "app", "projects", "[id]", "page.tsx");
-const domainPage = path.join(root, "app", "domains", "[id]", "page.tsx");
+const projectPage = path.join(root, "app", "(app)", "projects", "[id]", "page.tsx");
+const domainPage = path.join(root, "app", "(app)", "domains", "[id]", "page.tsx");
+const projectHeader = path.join(
+  root,
+  "features",
+  "domain-project",
+  "components",
+  "ProjectHeaderActionsSection.tsx"
+);
 
 const projectContent = readFile(projectPage);
 const domainContent = readFile(domainPage);
+const projectHeaderContent = readFile(projectHeader);
 
-assertContains(projectContent, "Расписания", "project tabs");
-assertContains(projectContent, "Очередь", "project tabs");
-assert.throws(() => assertContains(domainContent, "Ссылки", "domain tabs"), /Ссылки/);
+assertContains(projectContent, "ProjectHeaderActionsSection", "project header actions");
+assertContains(projectContent, "ProjectSchedulesSection", "project schedules section");
+assertContains(projectHeaderContent, "Очередь", "project queue CTA");
+assertContains(projectHeaderContent, "/monitoring/indexing", "project monitoring CTA");
+assertContains(projectHeaderContent, "LLM Usage", "project usage CTA");
+assertContains(domainContent, "DomainLinkStatusSection", "domain link section");
+assertContains(domainContent, "DomainResultSection", "domain result section");
+assert.throws(() => assertContains(domainContent, "LinkTaskForm", "legacy domain link form"), /LinkTaskForm/);
 
-assert.throws(() => assertContains("", "Расписания", "project tabs"), /Расписания/);
+assert.throws(() => assertContains("", "ProjectHeaderActionsSection", "project header actions"), /ProjectHeaderActionsSection/);
 
 console.log("OK");

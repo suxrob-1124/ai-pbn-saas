@@ -12,9 +12,10 @@ const mustContain = (needle: string) => {
 };
 
 mustContain("Редактировать");
-mustContain("Удалить расписание");
-mustContain("Подтвердить удаление");
-mustContain("Следующий запуск");
+mustContain("Удалить расписание?");
+mustContain("След. запуск:");
+mustContain("Это действие нельзя отменить");
+mustContain("ScheduleTrigger");
 
 let missingCaught = false;
 try {

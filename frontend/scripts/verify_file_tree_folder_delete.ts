@@ -4,7 +4,7 @@ import path from "node:path";
 
 const root = process.cwd();
 const treePath = path.join(root, "components", "FileTree.tsx");
-const editorPath = path.join(root, "app", "domains", "[id]", "editor", "page.tsx");
+const editorPath = path.join(root, "app", "(app)", "domains", "[id]", "editor", "page.tsx");
 
 assert.ok(existsSync(treePath), "missing FileTree.tsx");
 assert.ok(existsSync(editorPath), "missing editor page");

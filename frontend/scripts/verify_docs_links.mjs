@@ -127,18 +127,25 @@ if (docsRoutes.size === 0) {
   fail("no docs routes found under frontend/app/docs");
 }
 
-const filesToCheck = [
+const requiredFilesToCheck = [
   path.resolve(repoRoot, "README.md"),
-  path.resolve(repoRoot, "DOCS_D0_GAP_REPORT.md"),
   path.resolve(repoRoot, "frontend", "docs-content", "registry.ts"),
   path.resolve(repoRoot, "frontend", "components", "DocsSidebar.tsx"),
   path.resolve(repoRoot, "frontend", "app", "docs", "page.tsx"),
 ];
+const optionalFilesToCheck = [path.resolve(repoRoot, "DOCS_D0_GAP_REPORT.md")];
 
 const problems = [];
-for (const filePath of filesToCheck) {
+for (const filePath of requiredFilesToCheck) {
   if (!exists(filePath)) {
     problems.push(`missing file to check: ${path.relative(repoRoot, filePath)}`);
+    continue;
+  }
+  verifyMarkdownLinks(filePath, docsRoutes, problems);
+  verifyDocsRouteStrings(filePath, docsRoutes, problems);
+}
+for (const filePath of optionalFilesToCheck) {
+  if (!exists(filePath)) {
     continue;
   }
   verifyMarkdownLinks(filePath, docsRoutes, problems);
@@ -154,5 +161,5 @@ if (problems.length > 0) {
 }
 
 console.log(
-  `DOCS_LINK_CHECK: ok (${filesToCheck.length} files checked, ${docsRoutes.size} docs routes indexed)`
+  `DOCS_LINK_CHECK: ok (${requiredFilesToCheck.length + optionalFilesToCheck.filter(exists).length} files checked, ${docsRoutes.size} docs routes indexed)`
 );

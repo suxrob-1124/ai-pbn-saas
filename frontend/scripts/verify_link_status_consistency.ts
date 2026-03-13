@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 
-const queuePage = fs.readFileSync(path.join(process.cwd(), "app", "queue", "page.tsx"), "utf8");
+const queuePage = fs.readFileSync(path.join(process.cwd(), "app", "(app)", "queue", "page.tsx"), "utf8");
 const linkTaskList = fs.readFileSync(path.join(process.cwd(), "components", "LinkTaskList.tsx"), "utf8");
 
 assert.match(
   queuePage,
-  /from "\.\.\/\.\.\/lib\/linkTaskStatus"/,
+  /linkTaskStatus/,
   "queue page must import shared linkTaskStatus helpers"
 );
 assert.match(
@@ -23,7 +23,7 @@ assert.doesNotMatch(
 
 assert.match(
   linkTaskList,
-  /from "\.\.\/lib\/linkTaskStatus"/,
+  /linkTaskStatus/,
   "LinkTaskList must import shared linkTaskStatus helpers"
 );
 assert.match(

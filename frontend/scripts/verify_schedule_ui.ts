@@ -12,17 +12,31 @@ const assertFileContains = (filePath: string, needle: string) => {
 };
 
 const root = process.cwd();
-const projectPage = path.join(root, "app", "projects", "[id]", "page.tsx");
+const projectPage = path.join(root, "app", "(app)", "projects", "[id]", "page.tsx");
+const schedulesSection = path.join(
+  root,
+  "features",
+  "domain-project",
+  "components",
+  "ProjectSchedulesSection.tsx"
+);
 const scheduleForm = path.join(root, "components", "ScheduleForm.tsx");
-const scheduleList = path.join(root, "components", "ScheduleList.tsx");
+const scheduleRunHistory = path.join(
+  root,
+  "features",
+  "domain-project",
+  "components",
+  "ScheduleRunHistory.tsx"
+);
 const scheduleTrigger = path.join(root, "components", "ScheduleTrigger.tsx");
 
-assertFileContains(projectPage, "ScheduleForm");
-assertFileContains(projectPage, "ScheduleList");
-assertFileContains(projectPage, "Расписание генерации");
-assertFileContains(projectPage, "Расписание ссылок");
-assertFileContains(scheduleForm, "Сейчас:");
-assertFileContains(scheduleList, "ScheduleTrigger");
+assertFileContains(projectPage, "ProjectSchedulesSection");
+assertFileContains(schedulesSection, "ScheduleForm");
+assertFileContains(schedulesSection, "ScheduleRunHistory");
+assertFileContains(schedulesSection, "Генерация сайтов");
+assertFileContains(schedulesSection, "Вставка ссылок (Link Flow)");
+assertFileContains(scheduleRunHistory, "История запусков");
+assertFileContains(scheduleForm, "Текущее время:");
 assertFileContains(scheduleTrigger, "Запуск");
 
 let missingError = false;

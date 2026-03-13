@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-const pagePath = path.join(process.cwd(), "app", "projects", "[id]", "queue", "page.tsx");
+const pagePath = path.join(process.cwd(), "app", "(app)", "projects", "[id]", "queue", "page.tsx");
 const content = readFileSync(pagePath, "utf8");
 
 if (!content.includes("normalizeLinkTaskStatus(task.status)")) {

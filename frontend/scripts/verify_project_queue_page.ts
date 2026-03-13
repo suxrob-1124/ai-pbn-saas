@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-const filePath = path.join(process.cwd(), "app", "projects", "[id]", "queue", "page.tsx");
+const filePath = path.join(process.cwd(), "app", "(app)", "projects", "[id]", "queue", "page.tsx");
 const content = readFileSync(filePath, "utf8");
 
 const mustContain = (needle: string) => {
@@ -12,9 +12,11 @@ const mustContain = (needle: string) => {
 };
 
 mustContain("Удалить из очереди");
-mustContain("Фильтр по статусу");
-mustContain("Фильтр по дате");
+mustContain("STATUS_FILTER_OPTIONS");
+mustContain("FilterDateInput");
 mustContain("Приоритет");
+mustContain("История запусков");
+mustContain("Очередь ссылок");
 
 let missingCaught = false;
 try {
