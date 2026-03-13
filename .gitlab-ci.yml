@@ -1,0 +1,145 @@
+# ─────────────────────────────────────────────────────────────────
+# SiteGenAI — GitLab CI/CD
+# ─────────────────────────────────────────────────────────────────
+# Pipeline:  test → build → deploy
+# Deploy:    по SSH на 185.209.20.95 (только ветка main)
+# ─────────────────────────────────────────────────────────────────
+
+stages:
+  - test
+  - build
+  - deploy
+
+variables:
+  # Docker Compose на сервере
+  DEPLOY_HOST: "185.209.20.95"
+  DEPLOY_USER: "deploy"
+  DEPLOY_PATH: "/opt/sitegenai"
+  DOMAIN: "sitegenai.alfasearch.ru"
+
+# ── Кэш Go модулей ──────────────────────────────────────────────
+.go-cache: &go-cache
+  cache:
+    key: go-modules
+    paths:
+      - pbn-generator/vendor/
+      - .go-cache/
+
+# ═══════════════════════════════════════════════════════════════
+# STAGE: TEST
+# ═══════════════════════════════════════════════════════════════
+
+go-test:
+  stage: test
+  image: golang:1.24
+  <<: *go-cache
+  variables:
+    GOPATH: "$CI_PROJECT_DIR/.go-cache"
+    CGO_ENABLED: "1"
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq build-essential pkg-config
+    - cd pbn-generator
+  script:
+    - go mod download
+    - go build ./...
+    - go test ./... -count=1 -timeout 120s
+  rules:
+    - if: $CI_MERGE_REQUEST_ID
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "pre_prod"
+
+frontend-lint:
+  stage: test
+  image: node:20-alpine
+  cache:
+    key: node-modules
+    paths:
+      - frontend/node_modules/
+  before_script:
+    - cd frontend
+    - npm ci --prefer-offline
+  script:
+    - npm run lint
+  rules:
+    - if: $CI_MERGE_REQUEST_ID
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "pre_prod"
+
+# ═══════════════════════════════════════════════════════════════
+# STAGE: BUILD  (Docker images на сервере)
+# ═══════════════════════════════════════════════════════════════
+
+build-images:
+  stage: build
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache openssh-client rsync
+    - eval $(ssh-agent -s)
+    - echo "$SSH_PRIVATE_KEY" | ssh-add -
+    - mkdir -p ~/.ssh
+    - echo "$SSH_KNOWN_HOSTS" >> ~/.ssh/known_hosts
+  script:
+    # Синхронизируем код на сервер
+    - |
+      rsync -avz --delete \
+        --exclude='.git' \
+        --exclude='node_modules' \
+        --exclude='.next' \
+        --exclude='data/' \
+        --exclude='backups/' \
+        --exclude='certbot/conf/' \
+        --exclude='certbot/www/' \
+        --exclude='.env' \
+        --exclude='.env.test' \
+        --exclude='.env.backup' \
+        --exclude='.env.smoke' \
+        -e "ssh -o StrictHostKeyChecking=no" \
+        ./ ${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/
+    # Собираем образы на сервере
+    - |
+      ssh ${DEPLOY_USER}@${DEPLOY_HOST} "
+        cd ${DEPLOY_PATH} &&
+        docker compose -f docker-compose.yml -f docker-compose.prod.yml build --parallel
+      "
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+
+# ═══════════════════════════════════════════════════════════════
+# STAGE: DEPLOY
+# ═══════════════════════════════════════════════════════════════
+
+deploy-prod:
+  stage: deploy
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache openssh-client
+    - eval $(ssh-agent -s)
+    - echo "$SSH_PRIVATE_KEY" | ssh-add -
+    - mkdir -p ~/.ssh
+    - echo "$SSH_KNOWN_HOSTS" >> ~/.ssh/known_hosts
+  script:
+    - |
+      ssh ${DEPLOY_USER}@${DEPLOY_HOST} "
+        cd ${DEPLOY_PATH} &&
+
+        echo '── Запуск миграций ──' &&
+        docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm migrate &&
+
+        echo '── Перезапуск сервисов ──' &&
+        docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d \
+          --remove-orphans \
+          backend worker scheduler indexchecker frontend nginx &&
+
+        echo '── Проверка здоровья ──' &&
+        sleep 10 &&
+        docker compose -f docker-compose.yml -f docker-compose.prod.yml ps &&
+
+        echo '── Очистка старых образов ──' &&
+        docker image prune -f
+      "
+  environment:
+    name: production
+    url: https://sitegenai.alfasearch.ru
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: manual  # деплой по кнопке
