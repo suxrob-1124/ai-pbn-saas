@@ -20,6 +20,7 @@ import (
 	"go.uber.org/zap"
 
 	"obzornik-pbn-generator/internal/config"
+	"obzornik-pbn-generator/internal/domainfs"
 	"obzornik-pbn-generator/internal/linkbuilder"
 	"obzornik-pbn-generator/internal/llm"
 	"obzornik-pbn-generator/internal/retry"
@@ -88,6 +89,7 @@ type LinkWorker struct {
 	LLMUsage  LLMUsageStore
 	Pricing   ModelPricingStore
 	Generator ContentGenerator
+	ContentBackend domainfs.SiteContentBackend
 	Now       func() time.Time
 }
 
@@ -148,16 +150,7 @@ func (w *LinkWorker) ProcessTask(ctx context.Context, taskID string) error {
 	if err := w.Domains.UpdateLinkStatus(ctx, domain.ID, statusSearching); err != nil {
 		return w.failTask(ctx, taskID, attempts, task.CreatedAt, &logLines, fmt.Errorf("update domain link status: %w", err))
 	}
-	baseDir, err := w.ensureBaseDir()
-	if err != nil {
-		return w.failTask(ctx, taskID, attempts, task.CreatedAt, &logLines, err)
-	}
-	domainDir, err := w.domainDir(baseDir, domain.URL)
-	if err != nil {
-		return w.failTask(ctx, taskID, attempts, task.CreatedAt, &logLines, err)
-	}
-
-	htmlFiles, err := listHTMLFiles(domainDir)
+	htmlFiles, err := w.listDomainHTMLFiles(ctx, domain)
 	if err != nil {
 		return w.failTask(ctx, taskID, attempts, task.CreatedAt, &logLines, err)
 	}
@@ -167,7 +160,7 @@ func (w *LinkWorker) ProcessTask(ctx context.Context, taskID string) error {
 
 	builder := linkbuilder.NewBuilder(nil, nil, w.Generator)
 	if action == "remove" {
-		return w.processRemoveTask(ctx, task, domain, domainDir, htmlFiles, attempts, &logLines)
+		return w.processRemoveTask(ctx, task, domain, htmlFiles, attempts, &logLines)
 	}
 	prevTask := w.loadPreviousTask(ctx, task, domain)
 	skipDeepReplace := false
@@ -179,7 +172,7 @@ func (w *LinkWorker) ProcessTask(ctx context.Context, taskID string) error {
 		if prevTask.FoundLocation.Valid {
 			rel := parseFoundLocation(prevTask.FoundLocation.String)
 			if rel != "" {
-				if replaced, err := w.replaceInFile(ctx, task, prevTask, attempts, domain, domainDir, rel, builder, &logLines); err != nil {
+				if replaced, err := w.replaceInFile(ctx, task, prevTask, attempts, domain, rel, builder, &logLines); err != nil {
 					return w.failTask(ctx, taskID, attempts, task.CreatedAt, &logLines, err)
 				} else if replaced {
 					return nil
@@ -187,13 +180,13 @@ func (w *LinkWorker) ProcessTask(ctx context.Context, taskID string) error {
 			}
 		}
 		if !skipDeepReplace {
-			if replaced, err := w.replaceAcrossFiles(ctx, task, prevTask, attempts, domain, domainDir, htmlFiles, builder, &logLines); err != nil {
+			if replaced, err := w.replaceAcrossFiles(ctx, task, prevTask, attempts, domain, htmlFiles, builder, &logLines); err != nil {
 				return w.failTask(ctx, taskID, attempts, task.CreatedAt, &logLines, err)
 			} else if replaced {
 				return nil
 			}
 		}
-		if found, err := w.completeIfLinkExists(ctx, task, domain, domainDir, htmlFiles, attempts, &logLines); err != nil {
+		if found, err := w.completeIfLinkExists(ctx, task, domain, htmlFiles, attempts, &logLines); err != nil {
 			return w.failTask(ctx, taskID, attempts, task.CreatedAt, &logLines, err)
 		} else if found {
 			return nil
@@ -201,15 +194,14 @@ func (w *LinkWorker) ProcessTask(ctx context.Context, taskID string) error {
 		w.appendLog(ctx, taskID, &logLines, fmt.Sprintf("старая ссылка не найдена — вставляем заново (prev_task=%s)", prevTask.ID))
 	}
 
-	if found, err := w.completeIfLinkExists(ctx, task, domain, domainDir, htmlFiles, attempts, &logLines); err != nil {
+	if found, err := w.completeIfLinkExists(ctx, task, domain, htmlFiles, attempts, &logLines); err != nil {
 		return w.failTask(ctx, taskID, attempts, task.CreatedAt, &logLines, err)
 	} else if found {
 		return nil
 	}
 
 	for _, rel := range htmlFiles {
-		full := filepath.Join(domainDir, filepath.FromSlash(rel))
-		content, err := os.ReadFile(full)
+		content, err := w.readDomainFileBytes(ctx, domain, rel)
 		if err != nil {
 			return w.failTask(ctx, taskID, attempts, task.CreatedAt, &logLines, fmt.Errorf("read html failed: %w", err))
 		}
@@ -232,7 +224,7 @@ func (w *LinkWorker) ProcessTask(ctx context.Context, taskID string) error {
 		if updated == string(content) {
 			return w.failTask(ctx, taskID, attempts, task.CreatedAt, &logLines, fmt.Errorf("не удалось вставить ссылку: анкор найден на позиции %d, но вставка не изменила контент", pos))
 		}
-		if err := os.WriteFile(full, []byte(updated), 0o644); err != nil {
+		if err := w.writeDomainFileBytes(ctx, domain, rel, []byte(updated)); err != nil {
 			return w.failTask(ctx, taskID, attempts, task.CreatedAt, &logLines, fmt.Errorf("save html failed: %w", err))
 		}
 		if err := w.recordFileEdit(ctx, task, rel, content, []byte(updated), "link_injection", "link task "+task.ID); err != nil {
@@ -260,8 +252,7 @@ func (w *LinkWorker) ProcessTask(ctx context.Context, taskID string) error {
 	}
 
 	targetRel := selectTargetHTML(htmlFiles)
-	full := filepath.Join(domainDir, filepath.FromSlash(targetRel))
-	content, err := os.ReadFile(full)
+	content, err := w.readDomainFileBytes(ctx, domain, targetRel)
 	if err != nil {
 		return w.failTask(ctx, taskID, attempts, task.CreatedAt, &logLines, fmt.Errorf("read html failed: %w", err))
 	}
@@ -271,7 +262,7 @@ func (w *LinkWorker) ProcessTask(ctx context.Context, taskID string) error {
 		return w.failTask(ctx, taskID, attempts, task.CreatedAt, &logLines, err)
 	}
 	updated := appendContent(string(content), generated)
-	if err := os.WriteFile(full, []byte(updated), 0o644); err != nil {
+	if err := w.writeDomainFileBytes(ctx, domain, targetRel, []byte(updated)); err != nil {
 		return w.failTask(ctx, taskID, attempts, task.CreatedAt, &logLines, fmt.Errorf("save html failed: %w", err))
 	}
 	if err := w.recordFileEdit(ctx, task, targetRel, content, []byte(updated), "link_injection", "link task "+task.ID); err != nil {
@@ -320,10 +311,9 @@ func (w *LinkWorker) loadPreviousTask(ctx context.Context, task *sqlstore.LinkTa
 	return prev
 }
 
-func (w *LinkWorker) completeIfLinkExists(ctx context.Context, task *sqlstore.LinkTask, domain sqlstore.Domain, domainDir string, htmlFiles []string, attempts int, logLines *[]string) (bool, error) {
+func (w *LinkWorker) completeIfLinkExists(ctx context.Context, task *sqlstore.LinkTask, domain sqlstore.Domain, htmlFiles []string, attempts int, logLines *[]string) (bool, error) {
 	for _, rel := range htmlFiles {
-		full := filepath.Join(domainDir, filepath.FromSlash(rel))
-		content, err := os.ReadFile(full)
+		content, err := w.readDomainFileBytes(ctx, domain, rel)
 		if err != nil {
 			return false, fmt.Errorf("read html failed: %w", err)
 		}
@@ -353,12 +343,8 @@ func (w *LinkWorker) completeIfLinkExists(ctx context.Context, task *sqlstore.Li
 	return false, nil
 }
 
-func (w *LinkWorker) replaceInFile(ctx context.Context, task *sqlstore.LinkTask, prevTask *sqlstore.LinkTask, attempts int, domain sqlstore.Domain, domainDir, rel string, builder *linkbuilder.Builder, logLines *[]string) (bool, error) {
-	full := filepath.Join(domainDir, filepath.FromSlash(rel))
-	if err := ensureWithinDir(domainDir, full); err != nil {
-		return false, err
-	}
-	content, err := os.ReadFile(full)
+func (w *LinkWorker) replaceInFile(ctx context.Context, task *sqlstore.LinkTask, prevTask *sqlstore.LinkTask, attempts int, domain sqlstore.Domain, rel string, builder *linkbuilder.Builder, logLines *[]string) (bool, error) {
+	content, err := w.readDomainFileBytes(ctx, domain, rel)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return false, nil
@@ -369,7 +355,10 @@ func (w *LinkWorker) replaceInFile(ctx context.Context, task *sqlstore.LinkTask,
 	if !replaced && len(removedTags) == 0 {
 		return false, nil
 	}
-	if err := os.WriteFile(full, []byte(updated), 0o644); err != nil {
+	if updated == string(content) {
+		return false, nil
+	}
+	if err := w.writeDomainFileBytes(ctx, domain, rel, []byte(updated)); err != nil {
 		return false, fmt.Errorf("save html failed: %w", err)
 	}
 	if err := w.recordFileEdit(ctx, task, rel, content, []byte(updated), "link_injection", "link task "+task.ID); err != nil {
@@ -407,9 +396,9 @@ func (w *LinkWorker) replaceInFile(ctx context.Context, task *sqlstore.LinkTask,
 	return true, nil
 }
 
-func (w *LinkWorker) replaceAcrossFiles(ctx context.Context, task *sqlstore.LinkTask, prevTask *sqlstore.LinkTask, attempts int, domain sqlstore.Domain, domainDir string, htmlFiles []string, builder *linkbuilder.Builder, logLines *[]string) (bool, error) {
+func (w *LinkWorker) replaceAcrossFiles(ctx context.Context, task *sqlstore.LinkTask, prevTask *sqlstore.LinkTask, attempts int, domain sqlstore.Domain, htmlFiles []string, builder *linkbuilder.Builder, logLines *[]string) (bool, error) {
 	for _, rel := range htmlFiles {
-		replaced, err := w.replaceInFile(ctx, task, prevTask, attempts, domain, domainDir, rel, builder, logLines)
+		replaced, err := w.replaceInFile(ctx, task, prevTask, attempts, domain, rel, builder, logLines)
 		if err != nil {
 			return false, err
 		}
@@ -420,7 +409,7 @@ func (w *LinkWorker) replaceAcrossFiles(ctx context.Context, task *sqlstore.Link
 	return false, nil
 }
 
-func (w *LinkWorker) processRemoveTask(ctx context.Context, task *sqlstore.LinkTask, domain sqlstore.Domain, domainDir string, htmlFiles []string, attempts int, logLines *[]string) error {
+func (w *LinkWorker) processRemoveTask(ctx context.Context, task *sqlstore.LinkTask, domain sqlstore.Domain, htmlFiles []string, attempts int, logLines *[]string) error {
 	anchor := strings.TrimSpace(task.AnchorText)
 	target := strings.TrimSpace(task.TargetURL)
 	prevTask := w.loadPreviousTask(ctx, task, domain)
@@ -452,7 +441,7 @@ func (w *LinkWorker) processRemoveTask(ctx context.Context, task *sqlstore.LinkT
 			continue
 		}
 		checked[rel] = struct{}{}
-		if removed, err := w.removeInFile(ctx, task, anchor, target, attempts, domain, domainDir, rel, logLines); err != nil {
+		if removed, err := w.removeInFile(ctx, task, anchor, target, attempts, domain, rel, logLines); err != nil {
 			return w.failTask(ctx, task.ID, attempts, task.CreatedAt, logLines, err)
 		} else if removed {
 			return nil
@@ -463,7 +452,7 @@ func (w *LinkWorker) processRemoveTask(ctx context.Context, task *sqlstore.LinkT
 		if _, ok := checked[rel]; ok {
 			continue
 		}
-		if removed, err := w.removeInFile(ctx, task, anchor, target, attempts, domain, domainDir, rel, logLines); err != nil {
+		if removed, err := w.removeInFile(ctx, task, anchor, target, attempts, domain, rel, logLines); err != nil {
 			return w.failTask(ctx, task.ID, attempts, task.CreatedAt, logLines, err)
 		} else if removed {
 			return nil
@@ -490,12 +479,8 @@ func (w *LinkWorker) processRemoveTask(ctx context.Context, task *sqlstore.LinkT
 	return nil
 }
 
-func (w *LinkWorker) removeInFile(ctx context.Context, task *sqlstore.LinkTask, anchor string, target string, attempts int, domain sqlstore.Domain, domainDir string, rel string, logLines *[]string) (bool, error) {
-	full := filepath.Join(domainDir, filepath.FromSlash(rel))
-	if err := ensureWithinDir(domainDir, full); err != nil {
-		return false, err
-	}
-	content, err := os.ReadFile(full)
+func (w *LinkWorker) removeInFile(ctx context.Context, task *sqlstore.LinkTask, anchor string, target string, attempts int, domain sqlstore.Domain, rel string, logLines *[]string) (bool, error) {
+	content, err := w.readDomainFileBytes(ctx, domain, rel)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return false, nil
@@ -506,7 +491,7 @@ func (w *LinkWorker) removeInFile(ctx context.Context, task *sqlstore.LinkTask, 
 	if !removed && len(removedTags) == 0 {
 		return false, nil
 	}
-	if err := os.WriteFile(full, []byte(updated), 0o644); err != nil {
+	if err := w.writeDomainFileBytes(ctx, domain, rel, []byte(updated)); err != nil {
 		return false, fmt.Errorf("save html failed: %w", err)
 	}
 	if err := w.recordFileEdit(ctx, task, rel, content, []byte(updated), "link_injection", "link remove "+task.ID); err != nil {
@@ -905,6 +890,56 @@ func (w *LinkWorker) domainDir(baseDir, domainURL string) (string, error) {
 	return target, nil
 }
 
+func (w *LinkWorker) resolveContentBackend() domainfs.SiteContentBackend {
+	if w.ContentBackend != nil {
+		return w.ContentBackend
+	}
+	return domainfs.NewLocalFSBackend(strings.TrimSpace(w.BaseDir))
+}
+
+func makeDomainFSContext(cfg config.Config, domain sqlstore.Domain) domainfs.DomainFSContext {
+	deploymentMode := "ssh_remote"
+	if strings.EqualFold(strings.TrimSpace(cfg.DeployMode), "local_mock") {
+		deploymentMode = "local_mock"
+	}
+	return domainfs.DomainFSContext{
+		DomainID:       strings.TrimSpace(domain.ID),
+		DomainURL:      strings.TrimSpace(domain.URL),
+		DeploymentMode: deploymentMode,
+		PublishedPath:  strings.TrimSpace(domain.PublishedPath.String),
+		SiteOwner:      strings.TrimSpace(domain.SiteOwner.String),
+		ServerID:       strings.TrimSpace(domain.ServerID.String),
+	}
+}
+
+func (w *LinkWorker) readDomainFileBytes(ctx context.Context, domain sqlstore.Domain, relPath string) ([]byte, error) {
+	return w.resolveContentBackend().ReadFile(ctx, makeDomainFSContext(w.Config, domain), relPath)
+}
+
+func (w *LinkWorker) writeDomainFileBytes(ctx context.Context, domain sqlstore.Domain, relPath string, content []byte) error {
+	return w.resolveContentBackend().WriteFile(ctx, makeDomainFSContext(w.Config, domain), relPath, content)
+}
+
+func (w *LinkWorker) listDomainHTMLFiles(ctx context.Context, domain sqlstore.Domain) ([]string, error) {
+	items, err := w.resolveContentBackend().ListTree(ctx, makeDomainFSContext(w.Config, domain), "")
+	if err != nil {
+		return nil, err
+	}
+	files := make([]string, 0, len(items))
+	for _, item := range items {
+		if item.IsDir {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(item.Path))
+		if ext != ".html" && ext != ".htm" {
+			continue
+		}
+		files = append(files, item.Path)
+	}
+	sort.Strings(files)
+	return files, nil
+}
+
 func listHTMLFiles(root string) ([]string, error) {
 	var files []string
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
@@ -1128,6 +1163,9 @@ func replaceLinkInBody(html string, oldAnchor string, oldTarget string, newAncho
 			continue
 		}
 		newBody := re.ReplaceAllString(body, replacement)
+		if newBody == body {
+			return html, false
+		}
 		updated := html[:bodyContentStart] + newBody + html[bodyContentEnd:]
 		return updated, true
 	}
