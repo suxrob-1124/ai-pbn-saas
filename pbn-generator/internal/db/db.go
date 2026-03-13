@@ -419,6 +419,10 @@ func migrationStatements() []string {
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		);`,
+		`INSERT INTO audit_rules(code, title, description, severity, is_active, created_at, updated_at) VALUES
+		 ('missing_required_file', 'Missing required file', 'Обязательный файл отсутствует в сборке', 'error', TRUE, NOW(), NOW()),
+		 ('missing_asset', 'Missing asset reference', 'В HTML/CSS есть ссылка на файл, которого нет в сборке', 'warn', TRUE, NOW(), NOW())
+		 ON CONFLICT (code) DO NOTHING;`,
 		`CREATE TABLE IF NOT EXISTS audit_findings (
 			id TEXT PRIMARY KEY,
 			generation_id TEXT NOT NULL REFERENCES generations(id) ON DELETE CASCADE,
@@ -503,7 +507,8 @@ func migrationStatements() []string {
 		 VALUES
 		 ('seed-gemini-2.5-pro', 'gemini', 'gemini-2.5-pro', 1.250000, 5.000000, NOW(), NULL, TRUE, 'system', NOW()),
 		 ('seed-gemini-2.5-flash', 'gemini', 'gemini-2.5-flash', 0.300000, 0.600000, NOW(), NULL, TRUE, 'system', NOW()),
-		 ('seed-gemini-2.5-flash-image', 'gemini', 'gemini-2.5-flash-image', 0.300000, 0.600000, NOW(), NULL, TRUE, 'system', NOW())
+		 ('seed-gemini-2.5-flash-image', 'gemini', 'gemini-2.5-flash-image', 0.300000, 0.600000, NOW(), NULL, TRUE, 'system', NOW()),
+		 ('seed-claude-sonnet-4-6', 'anthropic', 'claude-sonnet-4-6', 3.000000, 15.000000, NOW(), NULL, TRUE, 'system', NOW())
 		 ON CONFLICT (id) DO NOTHING;`,
 		// --- Generation types ---
 		`ALTER TABLE domains ADD COLUMN IF NOT EXISTS generation_type TEXT NOT NULL DEFAULT 'single_page';`,
