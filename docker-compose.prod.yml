@@ -152,7 +152,10 @@ services:
     env_file:
       - .env
       - .env.prod
-    ports: []  # close external access; access via SSH tunnel
+    environment:
+      GF_SERVER_ROOT_URL: "https://sitegenai.alfasearch.ru/grafana/"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+    ports: []  # accessible via nginx /grafana/
     restart: unless-stopped
     deploy:
       resources:
