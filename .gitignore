@@ -32,6 +32,7 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+!.env.prod
 !.env.sample
 !.env.template
 
@@ -56,6 +57,11 @@ id_ed25519_*
 secrets/ssh/*
 !secrets/ssh/.gitkeep
 !secrets/ssh/README.md
+
+# Certbot / TLS certificates
+certbot/conf/*
+certbot/www/*
+!certbot/.gitkeep
 
 # Build
 dist/

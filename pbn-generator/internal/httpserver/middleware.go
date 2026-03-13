@@ -18,16 +18,10 @@ import (
 func (s *Server) withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		// Если Origin пуст (curl, Prometheus и т.п.), пропускаем без запрета.
+		// Если Origin пуст (curl, Prometheus и т.п.), пропускаем без CORS-заголовков.
 		if origin == "" {
-			if len(s.cfg.AllowedOrigins) > 0 {
-				origin = s.cfg.AllowedOrigins[0]
-				w.Header().Set("Access-Control-Allow-Origin", origin)
-				w.Header().Set("Vary", "Origin")
-				w.Header().Set("Access-Control-Allow-Credentials", "true")
-			} else {
-				w.Header().Set("Access-Control-Allow-Origin", "*")
-			}
+			next.ServeHTTP(w, r)
+			return
 		} else {
 			if len(s.cfg.AllowedOrigins) > 0 && !isOriginAllowed(origin, s.cfg.AllowedOrigins) {
 				http.Error(w, "CORS origin not allowed", http.StatusForbidden)
