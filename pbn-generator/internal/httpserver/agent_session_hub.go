@@ -14,10 +14,25 @@ type agentHubEvent struct {
 
 // hubSession is one active agent session in the event hub.
 type hubSession struct {
-	mu   sync.Mutex
-	buf  []agentHubEvent
-	subs map[string]chan agentHubEvent
-	done bool
+	mu       sync.Mutex
+	buf      []agentHubEvent
+	subs     map[string]chan agentHubEvent
+	done     bool
+	liveDiag []byte // latest agentDiagnostics JSON; updated each iteration
+}
+
+// setLiveDiag stores a diagnostics snapshot for the active session.
+func (hs *hubSession) setLiveDiag(b []byte) {
+	hs.mu.Lock()
+	hs.liveDiag = b
+	hs.mu.Unlock()
+}
+
+// getLiveDiag returns the latest diagnostics snapshot, or nil if none yet.
+func (hs *hubSession) getLiveDiag() []byte {
+	hs.mu.Lock()
+	defer hs.mu.Unlock()
+	return hs.liveDiag
 }
 
 // agentSessionHub manages in-memory state for running agent sessions.
@@ -109,7 +124,7 @@ func (hs *hubSession) subscribe() (string, chan agentHubEvent, []agentHubEvent) 
 	hs.mu.Lock()
 	defer hs.mu.Unlock()
 	id := uuid.New().String()
-	ch := make(chan agentHubEvent, 256)
+	ch := make(chan agentHubEvent, 1024)
 	hs.subs[id] = ch
 	snap := make([]agentHubEvent, len(hs.buf))
 	copy(snap, hs.buf)

@@ -238,6 +238,10 @@ func domainAgentTools() []anthropic.ToolUnionParam {
 					},
 				},
 			},
+			// Cache breakpoint on the last tool caches the entire tools block.
+			// Combined with the system prompt breakpoint this makes the stable
+			// prefix (system + tools) eligible for Anthropic prompt caching.
+			CacheControl: anthropic.NewCacheControlEphemeralParam(),
 		},
 	}
 	result := make([]anthropic.ToolUnionParam, len(tools))
@@ -268,13 +272,40 @@ type agentFileChanged struct {
 const agentMaxFileSizeBytes = 2 * 1024 * 1024 // 2MB
 
 // executeAgentTool dispatches a tool call from Claude to the appropriate handler.
+// sessionID and baselined enable lazy baseline creation (PR3): before each mutating
+// tool (write_file, patch_file, delete_file) a content revision is saved for any
+// existing file that hasn't been baselined yet in this session.
 func (s *Server) executeAgentTool(
 	ctx context.Context,
 	domain sqlstore.Domain,
 	requesterEmail string,
 	toolUseID, toolName string,
 	inputRaw json.RawMessage,
+	sessionID string,
+	baselined map[string]bool,
 ) agentToolResult {
+	// For mutating tools, ensure a content baseline exists for the target file
+	// before applying any change.  This supports rollback without an eager
+	// full-site snapshot at session start.
+	switch toolName {
+	case "write_file", "patch_file", "delete_file", "generate_image":
+		if sessionID != "" && baselined != nil {
+			var pathInput struct {
+				Path string `json:"path"`
+			}
+			if err := json.Unmarshal(inputRaw, &pathInput); err == nil && pathInput.Path != "" {
+				cleaned := path.Clean(pathInput.Path)
+				if !s.ensureAgentBaselineForPath(ctx, domain, sessionID, cleaned, requesterEmail, baselined) {
+					return agentToolResult{
+						ToolUseID: toolUseID,
+						Content:   fmt.Sprintf("Cannot %s %q: failed to save rollback baseline. The file cannot be modified until the baseline is successfully saved. Please retry.", toolName, cleaned),
+						IsError:   true,
+					}
+				}
+			}
+		}
+	}
+
 	switch toolName {
 	case "list_files":
 		return s.agentToolListFiles(ctx, domain, toolUseID, inputRaw)
@@ -301,7 +332,8 @@ func (s *Server) executeAgentTool(
 
 // agentUpsertSiteFile writes content to the backend AND creates/updates the
 // siteFiles DB record so the file is accessible via the API.
-func (s *Server) agentUpsertSiteFile(ctx context.Context, domain sqlstore.Domain, relPath string, content []byte, editedBy string) error {
+// When skipRevision is true, no file revision is created.
+func (s *Server) agentUpsertSiteFile(ctx context.Context, domain sqlstore.Domain, relPath string, content []byte, editedBy string, skipRevision bool) error {
 	mimeType := http.DetectContentType(content)
 	if mimeType == "application/octet-stream" || mimeType == "" {
 		mimeType = detectMimeType(relPath, content)
@@ -329,15 +361,19 @@ func (s *Server) agentUpsertSiteFile(ctx context.Context, domain sqlstore.Domain
 		if err := s.siteFiles.Create(ctx, file); err != nil {
 			return err
 		}
-		_ = s.fileEdits.CreateRevision(ctx, buildRevision(&file, content, "agent", editedBy, "created by agent"))
+		if !skipRevision {
+			_ = s.fileEdits.CreateRevision(ctx, buildRevision(&file, content, "agent", editedBy, "created by agent"))
+		}
 	} else {
 		if err := s.siteFiles.Update(ctx, existing.ID, content); err != nil {
 			return err
 		}
 		_ = s.siteFiles.SetLastEditedBy(ctx, existing.ID, sqlstore.NullableString(editedBy))
-		updated, _ := s.siteFiles.Get(ctx, existing.ID)
-		if updated != nil {
-			_ = s.fileEdits.CreateRevision(ctx, buildRevision(updated, content, "agent", editedBy, "updated by agent"))
+		if !skipRevision {
+			updated, _ := s.siteFiles.Get(ctx, existing.ID)
+			if updated != nil {
+				_ = s.fileEdits.CreateRevision(ctx, buildRevision(updated, content, "agent", editedBy, "updated by agent"))
+			}
 		}
 	}
 	s.invalidateDomainFilesCache(ctx, domain.ID)
@@ -439,7 +475,7 @@ func (s *Server) agentToolWriteFile(ctx context.Context, domain sqlstore.Domain,
 		action = "updated"
 	}
 
-	if err := s.agentUpsertSiteFile(ctx, domain, cleaned, contentBytes, requesterEmail); err != nil {
+	if err := s.agentUpsertSiteFile(ctx, domain, cleaned, contentBytes, requesterEmail, true); err != nil {
 		return agentToolResult{ToolUseID: toolUseID, Content: fmt.Sprintf("error writing file: %v", err), IsError: true}
 	}
 
@@ -481,13 +517,13 @@ func (s *Server) agentToolPatchFile(ctx context.Context, domain sqlstore.Domain,
 	}
 
 	patched := strings.Replace(original, input.OldText, input.NewText, 1)
-	if err := s.agentUpsertSiteFile(ctx, domain, cleaned, []byte(patched), requesterEmail); err != nil {
+	if err := s.agentUpsertSiteFile(ctx, domain, cleaned, []byte(patched), requesterEmail, true); err != nil {
 		return agentToolResult{ToolUseID: toolUseID, Content: fmt.Sprintf("error writing patched file: %v", err), IsError: true}
 	}
 
 	return agentToolResult{
-		ToolUseID: toolUseID,
-		Content:   fmt.Sprintf("File %q patched successfully.", cleaned),
+		ToolUseID:   toolUseID,
+		Content:     fmt.Sprintf("File %q patched successfully.", cleaned),
 		FileChanged: &agentFileChanged{Path: cleaned, Action: "updated"},
 	}
 }
@@ -512,6 +548,13 @@ func (s *Server) agentToolDeleteFile(ctx context.Context, domain sqlstore.Domain
 	if err := s.deleteDomainPathInBackend(ctx, domain, cleaned); err != nil {
 		return agentToolResult{ToolUseID: toolUseID, Content: fmt.Sprintf("error deleting file: %v", err), IsError: true}
 	}
+
+	// Remove the file record from the database so list_files stays consistent.
+	if existing, _ := s.siteFiles.GetByPath(ctx, domain.ID, cleaned); existing != nil {
+		_ = s.siteFiles.Delete(ctx, existing.ID)
+	}
+	s.cleanupEmptyParentDirs(ctx, domain, cleaned)
+	s.invalidateDomainFilesCache(ctx, domain.ID)
 
 	return agentToolResult{
 		ToolUseID:   toolUseID,
@@ -578,7 +621,7 @@ func (s *Server) agentToolGenerateImage(ctx context.Context, domain sqlstore.Dom
 	// Ensure assets/ directory exists
 	_ = s.ensureDomainDirInBackend(ctx, domain, "assets")
 
-	if err := s.agentUpsertSiteFile(ctx, domain, cleaned, imageBytes, requesterEmail); err != nil {
+	if err := s.agentUpsertSiteFile(ctx, domain, cleaned, imageBytes, requesterEmail, true); err != nil {
 		return agentToolResult{ToolUseID: toolUseID, Content: fmt.Sprintf("error saving image: %v", err), IsError: true}
 	}
 
