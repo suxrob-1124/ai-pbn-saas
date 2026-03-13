@@ -214,33 +214,51 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
+	switch r.Method {
+	case http.MethodGet:
+		email := userEmailFromContext(r.Context())
+		if email == "" {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		u, err := s.svc.GetUser(r.Context(), email)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not load profile")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"email":     u.Email,
+			"name":      u.Name,
+			"avatarUrl": u.AvatarURL,
+			"role":      u.Role,
+		})
+	case http.MethodPost:
+		if !ensureJSON(w, r) {
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		var body struct {
+			Name      string `json:"name"`
+			AvatarURL string `json:"avatarUrl"`
+		}
+		defer r.Body.Close()
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "could not parse JSON body")
+			return
+		}
+		email := userEmailFromContext(r.Context())
+		if email == "" {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		if err := s.svc.UpdateProfile(r.Context(), email, body.Name, body.AvatarURL); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "profile updated"})
+	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
 	}
-	if !ensureJSON(w, r) {
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	var body struct {
-		Name      string `json:"name"`
-		AvatarURL string `json:"avatarUrl"`
-	}
-	defer r.Body.Close()
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "could not parse JSON body")
-		return
-	}
-	email := userEmailFromContext(r.Context())
-	if email == "" {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
-	if err := s.svc.UpdateProfile(r.Context(), email, body.Name, body.AvatarURL); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "profile updated"})
 }
 
 func (s *Server) handleProfileAPIKey(w http.ResponseWriter, r *http.Request) {

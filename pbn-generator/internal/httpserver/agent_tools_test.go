@@ -2,6 +2,8 @@ package httpserver
 
 import (
 	"testing"
+
+	"obzornik-pbn-generator/internal/store/sqlstore"
 )
 
 func TestValidateAgentFilePath(t *testing.T) {
@@ -106,4 +108,19 @@ func TestIsProtectedAgentFile(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAgentFileChangedAction(t *testing.T) {
+	t.Run("created when file does not exist", func(t *testing.T) {
+		if got := agentFileChangedAction(nil); got != "created" {
+			t.Fatalf("agentFileChangedAction(nil) = %q, want created", got)
+		}
+	})
+
+	t.Run("updated when file exists", func(t *testing.T) {
+		existing := &sqlstore.SiteFile{ID: "f1", Path: "assets/hero.webp"}
+		if got := agentFileChangedAction(existing); got != "updated" {
+			t.Fatalf("agentFileChangedAction(existing) = %q, want updated", got)
+		}
+	})
 }

@@ -1,0 +1,67 @@
+services:
+  db:
+    env_file:
+      - .env
+      - .env.prod
+    restart: unless-stopped
+
+  backend:
+    env_file:
+      - .env
+      - .env.prod
+    restart: unless-stopped
+
+  worker:
+    env_file:
+      - .env
+      - .env.prod
+    restart: unless-stopped
+
+  scheduler:
+    env_file:
+      - .env
+      - .env.prod
+    restart: unless-stopped
+
+  indexchecker:
+    env_file:
+      - .env
+      - .env.prod
+    restart: unless-stopped
+
+  migrate:
+    env_file:
+      - .env
+      - .env.prod
+
+  seed:
+    env_file:
+      - .env
+      - .env.prod
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: "${NEXT_PUBLIC_API_URL:-http://localhost:8080}"
+    environment:
+      NEXT_PUBLIC_API_URL: "${NEXT_PUBLIC_API_URL:-http://localhost:8080}"
+    restart: unless-stopped
+
+  grafana:
+    env_file:
+      - .env
+      - .env.prod
+    restart: unless-stopped
+
+  redis:
+    restart: unless-stopped
+
+  prometheus:
+    restart: unless-stopped
+
+  loki:
+    restart: unless-stopped
+
+  promtail:
+    restart: unless-stopped

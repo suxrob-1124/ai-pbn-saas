@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -14,6 +15,7 @@ import (
 )
 
 type Config struct {
+	AppEnv                         string
 	Port                           string
 	AllowedOrigin                  string
 	AllowedOrigins                 []string
@@ -100,17 +102,18 @@ type Config struct {
 	GenQueueRetentionDays          int // Хранить обработанные элементы generation_queue N дней (default 30)
 	AgentSessionRetentionDays      int // Хранить завершённые agent_sessions N дней (default 90)
 	IndexCheckHistoryKeepPerCheck  int // Хранить последние N попыток на каждый check (default 5)
-	AnthropicAPIKey                 string
-	AnthropicModel                  string
-	AnthropicBaseURL                string // optional override (used in tests / private deployments)
-	AgentMaxTokens                  int
-	AgentTimeoutSec                 int
-	AuditFixMode                    string // disabled | report_only | autofix_soft | autofix_strict
+	AnthropicAPIKey                string
+	AnthropicModel                 string
+	AnthropicBaseURL               string // optional override (used in tests / private deployments)
+	AgentMaxTokens                 int
+	AgentTimeoutSec                int
+	AuditFixMode                   string // disabled | report_only | autofix_soft | autofix_strict
 }
 
 func Load() Config {
 	origin := env("ALLOWED_ORIGIN", "*")
 	return Config{
+		AppEnv:                         strings.ToLower(env("APP_ENV", "development")),
 		Port:                           env("PORT", "8080"),
 		AllowedOrigin:                  origin,
 		AllowedOrigins:                 parseList(env("ALLOWED_ORIGINS", origin)),
@@ -197,16 +200,19 @@ func Load() Config {
 		GenQueueRetentionDays:          envInt("GEN_QUEUE_RETENTION_DAYS", 30),
 		AgentSessionRetentionDays:      envInt("AGENT_SESSION_RETENTION_DAYS", 90),
 		IndexCheckHistoryKeepPerCheck:  envInt("INDEX_CHECK_HISTORY_KEEP_PER_CHECK", 5),
-		AnthropicAPIKey:                 env("ANTHROPIC_API_KEY", ""),
-		AnthropicModel:                  env("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
-		AgentMaxTokens:                  envInt("AGENT_MAX_TOKENS", 8192),
-		AgentTimeoutSec:                 envInt("AGENT_TIMEOUT_SEC", 1200),
-		AuditFixMode:                    env("AUDIT_FIX_MODE", "disabled"),
+		AnthropicAPIKey:                env("ANTHROPIC_API_KEY", ""),
+		AnthropicModel:                 env("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
+		AgentMaxTokens:                 envInt("AGENT_MAX_TOKENS", 8192),
+		AgentTimeoutSec:                envInt("AGENT_TIMEOUT_SEC", 1200),
+		AuditFixMode:                   env("AUDIT_FIX_MODE", "disabled"),
 	}
 }
 
 func (c Config) Validate() error {
 	var errs []string
+	if c.AppEnv != "development" && c.AppEnv != "test" && c.AppEnv != "production" {
+		errs = append(errs, "APP_ENV must be one of: development, test, production")
+	}
 	if strings.TrimSpace(c.DBDriver) == "" {
 		errs = append(errs, "DB_DRIVER is required")
 	}
@@ -276,10 +282,82 @@ func (c Config) Validate() error {
 			errs = append(errs, err.Error())
 		}
 	}
+	if c.IsProduction() {
+		if strings.TrimSpace(c.GeminiAPIKey) == "" {
+			errs = append(errs, "GEMINI_API_KEY must be set in production")
+		}
+		if strings.TrimSpace(c.AnthropicAPIKey) == "" {
+			errs = append(errs, "ANTHROPIC_API_KEY must be set in production")
+		}
+		if !c.CookieSecure {
+			errs = append(errs, "COOKIE_SECURE must be true in production")
+		}
+		cookieDomain := strings.TrimSpace(c.CookieDomain)
+		if cookieDomain == "" {
+			errs = append(errs, "COOKIE_DOMAIN must be set in production")
+		} else if isLocalHost(cookieDomain) {
+			errs = append(errs, "COOKIE_DOMAIN must not be localhost in production")
+		}
+		if err := validatePublicURL(c.PublicAppURL); err != nil {
+			errs = append(errs, err.Error())
+		}
+		if err := validateAllowedOrigins(c.AllowedOrigins); err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
 	if len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "; "))
 	}
 	return nil
+}
+
+func (c Config) IsProduction() bool {
+	return strings.TrimSpace(strings.ToLower(c.AppEnv)) == "production"
+}
+
+func validatePublicURL(raw string) error {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed == nil || parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Errorf("PUBLIC_APP_URL must be a valid absolute URL in production")
+	}
+	if parsed.Scheme != "https" {
+		return fmt.Errorf("PUBLIC_APP_URL must use https in production")
+	}
+	if isLocalHost(parsed.Hostname()) {
+		return fmt.Errorf("PUBLIC_APP_URL must not point to localhost in production")
+	}
+	return nil
+}
+
+func validateAllowedOrigins(origins []string) error {
+	if len(origins) == 0 {
+		return fmt.Errorf("ALLOWED_ORIGINS must contain at least one origin in production")
+	}
+	for _, raw := range origins {
+		origin := strings.TrimSpace(raw)
+		if origin == "" {
+			return fmt.Errorf("ALLOWED_ORIGINS must not contain empty values in production")
+		}
+		if origin == "*" {
+			return fmt.Errorf("ALLOWED_ORIGINS must not contain '*' in production")
+		}
+		parsed, err := url.Parse(origin)
+		if err != nil || parsed == nil || parsed.Scheme == "" || parsed.Host == "" {
+			return fmt.Errorf("ALLOWED_ORIGINS contains invalid origin %q", origin)
+		}
+		if parsed.Scheme != "https" {
+			return fmt.Errorf("ALLOWED_ORIGINS must use https in production: %q", origin)
+		}
+		if isLocalHost(parsed.Hostname()) {
+			return fmt.Errorf("ALLOWED_ORIGINS must not contain localhost in production: %q", origin)
+		}
+	}
+	return nil
+}
+
+func isLocalHost(host string) bool {
+	normalized := strings.Trim(strings.ToLower(strings.TrimSpace(host)), ".")
+	return normalized == "localhost" || normalized == "127.0.0.1" || normalized == "::1"
 }
 
 func validateKnownHosts(path string) error {

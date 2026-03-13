@@ -15,6 +15,7 @@ import (
 
 func validBaseConfig() Config {
 	return Config{
+		AppEnv:             "development",
 		DBDriver:           "pgx",
 		DSN:                "postgres://auth:auth@localhost:5432/auth?sslmode=disable",
 		JWTSecret:          "test-jwt-token-12345",
@@ -180,5 +181,62 @@ func TestConfigValidateSSHRemoteValid(t *testing.T) {
 
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("expected valid ssh_remote config, got: %v", err)
+	}
+}
+
+func TestConfigValidateProductionRequiresHardening(t *testing.T) {
+	t.Parallel()
+	cfg := validBaseConfig()
+	cfg.AppEnv = "production"
+	cfg.CookieSecure = false
+	cfg.CookieDomain = "localhost"
+	cfg.PublicAppURL = "http://localhost:3000"
+	cfg.AllowedOrigins = []string{"http://localhost:3000"}
+	cfg.GeminiAPIKey = ""
+	cfg.AnthropicAPIKey = ""
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatalf("expected production validation error")
+	}
+	msg := err.Error()
+	for _, needle := range []string{
+		"GEMINI_API_KEY must be set in production",
+		"ANTHROPIC_API_KEY must be set in production",
+		"COOKIE_SECURE must be true in production",
+		"COOKIE_DOMAIN must not be localhost in production",
+		"PUBLIC_APP_URL must use https in production",
+		"ALLOWED_ORIGINS must use https in production",
+	} {
+		if !strings.Contains(msg, needle) {
+			t.Fatalf("expected validation to contain %q, got: %s", needle, msg)
+		}
+	}
+}
+
+func TestConfigValidateProductionValid(t *testing.T) {
+	t.Parallel()
+	cfg := validBaseConfig()
+	cfg.AppEnv = "production"
+	cfg.CookieSecure = true
+	cfg.CookieDomain = ".example.com"
+	cfg.PublicAppURL = "https://app.example.com"
+	cfg.AllowedOrigins = []string{"https://app.example.com"}
+	cfg.GeminiAPIKey = "gemini-key"
+	cfg.AnthropicAPIKey = "anthropic-key"
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected valid production config, got: %v", err)
+	}
+}
+
+func TestConfigValidateInvalidAppEnv(t *testing.T) {
+	t.Parallel()
+	cfg := validBaseConfig()
+	cfg.AppEnv = "staging"
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "APP_ENV must be one of") {
+		t.Fatalf("expected app env error, got: %v", err)
 	}
 }

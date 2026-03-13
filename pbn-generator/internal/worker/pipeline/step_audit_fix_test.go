@@ -417,7 +417,7 @@ func TestAuditFixStep_AssetRefFix_WithLLM(t *testing.T) {
 	llm := &mockLLMClient{
 		responses: map[string]string{
 			"audit_fix_asset_ref": string(fixResp),
-			"audit_fix_404":      `<!doctype html><html><head><title>404</title></head><body><h1>404</h1></body></html>`,
+			"audit_fix_404":       `<!doctype html><html><head><title>404</title></head><body><h1>404</h1></body></html>`,
 		},
 	}
 
@@ -555,7 +555,7 @@ func TestPublishStep_BlockedByAuditFix(t *testing.T) {
 	state := &PipelineState{
 		Artifacts: map[string]any{
 			"audit_fix_publish_blocked": true,
-			"zip_archive":              "dGVzdA==",
+			"zip_archive":               "dGVzdA==",
 		},
 		AppendLog: func(s string) {},
 	}
@@ -1121,6 +1121,53 @@ func TestDeterministicFix_RemovesBrokenImg(t *testing.T) {
 	}
 }
 
+func TestDeterministicFix_RemovesBrokenImg_WithDotSlashAndQuery(t *testing.T) {
+	fileMap := map[string]GeneratedFile{
+		"index.html": {Path: "index.html", Content: `<html><head><title>Test</title></head><body><h1>Welcome</h1><p>Enough padding text to keep the deterministic shrink guard happy while removing a broken image tag that uses a dot-slash path and query string. Additional explanatory text is included here so that the file remains comfortably above the destructive shrink threshold and the test validates path matching rather than the safety guard.</p><img src="./missing-photo.jpg?v=2" alt="photo"><footer>Copyright 2026</footer></body></html>`},
+	}
+	finding := auditFinding{
+		FixKind:     "missing_asset_local_ref",
+		FilePath:    "missing-photo.jpg",
+		TargetFiles: []string{"index.html"},
+	}
+
+	modified, err := deterministicFixMissingAssetRef(finding, fileMap)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if modified != "index.html" {
+		t.Errorf("expected modified=index.html, got %q", modified)
+	}
+	content := fileMap["index.html"].Content
+	if strings.Contains(content, "missing-photo.jpg") {
+		t.Error("expected broken <img> ref with ./ and query string to be removed")
+	}
+}
+
+func TestDeterministicFix_ReplacesHref_WithDotSlashAndQuery(t *testing.T) {
+	fileMap := map[string]GeneratedFile{
+		"index.html": {Path: "index.html", Content: `<html><head><link rel="stylesheet" href="./style.css?v=2"></head><body><h1>Welcome</h1><p>Some content here to keep the document stable.</p></body></html>`},
+		"Style.css":  {Path: "Style.css", Content: "body{color:red}"},
+	}
+	finding := auditFinding{
+		FixKind:     "missing_asset_local_ref",
+		FilePath:    "style.css",
+		TargetFiles: []string{"index.html"},
+	}
+
+	modified, err := deterministicFixMissingAssetRef(finding, fileMap)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if modified != "index.html" {
+		t.Errorf("expected modified=index.html, got %q", modified)
+	}
+	content := fileMap["index.html"].Content
+	if !strings.Contains(content, `./Style.css?v=2`) {
+		t.Errorf("expected corrected href to preserve ./ prefix and query string, got %q", content)
+	}
+}
+
 func TestDeterministicFix_RemovesSrcsetImg(t *testing.T) {
 	fileMap := map[string]GeneratedFile{
 		"index.html": {Path: "index.html", Content: `<html><head><title>Test</title></head><body><h1>Welcome</h1><p>This paragraph has enough content to keep the shrink ratio under fifteen percent when we remove the broken srcset image tag. Additional padding text to ensure the file is large enough for the guard to pass safely without issues.</p><img srcset="hero.webp 1x, hero@2x.webp 2x" alt="hero"><footer>Copyright 2026</footer></body></html>`},
@@ -1144,11 +1191,42 @@ func TestDeterministicFix_RemovesSrcsetImg(t *testing.T) {
 	}
 }
 
+func TestDeterministicFix_ReplacesSrcsetCandidate(t *testing.T) {
+	fileMap := map[string]GeneratedFile{
+		"index.html":   {Path: "index.html", Content: `<html><head><title>Test</title></head><body><h1>Welcome</h1><p>This paragraph has enough content to keep the shrink ratio under the guard while replacing one srcset candidate with a valid existing asset.</p><img srcset="./hero.webp 1x, hero@2x.webp 2x" alt="hero"><footer>Copyright 2026</footer></body></html>`},
+		"Hero.webp":    {Path: "Hero.webp", ContentBase64: "ZmFrZQ=="},
+		"hero@2x.webp": {Path: "hero@2x.webp", ContentBase64: "ZmFrZTI="},
+	}
+	finding := auditFinding{
+		FixKind:     "missing_asset_local_ref",
+		FilePath:    "hero.webp",
+		TargetFiles: []string{"index.html"},
+	}
+
+	modified, err := deterministicFixMissingAssetRef(finding, fileMap)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if modified != "index.html" {
+		t.Errorf("expected modified=index.html, got %q", modified)
+	}
+	content := fileMap["index.html"].Content
+	if strings.Contains(content, "./hero.webp 1x") {
+		t.Error("expected broken srcset candidate to be replaced")
+	}
+	if !strings.Contains(content, "./Hero.webp 1x") {
+		t.Errorf("expected srcset candidate replacement to preserve ./ prefix, got %q", content)
+	}
+	if !strings.Contains(content, "hero@2x.webp 2x") {
+		t.Error("expected non-broken srcset candidate to be preserved")
+	}
+}
+
 func TestDeterministicFix_SrcsetWithFallback_StripsOnlySrcset(t *testing.T) {
 	// When <img> has both src= (fallback) and srcset= (broken), only srcset should be
 	// stripped — the tag must be preserved with its working src= fallback.
 	fileMap := map[string]GeneratedFile{
-		"index.html": {Path: "index.html", Content: `<html><head><title>Test</title></head><body><h1>Welcome</h1><p>This paragraph has enough content to keep the shrink ratio under the guard. Additional padding text to ensure everything works correctly with enough margin for safety on this particular test case.</p><img src="fallback.jpg" srcset="good-1x.jpg 1x, missing-2x.jpg 2x" alt="hero"><footer>Copyright 2026</footer></body></html>`},
+		"index.html":   {Path: "index.html", Content: `<html><head><title>Test</title></head><body><h1>Welcome</h1><p>This paragraph has enough content to keep the shrink ratio under the guard. Additional padding text to ensure everything works correctly with enough margin for safety on this particular test case.</p><img src="fallback.jpg" srcset="good-1x.jpg 1x, missing-2x.jpg 2x" alt="hero"><footer>Copyright 2026</footer></body></html>`},
 		"fallback.jpg": {Path: "fallback.jpg", ContentBase64: "ZmFrZQ=="},
 	}
 	finding := auditFinding{
@@ -1546,7 +1624,7 @@ func TestHasAuditRegression_NewFindingSameCount(t *testing.T) {
 
 func TestHasAuditRegression_NoRegression(t *testing.T) {
 	before := AuditReport{
-		Summary:  AuditSummary{Errors: 1, Warnings: 2},
+		Summary: AuditSummary{Errors: 1, Warnings: 2},
 		Findings: []auditFinding{
 			{RuleCode: "missing_required_file", Severity: "error", FilePath: "404.html"},
 			{RuleCode: "missing_asset", Severity: "warn", FilePath: "style.css"},
@@ -1555,7 +1633,7 @@ func TestHasAuditRegression_NoRegression(t *testing.T) {
 	}
 	// After: one finding fixed, rest unchanged
 	after := AuditReport{
-		Summary:  AuditSummary{Errors: 0, Warnings: 2},
+		Summary: AuditSummary{Errors: 0, Warnings: 2},
 		Findings: []auditFinding{
 			{RuleCode: "missing_asset", Severity: "warn", FilePath: "style.css"},
 			{RuleCode: "missing_asset", Severity: "warn", FilePath: "app.js"},
@@ -1616,4 +1694,3 @@ func TestHasNewFindings_SameFilePathDifferentSource(t *testing.T) {
 		t.Error("same FilePath but different TargetFiles should be detected as new finding")
 	}
 }
-

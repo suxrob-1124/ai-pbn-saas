@@ -4,6 +4,8 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { apiBase, authFetch, refreshTokens } from "./http";
 
+const MAX_CONSECUTIVE_REFRESH_FAILURES = 3;
+
 export type Me = {
   email: string;
   name?: string | null;
@@ -57,6 +59,7 @@ export function useAuthGuard() {
   const lastRefreshAtRef = useRef(0);
   const refreshInFlightRef = useRef<Promise<boolean> | null>(null);
   const lastActivityCheckRef = useRef(0);
+  const consecutiveFailuresRef = useRef(0);
 
   const fetchMe = useCallback(async () => {
     setLoading(true);
@@ -74,6 +77,10 @@ export function useAuthGuard() {
   }, [router]);
 
   const refreshNow = useCallback(async () => {
+    if (consecutiveFailuresRef.current >= MAX_CONSECUTIVE_REFRESH_FAILURES) {
+      router.replace("/login");
+      return false;
+    }
     if (refreshInFlightRef.current) {
       return refreshInFlightRef.current;
     }
@@ -81,6 +88,12 @@ export function useAuthGuard() {
       .then((ok) => {
         if (ok) {
           lastRefreshAtRef.current = Date.now();
+          consecutiveFailuresRef.current = 0;
+        } else {
+          consecutiveFailuresRef.current += 1;
+          if (consecutiveFailuresRef.current >= MAX_CONSECUTIVE_REFRESH_FAILURES) {
+            router.replace("/login");
+          }
         }
         return ok;
       })
@@ -89,7 +102,7 @@ export function useAuthGuard() {
       });
     refreshInFlightRef.current = req;
     return req;
-  }, []);
+  }, [router]);
 
   useEffect(() => {
     let timer: NodeJS.Timeout | null = null;

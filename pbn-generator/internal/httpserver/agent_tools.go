@@ -267,6 +267,13 @@ type agentFileChanged struct {
 	Action string `json:"action"` // created|updated|deleted
 }
 
+func agentFileChangedAction(existing *sqlstore.SiteFile) string {
+	if existing != nil {
+		return "updated"
+	}
+	return "created"
+}
+
 // ─── Tool executor ────────────────────────────────────────────────────────────
 
 const agentMaxFileSizeBytes = 2 * 1024 * 1024 // 2MB
@@ -581,6 +588,7 @@ func (s *Server) agentToolGenerateImage(ctx context.Context, domain sqlstore.Dom
 	}
 
 	cleaned := path.Clean(input.Path)
+	existing, _ := s.siteFiles.GetByPath(ctx, domain.ID, cleaned)
 
 	// Determine owner email for API key resolution
 	project, err := s.projects.GetByID(ctx, domain.ProjectID)
@@ -632,7 +640,7 @@ func (s *Server) agentToolGenerateImage(ctx context.Context, domain sqlstore.Dom
 	return agentToolResult{
 		ToolUseID:   toolUseID,
 		Content:     msg,
-		FileChanged: &agentFileChanged{Path: cleaned, Action: "created"},
+		FileChanged: &agentFileChanged{Path: cleaned, Action: agentFileChangedAction(existing)},
 	}
 }
 
