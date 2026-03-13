@@ -4,12 +4,15 @@ import {
   FolderGit2,
   Globe,
   Bot,
+  BrainCircuit,
   Clock,
   ListChecks,
   Link as LinkIcon,
   ShieldAlert,
   Activity,
   LifeBuoy,
+  FolderInput,
+  FileCode,
   Zap,
   Info,
   ArrowRight,
@@ -39,6 +42,12 @@ export default function DocsPage() {
       title: 'Editor и AI Studio',
       text: 'Правки файлов, контекст AI, создание страниц, apply-план и работа с ассетами.',
       icon: <Bot className="w-5 h-5 text-purple-500" />,
+    },
+    {
+      href: '/docs/ai-agent',
+      title: 'AI Агент',
+      text: 'Автономный агент для правки файлов: сессии, SSE-стриминг, откат и история.',
+      icon: <BrainCircuit className="w-5 h-5 text-violet-500" />,
     },
     {
       href: '/docs/schedules',
@@ -71,10 +80,22 @@ export default function DocsPage() {
       icon: <Activity className="w-5 h-5 text-cyan-500" />,
     },
     {
+      href: '/docs/legacy-import',
+      title: 'Legacy-импорт',
+      text: 'Импорт данных с существующих серверов: превью, запуск и мониторинг.',
+      icon: <FolderInput className="w-5 h-5 text-teal-500" />,
+    },
+    {
       href: '/docs/troubleshooting',
       title: 'Диагностика и восстановление',
       text: 'Карта восстановления: симптом -> причина -> действие.',
       icon: <LifeBuoy className="w-5 h-5 text-orange-500" />,
+    },
+    {
+      href: '/docs/api',
+      title: 'API (Swagger)',
+      text: 'OpenAPI-спецификация и интерактивная документация.',
+      icon: <FileCode className="w-5 h-5 text-slate-500" />,
     },
   ];
 
