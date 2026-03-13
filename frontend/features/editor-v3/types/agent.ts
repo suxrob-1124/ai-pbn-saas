@@ -37,6 +37,7 @@ export type AgentEventDone = {
   type: "done";
   summary: string;
   files_changed: string[];
+  rollback_available?: boolean;
 };
 
 export type AgentEventError = {
@@ -50,6 +51,13 @@ export type AgentEventStopped = {
   message: string;
 };
 
+export type AgentEventRateLimit = {
+  type: "rate_limit";
+  wait_sec?: number;
+  remaining_sec?: number;
+  attempt?: number;
+};
+
 export type AgentEvent =
   | AgentEventSessionStart
   | AgentEventText
@@ -58,7 +66,8 @@ export type AgentEvent =
   | AgentEventFileChanged
   | AgentEventDone
   | AgentEventError
-  | AgentEventStopped;
+  | AgentEventStopped
+  | AgentEventRateLimit;
 
 // A chat message as rendered in the UI
 export type AgentChatMessage = {
@@ -72,6 +81,8 @@ export type AgentChatMessage = {
   status?: "done" | "error" | "stopped" | "running";
   filesChanged?: string[];
   error?: string;
+  /** Seconds remaining until rate-limit retry (0 = not waiting) */
+  rateLimitRemaining?: number;
 };
 
 export type AgentToolCall = {

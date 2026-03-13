@@ -37,9 +37,10 @@ const STATUS_COLORS: Record<string, string> = {
 type Props = {
   domainId: string;
   onLoadSession?: (sessionId: string) => void;
+  onRolledBack?: (restoredCount: number, deletedCount: number) => void;
 };
 
-export function AgentSessionHistory({ domainId, onLoadSession }: Props) {
+export function AgentSessionHistory({ domainId, onLoadSession, onRolledBack }: Props) {
   const [sessions, setSessions] = useState<SessionDTO[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -164,7 +165,10 @@ export function AgentSessionHistory({ domainId, onLoadSession }: Props) {
                     <AgentSessionRollback
                       domainId={domainId}
                       sessionId={sess.id}
-                      onRolledBack={() => load()}
+                      onRolledBack={(restoredCount, deletedCount) => {
+                        load();
+                        onRolledBack?.(restoredCount, deletedCount);
+                      }}
                     />
                   )}
                   {sess.status === "running" && (
@@ -193,7 +197,10 @@ export function AgentSessionHistory({ domainId, onLoadSession }: Props) {
                   <AgentSessionRollback
                     domainId={domainId}
                     sessionId={sess.id}
-                    onRolledBack={() => load()}
+                    onRolledBack={(restoredCount, deletedCount) => {
+                      load();
+                      onRolledBack?.(restoredCount, deletedCount);
+                    }}
                   />
                 </div>
               )}

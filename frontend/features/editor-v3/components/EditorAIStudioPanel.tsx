@@ -1029,7 +1029,7 @@ export function EditorAIStudioPanel(props: EditorAIStudioPanelProps) {
                           <iframe
                             ref={aiCreatePreviewRef}
                             title="ai-create-preview"
-                            sandbox="allow-same-origin allow-scripts"
+                            sandbox="allow-same-origin"
                             srcDoc={aiCreatePreviewSrcDoc}
                             onLoad={() => bindPreviewNavigationGuard(aiCreatePreviewRef.current)}
                             className="h-[56vh] w-full rounded-lg border border-slate-200 dark:border-slate-700"

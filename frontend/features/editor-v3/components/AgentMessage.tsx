@@ -64,15 +64,20 @@ export function AgentMessage({ message, domainId }: Props) {
 
       {/* Changed files */}
       {message.filesChanged && message.filesChanged.length > 0 && (
-        <div className="flex flex-wrap gap-1">
-          {message.filesChanged.map((f) => (
-            <span
-              key={f}
-              className="inline-flex items-center rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-300 dark:ring-emerald-900"
-            >
-              {f}
-            </span>
-          ))}
+        <div className="flex flex-col gap-1">
+          <span className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+            ✓ Файл обновлён
+          </span>
+          <div className="flex flex-wrap gap-1">
+            {message.filesChanged.map((f) => (
+              <span
+                key={f}
+                className="inline-flex items-center rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-300 dark:ring-emerald-900"
+              >
+                {f}
+              </span>
+            ))}
+          </div>
         </div>
       )}
 

@@ -163,7 +163,7 @@ export function EditorFileWorkspacePanel(props: EditorFileWorkspacePanelProps) {
                 <iframe
                   ref={editorPreviewRef}
                   title="editor-preview"
-                  sandbox="allow-same-origin allow-scripts"
+                  sandbox="allow-same-origin"
                   srcDoc={previewSrcDoc}
                   onLoad={() => bindPreviewNavigationGuard(editorPreviewRef.current)}
                   style={previewFrameStyle}

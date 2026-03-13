@@ -19,7 +19,7 @@ type Props = {
   currentFilePath?: string;
   session: UseAgentSessionResult;
   onClose: () => void;
-  onFilesRefresh?: () => void;
+  onFilesRefresh?: (changedPath?: string) => Promise<void> | void;
 };
 
 export function AgentChatPanel({ domainId, currentFilePath, session, onClose, onFilesRefresh }: Props) {
@@ -28,6 +28,7 @@ export function AgentChatPanel({ domainId, currentFilePath, session, onClose, on
   const [input, setInput] = useState("");
   const [includeFile, setIncludeFile] = useState(false);
   const [tab, setTab] = useState<Tab>("chat");
+  const [rollbackNotice, setRollbackNotice] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const isRunning = status === "running";
@@ -84,11 +85,14 @@ export function AgentChatPanel({ domainId, currentFilePath, session, onClose, on
     textareaRef.current?.focus();
   };
 
-  const handleRolledBack = (restoredCount: number) => {
-    onFilesRefresh?.();
+  const handleRolledBack = (restoredCount: number, deletedCount: number) => {
+    void onFilesRefresh?.();
     clearMessages();
-    // small notification via console, toast is handled externally
-    console.info(`[Agent] Rolled back ${restoredCount} file(s)`);
+    const parts: string[] = [];
+    if (restoredCount > 0) parts.push(`восстановлено ${restoredCount} файл(ов)`);
+    if (deletedCount > 0) parts.push(`удалено ${deletedCount} файл(ов) агента`);
+    setRollbackNotice(parts.length > 0 ? `Откат выполнен: ${parts.join(", ")}.` : "Откат выполнен.");
+    setTab("chat");
   };
 
   const handleLoadSession = useCallback(async (loadSessionId: string) => {
@@ -185,12 +189,22 @@ export function AgentChatPanel({ domainId, currentFilePath, session, onClose, on
       {/* Body */}
       {tab === "history" ? (
         <div className="flex-1 overflow-y-auto p-4">
-          <AgentSessionHistory domainId={domainId} onLoadSession={handleLoadSession} />
+          <AgentSessionHistory
+            domainId={domainId}
+            onLoadSession={handleLoadSession}
+            onRolledBack={handleRolledBack}
+          />
         </div>
       ) : (
         <>
           {/* Messages */}
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            {rollbackNotice && (
+              <div className="flex items-start justify-between gap-2 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-700 dark:border-green-800 dark:bg-green-950/30 dark:text-green-300">
+                <span>{rollbackNotice}</span>
+                <button type="button" onClick={() => setRollbackNotice(null)} className="shrink-0 text-green-500 hover:text-green-700 dark:text-green-400 dark:hover:text-green-200">✕</button>
+              </div>
+            )}
             {messages.length === 0 ? (
               <AgentSuggestedPrompts onSelect={handleSuggestSelect} />
             ) : (

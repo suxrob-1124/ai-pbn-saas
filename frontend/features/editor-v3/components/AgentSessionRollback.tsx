@@ -7,7 +7,7 @@ import { apiBase, refreshTokens } from "@/lib/http";
 type Props = {
   domainId: string;
   sessionId: string;
-  onRolledBack: (restoredCount: number) => void;
+  onRolledBack: (restoredCount: number, deletedCount: number) => void;
 };
 
 export function AgentSessionRollback({ domainId, sessionId, onRolledBack }: Props) {
@@ -42,8 +42,12 @@ export function AgentSessionRollback({ domainId, sessionId, onRolledBack }: Prop
       }
 
       const data = await res.json();
+      if (data.status !== "rolled_back") {
+        setError("Нет данных для отката — агент не изменял файлы в этой сессии.");
+        return;
+      }
       setOpen(false);
-      onRolledBack(data.restored ?? 0);
+      onRolledBack(data.restored ?? 0, data.deleted ?? 0);
     } catch (e) {
       setError((e as Error)?.message || "Ошибка сети");
     } finally {

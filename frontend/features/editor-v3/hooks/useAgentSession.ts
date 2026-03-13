@@ -76,6 +76,10 @@ export function useAgentSession(onFileChanged?: (path: string, action: string) =
       let buf = "";
       let resolvedSessionId = currentSessionId;
 
+      // Track which file paths have already triggered a refresh in this run.
+      // Prevents duplicate refresh when both file_changed and done.files_changed arrive.
+      const refreshedInRun = new Set<string>();
+
       const processLine = (line: string) => {
         if (!line.startsWith("data: ")) return;
         const raw = line.slice(6).trim();
@@ -128,6 +132,7 @@ export function useAgentSession(onFileChanged?: (path: string, action: string) =
               if (prev.includes(event.path)) return prev;
               return [...prev, event.path];
             });
+            refreshedInRun.add(event.path);
             onFileChanged?.(event.path, event.action);
             break;
 
@@ -137,21 +142,54 @@ export function useAgentSession(onFileChanged?: (path: string, action: string) =
               status: "done",
               filesChanged: event.files_changed || [],
             }));
+            // Fallback: refresh any files listed in done.files_changed that weren't
+            // already refreshed via a file_changed event (e.g. fast path / single-shot
+            // backends that don't emit file_changed, or event ordering issues).
+            const missed = (event.files_changed || []).filter((p) => !refreshedInRun.has(p));
+            if (missed.length > 0) {
+              setChangedFiles((prev) => {
+                const next = [...prev];
+                for (const p of missed) {
+                  if (!next.includes(p)) next.push(p);
+                }
+                return next;
+              });
+              for (const path of missed) {
+                onFileChanged?.(path, "updated");
+              }
+            }
             setStatus("done");
-            if (resolvedSessionId) saveToStorage(resolvedSessionId, "", "done");
+            // Only keep snapshotId if agent actually changed files
+            if (event.rollback_available === false) setSnapshotId(null);
+            if (resolvedSessionId) saveToStorage(resolvedSessionId, domainId, "done");
             break;
 
           case "error":
             updateAssistantMsg((m) => ({ ...m, status: "error", error: event.message }));
             setStatus("error");
-            if (resolvedSessionId) saveToStorage(resolvedSessionId, "", "error");
+            // Only show rollback if agent actually changed files
+            if (event.rollback_available === false) setSnapshotId(null);
+            if (resolvedSessionId) saveToStorage(resolvedSessionId, domainId, "error");
             break;
 
           case "stopped":
             updateAssistantMsg((m) => ({ ...m, status: "stopped" }));
             setStatus("stopped");
-            if (resolvedSessionId) saveToStorage(resolvedSessionId, "", "stopped");
+            if (resolvedSessionId) saveToStorage(resolvedSessionId, domainId, "stopped");
             break;
+
+          case "rate_limit": {
+            const remaining = event.remaining_sec ?? event.wait_sec ?? 0;
+            const msg = remaining > 0
+              ? `\n⏳ Rate limit — повтор через ${remaining}с...\n`
+              : "\n⏳ Rate limit — повтор...\n";
+            updateAssistantMsg((m) => ({
+              ...m,
+              rateLimitRemaining: remaining,
+              text: (m.text || "").replace(/\n⏳ Rate limit[^\n]*\n$/, "") + msg,
+            }));
+            break;
+          }
         }
       };
 
@@ -245,9 +283,49 @@ export function useAgentSession(onFileChanged?: (path: string, action: string) =
     async (savedSessionId: string, domainId: string) => {
       setSessionId(savedSessionId);
       setStatus("running");
+
+      // Try to load previous chat history before reconnecting to the stream.
+      try {
+        const detailRes = await fetch(
+          `${apiBase()}/api/domains/${domainId}/agent/${savedSessionId}`,
+          { credentials: "include" }
+        );
+        if (detailRes.ok) {
+          const detail = await detailRes.json();
+          if (detail.chat_log && Array.isArray(detail.chat_log)) {
+            const history: AgentChatMessage[] = detail.chat_log.map((entry: any) => ({
+              id: entry.id || nextId(),
+              role: entry.role,
+              text: entry.text || "",
+              toolCalls: entry.tool_calls?.map((tc: any) => ({
+                id: tc.id,
+                tool: tc.tool,
+                input: tc.input,
+                preview: tc.preview,
+                done: tc.done,
+                isError: tc.is_error,
+              })),
+              status: entry.status,
+              filesChanged: entry.files_changed,
+              error: entry.error,
+            }));
+            setMessages(history);
+          }
+          if (detail.snapshot_tag) {
+            setSnapshotId(detail.snapshot_tag);
+          }
+        }
+      } catch {
+        // Non-fatal: proceed without history
+      }
+
+      // Create a new assistant message for incoming stream events
       const asstId = nextId();
       assistantMsgIdRef.current = asstId;
-      setMessages([{ id: asstId, role: "assistant", text: "", toolCalls: [], status: "running" }]);
+      setMessages((prev) => [
+        ...prev,
+        { id: asstId, role: "assistant", text: "", toolCalls: [], status: "running" },
+      ]);
 
       const doFetch = async (): Promise<Response> => {
         abortRef.current = new AbortController();
