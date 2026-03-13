@@ -1037,11 +1037,11 @@ export default function ProjectDetailPage() {
                 <p className="text-sm text-slate-700 dark:text-slate-300 leading-relaxed">
                   Пример: <br />
                   <code className="inline-block mt-1 px-1.5 py-0.5 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-indigo-600 dark:text-indigo-400 font-mono text-xs">
-                    example.ru,casino,ru,ru,seotech-web-media1,"Лучший
-                    бонус","https://acceptor.example/page"
+                    example.ru,casino,ru,ru,seotech-web-media1,&quot;Лучший
+                    бонус&quot;,&quot;https://acceptor.example/page&quot;
                     <br/>
-                    example2.com,casino,ru,ru,seotech-web-media1,"Лучший
-                    бонус","https://acceptor.example/page"
+                    example2.com,casino,ru,ru,seotech-web-media1,&quot;Лучший
+                    бонус&quot;,&quot;https://acceptor.example/page&quot;
                   </code>
                 </p>
                 {/* <p className="text-xs text-slate-500 dark:text-slate-400 mt-2">

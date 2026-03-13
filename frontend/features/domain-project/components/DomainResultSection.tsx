@@ -321,7 +321,7 @@ export function DomainResultSection({
                   {resultHTMLTab === 'preview' ? (
                     <iframe
                       title="Final HTML Preview"
-                      sandbox="allow-same-origin allow-scripts"
+                      sandbox="allow-same-origin"
                       srcDoc={liveResultHTML}
                       className="w-full h-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white shadow-inner"
                     />

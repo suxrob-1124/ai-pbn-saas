@@ -498,7 +498,7 @@ function FinalHTMLViewer({ html }: { html: string }) {
       {view === "preview" ? (
         <iframe
           title="Final HTML Preview"
-          sandbox="allow-same-origin allow-scripts"
+          sandbox="allow-same-origin"
           srcDoc={html}
           style={previewStyle}
           className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white"

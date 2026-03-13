@@ -477,16 +477,20 @@ export default function DomainEditorPage() {
     setDirtyState,
     loadFile,
   });
-  const agentSession = useAgentSession(async (changedPath) => {
+  const refreshEditorAfterAgentChange = async (changedPath?: string) => {
+    setHistoryRefreshKey((value) => value + 1);
     const refreshed = await loadFiles();
-    const active = selection?.selectedPath;
-    const activeFile = active ? refreshed.find((f) => f.path === active) : null;
-    if (activeFile) {
-      await loadFile(activeFile);
-    } else {
-      const changedFile = refreshed.find((f) => f.path === changedPath);
-      if (changedFile) await loadFile(changedFile);
+    const targetPath = selection?.selectedPath || changedPath;
+    if (!targetPath) {
+      return;
     }
+    const targetFile = refreshed.find((f) => f.path === targetPath);
+    if (targetFile) {
+      await loadFile(targetFile);
+    }
+  };
+  const agentSession = useAgentSession(async (changedPath) => {
+    await refreshEditorAfterAgentChange(changedPath);
   });
   const { domainLocks, currentLock, isLockedByOther } = useFileLock({
     domainId,
@@ -1275,7 +1279,7 @@ export default function DomainEditorPage() {
               currentFilePath={selection?.selectedPath}
               session={agentSession}
               onClose={() => setAgentOpen(false)}
-              onFilesRefresh={loadFiles}
+              onFilesRefresh={refreshEditorAfterAgentChange}
             />
           )}
           <EditorHistoryAccess

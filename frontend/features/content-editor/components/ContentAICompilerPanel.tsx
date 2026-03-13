@@ -74,7 +74,7 @@ export function ContentAICompilerPanel({
           srcDoc={result.previewSrcDoc}
           className="h-[500px] w-full rounded-lg border border-slate-200 bg-white transition-all dark:border-slate-700"
           style={{ maxWidth: viewportMaxWidth }}
-          sandbox="allow-same-origin allow-scripts"
+          sandbox="allow-same-origin"
           title={t.preview}
           onLoad={() => {
             if (previewRef.current) {
