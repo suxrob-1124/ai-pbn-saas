@@ -39,6 +39,16 @@ tags:
     description: Мониторинг индексации и проверки
   - name: LLM Usage
     description: Учёт токенов и стоимости LLM-запросов
+  - name: AI Agent
+    description: Автономный AI-агент для правки файлов домена
+  - name: File Locks
+    description: Блокировки файлов для совместной работы
+  - name: Legacy Import
+    description: Импорт legacy-данных с удалённых серверов
+  - name: Trash
+    description: Корзина — восстановление и окончательное удаление
+  - name: Infrastructure
+    description: Проверки здоровья и метрики
 paths:
   /api/register:
     post:
@@ -2424,6 +2434,133 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/LLMUsageStats"
+  /api/queue/unified:
+    get:
+      tags: [Queue]
+      summary: Объединенная очередь generation/link задач
+      parameters:
+        - in: query
+          name: type
+          schema:
+            type: string
+            enum: [all, generation, link]
+        - in: query
+          name: status
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+      responses:
+        "200":
+          description: OK
+  /api/admin/index-checker/control:
+    get:
+      tags: [Index Checks]
+      summary: Получить глобальный флаг index checker (admin)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+                required: [enabled]
+    patch:
+      tags: [Index Checks]
+      summary: Обновить глобальный флаг index checker (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+              required: [enabled]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+                required: [enabled]
+  /api/admin/trash:
+    get:
+      tags: [Trash]
+      summary: Список удалённых проектов и доменов
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrashListResponse"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+  /api/admin/trash/{entityType}/{entityId}:
+    delete:
+      tags: [Trash]
+      summary: Окончательно удалить soft-deleted сущность
+      parameters:
+        - in: path
+          name: entityType
+          required: true
+          schema:
+            type: string
+            enum: [projects, domains]
+        - in: path
+          name: entityId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "404":
+          $ref: "#/components/responses/Error"
+  /api/admin/trash/{entityType}/{entityId}/restore:
+    post:
+      tags: [Trash]
+      summary: Восстановить soft-deleted сущность
+      parameters:
+        - in: path
+          name: entityType
+          required: true
+          schema:
+            type: string
+            enum: [projects, domains]
+        - in: path
+          name: entityId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "404":
+          $ref: "#/components/responses/Error"
   /api/queue/{itemId}:
     delete:
       tags: [Queue]
@@ -2643,6 +2780,287 @@ paths:
       responses:
         "200":
           description: OK
+  # ── AI Agent ───────────────────────────────────────────
+  /api/domains/{domainId}/agent:
+    post:
+      tags: [AI Agent]
+      summary: Запустить или переподключиться к сессии AI-агента (SSE)
+      description: |
+        Запускает автономного AI-агента, который может читать и редактировать файлы домена.
+        Ответ — поток Server-Sent Events (SSE).
+        Типы событий: `session_start`, `text`, `tool_start`, `tool_done`,
+        `file_changed`, `done`, `error`, `stopped`.
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentStartRequest"
+      responses:
+        "200":
+          description: SSE-поток событий агента
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+  /api/domains/{domainId}/agent/sessions:
+    get:
+      tags: [AI Agent]
+      summary: Список сессий агента для домена
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AgentSessionSummary"
+        "401":
+          $ref: "#/components/responses/Error"
+  /api/domains/{domainId}/agent/{sessionId}:
+    get:
+      tags: [AI Agent]
+      summary: Детали сессии с чат-логом
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentSessionDetail"
+        "404":
+          $ref: "#/components/responses/Error"
+  /api/domains/{domainId}/agent/{sessionId}/rollback:
+    post:
+      tags: [AI Agent]
+      summary: Откатить домен к снимку до сессии
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  restored:
+                    type: array
+                    items:
+                      type: string
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+  /api/domains/{domainId}/agent/{sessionId}/stop:
+    post:
+      tags: [AI Agent]
+      summary: Остановить активную сессию
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "404":
+          $ref: "#/components/responses/Error"
+  # ── File Locks ─────────────────────────────────────────
+  /api/domains/{domainId}/files/locks:
+    get:
+      tags: [File Locks]
+      summary: Список активных блокировок файлов домена
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FileLockDTO"
+    post:
+      tags: [File Locks]
+      summary: Получить или продлить блокировку файла
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FileLockRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileLockDTO"
+        "409":
+          $ref: "#/components/responses/Error"
+    delete:
+      tags: [File Locks]
+      summary: Снять блокировку файла
+      parameters:
+        - $ref: "#/components/parameters/DomainId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FileLockRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+  # ── Legacy Import ──────────────────────────────────────
+  /api/projects/{projectId}/legacy-import/preview:
+    post:
+      tags: [Legacy Import]
+      summary: Превью импорта legacy-данных
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                domain_ids:
+                  type: array
+                  items:
+                    type: string
+              required: [domain_ids]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/LegacyImportPreviewItem"
+  /api/projects/{projectId}/legacy-import:
+    post:
+      tags: [Legacy Import]
+      summary: Запустить legacy-импорт
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LegacyImportRequest"
+      responses:
+        "202":
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  job_id:
+                    type: string
+                required: [job_id]
+    get:
+      tags: [Legacy Import]
+      summary: Список import-джобов проекта
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/LegacyImportJob"
+  /api/projects/{projectId}/legacy-import/{jobId}:
+    get:
+      tags: [Legacy Import]
+      summary: Детали import-джоба с элементами
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LegacyImportJobDetail"
+        "404":
+          $ref: "#/components/responses/Error"
+  # ── Link Schedule Eligibility ──────────────────────────
+  /api/projects/{projectId}/link-schedule-eligibility:
+    get:
+      tags: [Link Schedules]
+      summary: Проверить готовность доменов к следующему запуску ссылок
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinkScheduleEligibilityResponse"
+  # ── Infrastructure ─────────────────────────────────────
+  /healthz:
+    get:
+      tags: [Infrastructure]
+      summary: Проверка здоровья сервиса
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+  /metrics:
+    get:
+      tags: [Infrastructure]
+      summary: Метрики Prometheus
+      security: []
+      responses:
+        "200":
+          description: Prometheus text format
+          content:
+            text/plain:
+              schema:
+                type: string
 components:
   securitySchemes:
     cookieAuth:
@@ -2732,6 +3150,24 @@ components:
     AuditCode:
       in: path
       name: code
+      required: true
+      schema:
+        type: string
+    SessionId:
+      in: path
+      name: sessionId
+      required: true
+      schema:
+        type: string
+    JobId:
+      in: path
+      name: jobId
+      required: true
+      schema:
+        type: string
+    TrashId:
+      in: path
+      name: id
       required: true
       schema:
         type: string
@@ -4534,3 +4970,335 @@ components:
           failed_investigation,
           daily
         ]
+    # --- AI Agent ---
+    AgentStartRequest:
+      type: object
+      properties:
+        message:
+          type: string
+          description: Инструкция для агента (необязательна при переподключении)
+        session_id:
+          type: string
+          nullable: true
+          description: ID существующей сессии для переподключения
+        context:
+          type: object
+          nullable: true
+          properties:
+            current_file:
+              type: string
+            include_current_file:
+              type: boolean
+    AgentSessionSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        domain_id:
+          type: string
+        created_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          type: string
+          enum: [running, done, error, stopped, rolled_back]
+        summary:
+          type: string
+          nullable: true
+        files_changed:
+          type: array
+          nullable: true
+          items:
+            type: string
+        message_count:
+          type: integer
+        snapshot_tag:
+          type: string
+          nullable: true
+      required: [id, domain_id, created_by, created_at, status, message_count]
+    AgentSessionDetail:
+      allOf:
+        - $ref: "#/components/schemas/AgentSessionSummary"
+        - type: object
+          properties:
+            chat_log:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+            is_active:
+              type: boolean
+          required: [chat_log, is_active]
+    # --- File Locks ---
+    FileLockDTO:
+      type: object
+      properties:
+        file_path:
+          type: string
+        locked_by:
+          type: string
+        locked_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        is_owner:
+          type: boolean
+      required: [file_path, locked_by, locked_at, expires_at]
+    FileLockRequest:
+      type: object
+      properties:
+        path:
+          type: string
+      required: [path]
+    # --- Legacy Import ---
+    LegacyImportPreviewItem:
+      type: object
+      properties:
+        domain_id:
+          type: string
+        domain_url:
+          type: string
+        has_files:
+          type: boolean
+        has_link:
+          type: boolean
+        link_anchor:
+          type: string
+          nullable: true
+        link_target:
+          type: string
+          nullable: true
+        has_legacy_artifacts:
+          type: boolean
+        has_non_legacy_gen:
+          type: boolean
+      required: [domain_id, domain_url, has_files, has_link, has_legacy_artifacts, has_non_legacy_gen]
+    LegacyImportRequest:
+      type: object
+      properties:
+        domain_ids:
+          type: array
+          items:
+            type: string
+        force:
+          type: boolean
+      required: [domain_ids]
+    LegacyImportJob:
+      type: object
+      properties:
+        id:
+          type: string
+        project_id:
+          type: string
+        requested_by:
+          type: string
+        force_overwrite:
+          type: boolean
+        status:
+          type: string
+          enum: [pending, running, completed, failed]
+        total_items:
+          type: integer
+        completed_items:
+          type: integer
+        failed_items:
+          type: integer
+        skipped_items:
+          type: integer
+        error:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        updated_at:
+          type: string
+          format: date-time
+      required: [id, project_id, requested_by, status, total_items, created_at, updated_at]
+    LegacyImportItem:
+      type: object
+      properties:
+        id:
+          type: string
+        job_id:
+          type: string
+        domain_id:
+          type: string
+        domain_url:
+          type: string
+        status:
+          type: string
+        step:
+          type: string
+          nullable: true
+        progress:
+          type: string
+          nullable: true
+        error:
+          type: string
+          nullable: true
+        actions:
+          type: array
+          nullable: true
+          items:
+            type: string
+        warnings:
+          type: array
+          nullable: true
+          items:
+            type: string
+        file_count:
+          type: integer
+        total_size_bytes:
+          type: integer
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required: [id, job_id, domain_id, domain_url, status, file_count, total_size_bytes, created_at, updated_at]
+    LegacyImportJobDetail:
+      allOf:
+        - $ref: "#/components/schemas/LegacyImportJob"
+        - type: object
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/LegacyImportItem"
+          required: [items]
+    # --- Trash ---
+    TrashProject:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        user_email:
+          type: string
+        deleted_at:
+          type: string
+          format: date-time
+          nullable: true
+        deleted_by:
+          type: string
+          nullable: true
+      required: [id, name]
+    TrashDomain:
+      type: object
+      properties:
+        id:
+          type: string
+        project_id:
+          type: string
+        url:
+          type: string
+        delete_batch:
+          type: string
+          nullable: true
+        deleted_at:
+          type: string
+          format: date-time
+          nullable: true
+        deleted_by:
+          type: string
+          nullable: true
+      required: [id, project_id, url]
+    TrashListResponse:
+      type: object
+      properties:
+        projects:
+          type: array
+          items:
+            $ref: "#/components/schemas/TrashProject"
+        domains:
+          type: array
+          items:
+            $ref: "#/components/schemas/TrashDomain"
+        retention_days:
+          type: integer
+      required: [projects, domains, retention_days]
+    # --- Index Checker Control ---
+    IndexCheckerControlResponse:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+      required: [enabled]
+    # --- Link Schedule Eligibility ---
+    LinkDomainEligibility:
+      type: object
+      properties:
+        id:
+          type: string
+        url:
+          type: string
+        eligible:
+          type: boolean
+        reason:
+          type: string
+          nullable: true
+        link_status:
+          type: string
+          nullable: true
+      required: [id, url, eligible]
+    LinkEligibilitySummary:
+      type: object
+      properties:
+        eligible_count:
+          type: integer
+        ineligible_count:
+          type: integer
+        active_task_count:
+          type: integer
+      required: [eligible_count, ineligible_count, active_task_count]
+    LinkScheduleEligibilityResponse:
+      type: object
+      properties:
+        schedule:
+          type: object
+          nullable: true
+          properties:
+            is_active:
+              type: boolean
+            next_run_at:
+              type: string
+              format: date-time
+              nullable: true
+            last_run_at:
+              type: string
+              format: date-time
+              nullable: true
+        domains:
+          type: array
+          items:
+            $ref: "#/components/schemas/LinkDomainEligibility"
+        summary:
+          $ref: "#/components/schemas/LinkEligibilitySummary"
+      required: [domains, summary]
