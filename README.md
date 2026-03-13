@@ -11,6 +11,10 @@
 - Link-flow: run/remove/retry, статусы задач и расписания ссылок.
 - Indexing-flow: ручные и плановые проверки, статистика, календарь, failed checks.
 - AI Editor: работа с файлами домена, версии/revert, AI suggest/create-page, регенерация ассетов.
+- AI Agent: автономный агент (Claude) для многофайловых правок домена — SSE-стриминг, snapshot/rollback, история сессий.
+- File Locking: блокировки файлов для защиты от конкурентных правок.
+- Legacy-импорт: перенос данных с удалённых серверов (SSH probe, file sync, link extraction).
+- Корзина (Trash): soft-delete проектов и доменов с возможностью восстановления.
 - LLM Usage: события по токенам/стоимости, цены моделей, admin/project отчеты.
 - Мониторинг: `healthz`, Prometheus, Grafana.
 
@@ -148,12 +152,17 @@ go run ./cmd/migrate
 - `/docs` — обзор и базовые сценарии
 - `/docs/projects`
 - `/docs/domains`
+- `/docs/editor-ai-studio`
+- `/docs/ai-agent`
 - `/docs/schedules`
 - `/docs/queue`
 - `/docs/links`
 - `/docs/indexing`
 - `/docs/indexing-api`
 - `/docs/errors`
+- `/docs/legacy-import`
+- `/docs/troubleshooting`
+- `/docs/api` — Swagger UI (только для `admin`)
 
 ## Swagger/OpenAPI
 
@@ -168,10 +177,13 @@ go run ./cmd/migrate
 - Auth/Profile: логин, сессии, профиль, API key, пароль, email flows.
 - Projects/Domains: CRUD, summary, members, prompts.
 - Generations/Queue: управление задачами, retry/cancel/pause/resume.
-- Links: list/run/remove/retry/import + link schedule.
-- Files/Editor: file operations, history/revert, AI suggest/create-page/regenerate-asset.
-- Index checks: domain/project/admin monitoring API.
+- Links: list/run/remove/retry/import + link schedule + eligibility.
+- Files/Editor: file operations, history/revert, AI suggest/create-page/regenerate-asset, file locks.
+- AI Agent: запуск агента, SSE-стриминг, сессии, rollback, stop.
+- Index checks: domain/project/admin monitoring API, index-checker control.
 - LLM usage/pricing: admin + project analytics.
+- Legacy Import: preview, start, monitoring import jobs.
+- Trash: admin корзина, restore/purge проектов и доменов.
 - Admin: users, prompts, audit-rules.
 
 ## Переменные окружения (минимум)
@@ -185,9 +197,16 @@ go run ./cmd/migrate
 - `ALLOWED_ORIGINS` или `ALLOWED_ORIGIN`
 - `PUBLIC_APP_URL`
 
-Для AI-функций:
+Для AI-функций (AI Studio):
 
 - `GEMINI_API_KEY`
+
+Для AI Agent:
+
+- `ANTHROPIC_API_KEY`
+- `ANTHROPIC_MODEL` (по умолчанию claude-sonnet-4-20250514)
+- `AGENT_TIMEOUT_SEC`
+- `AGENT_MAX_TOKENS`
 
 Для deploy scaffold (`local_mock`/`ssh_remote`):
 
